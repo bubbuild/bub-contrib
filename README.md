@@ -1,34 +1,54 @@
 # bub-contrib
 
-Contributions and packages for the `bub` ecosystem.
+Contrib packages for the `bub` ecosystem.
+
+## Packages
+
+- `packages/bub-tg-feed`
+  - Bub plugin entry point: `tg-feed`
+  - Provides an AMQP-based channel adapter for Telegram feed messages.
+- `packages/bub-schedule`
+  - Bub plugin entry point: `schedule`
+  - Provides scheduling channel/tools backed by APScheduler with a JSON job store.
 
 ## Repository Layout
 
-- `packages/tg-feed`: Python package for Telegram feed related functionality.
-
-## Development
-
-### Prerequisites
-
-- Python 3.10+
-- `uv` or `pip`
-
-### Setup
-
-```bash
-cd packages/tg-feed
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+```text
+packages/
+  bub-tg-feed/
+  bub-schedule/
 ```
 
-### Run Tests
+## Prerequisites
+
+- Python 3.12+ (workspace root)
+- `uv` (recommended)
+
+## Development Setup
+
+Install all workspace dependencies:
 
 ```bash
-cd packages/tg-feed
-pytest
+uv sync
 ```
+
+Install contrib packages in editable mode:
+
+```bash
+uv pip install -e packages/bub-tg-feed -e packages/bub-schedule
+```
+
+## Runtime Notes
+
+### `bub-tg-feed` environment variables
+
+- `AMQP_URL`: RabbitMQ/AMQP connection URL
+- `BUB_TELEGRAM_TOKEN`: Telegram bot token used for chat actions and bot metadata
+
+### `bub-schedule` persistence
+
+- Scheduled jobs are persisted to `jobs.json` under Bub runtime home.
 
 ## License
 
-This repository is licensed under the terms in [LICENSE](./LICENSE).
+This repository is licensed under [LICENSE](./LICENSE).

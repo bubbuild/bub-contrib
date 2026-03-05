@@ -22,9 +22,10 @@ def workspace_from_state(state: State) -> Path:
 class CodexSettings(BaseSettings):
     """Configuration for Codex plugin."""
 
-    model_config = SettingsConfigDict(env_prefix="BUB_CODEX_", env_file=".env")
+    model_config = SettingsConfigDict(
+        env_prefix="BUB_CODEX_", env_file=".env", extra="ignore"
+    )
     model: str | None = Field(default=None)
-    sandbox_mode: SandboxMode = "workspace-write"
     yolo_mode: bool = False
 
 
@@ -62,26 +63,26 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
     command = [
         "codex",
         "e",
-        "--cd",
-        str(workspace),
-        "--sandbox",
-        codex_settings.sandbox_mode,
+        "resume",
+        session_id,
     ]
     if codex_settings.model:
         command.extend(["--model", codex_settings.model])
     if codex_settings.yolo_mode:
         command.append("--dangerously-bypass-approvals-and-sandbox")
+    command.append("-")
     with with_bub_skills(workspace):
         process = await asyncio.create_subprocess_exec(
             *command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(workspace),
         )
         stdout, stderr = await process.communicate(prompt.encode())
     output_blocks: list[str] = []
     if stdout:
         output_blocks.append(stdout.decode())
-    if stderr:
+    if stderr and process.returncode != 0:
         output_blocks.append(f"stderr: {stderr.decode()}")
     return "\n".join(output_blocks)

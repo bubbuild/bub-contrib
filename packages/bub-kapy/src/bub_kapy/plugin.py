@@ -1,10 +1,6 @@
-import asyncio
-from bub import hookimpl
-from bub.types import State
+from typing import AsyncIterator
 
-@hookimpl
-async def run_model(prompt: str, session_id: str, state: State) -> str:
-    # This is a 'bub-kapy' plugin. 
-    # In a real scenario, it might call Kapybara's API or a local instance.
-    # For this "little move", let's return a friendly Kapybara response.
-    return f"Kapybara (via bub-kapy) received your prompt in session {session_id}: {prompt}\n\n咕嘟... 🫧"
+class KapyModel:
+    async def run_model(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+        yield f"Kapybara (bub-kapy) received your prompt: {prompt}\n"
+        yield "Gudu... 🫧 This is a cyber-hybrid bubble! 🐾"

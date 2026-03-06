@@ -1,8 +1,8 @@
 [project]
 name = "bub-kapy"
 version = "0.1.0"
-description = "Bub model plugin for Kapybara agent"
-authors = [{ name = "Kapybara Agent", email = "kapy@yanli.one" }]
+description = "Kapybara model for bub"
+authors = [{ name = "Kapybara", email = "kapybara@example.com" }]
 dependencies = []
 
 [project.entry-points.bub]

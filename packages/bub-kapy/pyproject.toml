@@ -1,7 +1,7 @@
 [project]
 name = "bub-kapy"
 version = "0.1.0"
-description = "Kapybara model for bub"
+description = "Kapybara agent plugin for bub"
 readme = "README.md"
 authors = [
     { name = "Kapybara", email = "kapybara@example.com" }
@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "bub>=0.3.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
 ]
 
 [project.entry-points.bub]

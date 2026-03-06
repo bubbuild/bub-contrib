@@ -2,12 +2,18 @@
 name = "bub-kapy"
 version = "0.1.0"
 description = "Kapybara model for bub"
-authors = [{ name = "Kapybara", email = "kapybara@example.com" }]
-dependencies = []
+readme = "README.md"
+authors = [
+    { name = "Kapybara", email = "kapybara@example.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub>=0.3.0",
+]
 
 [project.entry-points.bub]
-kapy = "bub_kapy.plugin:KapyModel"
+kapy = "bub_kapy.plugin"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"

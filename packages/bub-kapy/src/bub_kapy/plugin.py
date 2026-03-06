@@ -1,6 +1,9 @@
-from typing import AsyncIterator
+from bub import hookimpl
+from bub.types import State
 
-class KapyModel:
-    async def run_model(self, prompt: str, **kwargs) -> AsyncIterator[str]:
-        yield f"Kapybara (bub-kapy) received your prompt: {prompt}\n"
-        yield "Gudu... 🫧 This is a cyber-hybrid bubble! 🐾"
+@hookimpl
+async def run_model(prompt: str, session_id: str, state: State) -> str:
+    return (
+        f"Kapybara (bub-kapy) received your prompt: {prompt}\n"
+        "Gudu... 🫧 This is a cyber-hybrid bubble! 🐾"
+    )

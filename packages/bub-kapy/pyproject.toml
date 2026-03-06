@@ -1,0 +1,13 @@
+[project]
+name = "bub-kapy"
+version = "0.1.0"
+description = "Bub model plugin for Kapybara agent"
+authors = [{ name = "Kapybara Agent", email = "kapy@yanli.one" }]
+dependencies = []
+
+[project.entry-points.bub]
+kapy = "bub_kapy.plugin:KapyModel"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

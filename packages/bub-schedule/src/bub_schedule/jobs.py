@@ -11,8 +11,10 @@ SCHEDULE_SUBPROCESS_TIMEOUT_SECONDS = 300
 async def run_scheduled_reminder(
     message: str, session_id: str, workspace: str | None = None
 ) -> None:
-    framework = BubFramework(Path(workspace) if workspace else Path.cwd())
+    framework = BubFramework()
     framework.load_hooks()
+    if workspace:
+        framework.workspace = Path(workspace).resolve()
     if ":" in session_id:
         channel, chat_id = session_id.split(":", 1)
     else:

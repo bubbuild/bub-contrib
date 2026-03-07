@@ -9,6 +9,7 @@ dependencies = [
     "bub-codex",
     "bub-discord",
     "bub-schedule",
+    "bub-tapestore-sqlite",
     "bub-tg-feed",
     "bub-web-search",
 ]
@@ -22,4 +23,5 @@ bub-tg-feed = { workspace = true }
 bub-codex = { workspace = true }
 bub-discord = { workspace = true }
 bub-schedule = { workspace = true }
+bub-tapestore-sqlite = { workspace = true }
 bub-web-search = { workspace = true }

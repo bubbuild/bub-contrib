@@ -13,6 +13,9 @@ Contrib packages for the `bub` ecosystem.
 - `packages/bub-schedule`
   - Bub plugin entry point: `schedule`
   - Provides scheduling channel/tools backed by APScheduler with a JSON job store.
+- `packages/bub-tapestore-sqlite`
+  - Bub plugin entry point: `tapestore-sqlite`
+  - Provides a SQLite-backed tape store for Bub conversation history.
 - `packages/bub-discord`
   - Bub plugin entry point: `discord`
   - Provides a Discord channel adapter for Bub message IO.

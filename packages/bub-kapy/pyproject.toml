@@ -1,0 +1,21 @@
+[project]
+name = "bub-kapy"
+version = "0.1.0"
+description = "Kapybara agent plugin for bub"
+readme = "README.md"
+authors = [
+    { name = "Kapybara", email = "kapybara@example.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub>=0.3.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.entry-points.bub]
+kapy = "bub_kapy.plugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"

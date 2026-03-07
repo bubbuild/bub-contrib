@@ -391,18 +391,10 @@ version = "0.1.0"
 source = { editable = "packages/bub-tapestore-sqlite" }
 dependencies = [
     { name = "bub" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "republic" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "republic", specifier = ">=0.5.3" },
-]
+requires-dist = [{ name = "bub", git = "https://github.com/bubbuild/bub.git" }]
 
 [[package]]
 name = "bub-tg-feed"

@@ -9,9 +9,6 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "bub>=0.3.0a1",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "republic>=0.5.3",
 ]
 
 [project.entry-points.bub]

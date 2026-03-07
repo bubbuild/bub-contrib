@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from bub import hookimpl
 from bub.types import State
@@ -9,6 +10,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bub_codex.utils import with_bub_skills
+
+if TYPE_CHECKING:
+    from bub.builtin.agent import Agent
 
 THREADS_FILE = ".bub-codex-threads.json"
 
@@ -55,8 +59,28 @@ class CodexSettings(BaseSettings):
 codex_settings = CodexSettings()
 
 
+def _runtime_agent_from_state(state: State) -> Agent | None:
+    agent = state.get("_runtime_agent")
+    if agent is None:
+        return None
+    return cast("Agent", agent)
+
+
+async def _run_internal_command(prompt: str, session_id: str, state: State) -> str | None:
+    if not prompt.strip().startswith(","):
+        return None
+    agent = _runtime_agent_from_state(state)
+    if agent is None:
+        return None
+    return await agent.run(session_id=session_id, prompt=prompt, state=state)
+
+
 @hookimpl
 async def run_model(prompt: str, session_id: str, state: State) -> str:
+    internal_command_result = await _run_internal_command(prompt, session_id, state)
+    if internal_command_result is not None:
+        return internal_command_result
+
     workspace = workspace_from_state(state)
     thread_id = _load_thread_id(session_id, state)
     command = ["codex", "e"]

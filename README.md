@@ -22,6 +22,9 @@ Contrib packages for the `bub` ecosystem.
 - `packages/bub-web-search`
   - Provides a `web.search` tool backed by the Ollama web search API.
   - Registers the tool only when `BUB_SEARCH_OLLAMA_API_KEY` is configured.
+- `packages/bub-feishu`
+  - Bub plugin entry point: `feishu`
+  - Provides a Feishu channel adapter for Bub message IO.
 
 ## Prerequisites
 

@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.entry-points.bub]
-tape-explore = "bub_tape_explore.plugin:plugin"
+tape-explore = "bub_tape_explore.tools"
 
 [build-system]
 requires = ["pdm-backend"]

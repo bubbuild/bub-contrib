@@ -1,0 +1,23 @@
+[project]
+name = "bub-tape-explore"
+version = "0.1.0"
+description = "Tape map, explore, and window tools for Bub"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub",
+    "republic>0.5.4",
+]
+
+[project.entry-points.bub]
+tape-explore = "bub_tape_explore.plugin:plugin"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm.build]
+includes = ["src/"]

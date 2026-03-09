@@ -14,6 +14,7 @@ members = [
     "bub-discord",
     "bub-feishu",
     "bub-schedule",
+    "bub-tape-explore",
     "bub-tapestore-sqlalchemy",
     "bub-tapestore-sqlite",
     "bub-tg-feed",
@@ -342,6 +343,7 @@ dependencies = [
     { name = "bub-discord" },
     { name = "bub-feishu" },
     { name = "bub-schedule" },
+    { name = "bub-tape-explore" },
     { name = "bub-tapestore-sqlalchemy" },
     { name = "bub-tapestore-sqlite" },
     { name = "bub-tg-feed" },
@@ -355,6 +357,7 @@ requires-dist = [
     { name = "bub-discord", editable = "packages/bub-discord" },
     { name = "bub-feishu", editable = "packages/bub-feishu" },
     { name = "bub-schedule", editable = "packages/bub-schedule" },
+    { name = "bub-tape-explore", editable = "packages/bub-tape-explore" },
     { name = "bub-tapestore-sqlalchemy", editable = "packages/bub-tapestore-sqlalchemy" },
     { name = "bub-tapestore-sqlite", editable = "packages/bub-tapestore-sqlite" },
     { name = "bub-tg-feed", editable = "packages/bub-tg-feed" },
@@ -407,6 +410,17 @@ requires-dist = [
     { name = "apscheduler", specifier = ">=3.11.2" },
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
 ]
+
+[[package]]
+name = "bub-tape-explore"
+version = "0.1.0"
+source = { editable = "packages/bub-tape-explore" }
+dependencies = [
+    { name = "bub" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bub", git = "https://github.com/bubbuild/bub.git" }]
 
 [[package]]
 name = "bub-tapestore-sqlalchemy"

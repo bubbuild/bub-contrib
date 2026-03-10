@@ -6,6 +6,8 @@ import asyncio
 import contextlib
 import json
 import threading
+import uuid
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +15,12 @@ from bub.channels import Channel
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
 import lark_oapi as lark
+from lark_oapi.api.im.v1 import (
+    CreateMessageRequest,
+    CreateMessageRequestBody,
+    ReplyMessageRequest,
+    ReplyMessageRequestBody,
+)
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -123,6 +131,7 @@ class FeishuChannel(Channel):
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
+        self._pending_command_message_ids: dict[str, deque[str]] = {}
 
     @property
     def needs_debounce(self) -> bool:
@@ -139,6 +148,15 @@ class FeishuChannel(Channel):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+
+    async def send(self, message: ChannelMessage) -> None:
+        chat_id = message.chat_id or self._session_chat_id(message.session_id)
+        if not chat_id:
+            logger.warning("feishu.outbound unresolved chat session_id={}", message.session_id)
+            return
+
+        reply_to_message_id = self._pop_command_message_id(message.session_id)
+        await self._send_text(reply_to_message_id, chat_id, message.content)
 
     def _mentions_bot(self, message: FeishuMessage) -> bool:
         if self._config.bot_open_id and any(
@@ -191,6 +209,7 @@ class FeishuChannel(Channel):
         session_id = f"{self.name}:{message.chat_id}"
 
         if message.text.strip().startswith(","):
+            self._pending_command_message_ids.setdefault(session_id, deque()).append(message.message_id)
             return ChannelMessage(
                 session_id=session_id,
                 content=message.text.strip(),
@@ -281,14 +300,8 @@ class FeishuChannel(Channel):
         if normalized is None:
             return
         if not self._is_allowed(normalized):
-            logger.warning(
-                "feishu.inbound.denied chat_id={} sender_id={}",
-                normalized.chat_id,
-                normalized.sender_id,
-            )
             return
         if not normalized.text.strip():
-            logger.warning("feishu.inbound.empty chat_id={} message_id={}", normalized.chat_id, normalized.message_id)
             return
         if self._main_loop is None:
             logger.warning("feishu.inbound no main loop for message {}", normalized.message_id)
@@ -299,12 +312,6 @@ class FeishuChannel(Channel):
 
     async def _dispatch_message(self, message: FeishuMessage) -> None:
         payload = await self._build_message(message)
-        logger.info(
-            "feishu.inbound chat_id={} sender_id={} content={}",
-            message.chat_id,
-            message.sender_id,
-            payload.content[:100],
-        )
         await self._on_receive(payload)
 
     def _run_ws_client(self) -> None:
@@ -351,6 +358,66 @@ class FeishuChannel(Channel):
             if token
         }
         return not (self._allow_users and sender_tokens.isdisjoint(self._allow_users))
+
+    async def _send_text(self, reply_to_message_id: str | None, chat_id: str, text: str) -> None:
+        if self._api_client is None or not text.strip():
+            return
+
+        content = json.dumps({"text": text}, ensure_ascii=False)
+        if reply_to_message_id:
+            reply_request = (
+                ReplyMessageRequest.builder()
+                .message_id(reply_to_message_id)
+                .request_body(
+                    ReplyMessageRequestBody.builder()
+                    .msg_type("text")
+                    .content(content)
+                    .reply_in_thread(False)
+                    .uuid(str(uuid.uuid4()))
+                    .build()
+                )
+                .build()
+            )
+            response = await self._api_client.im.v1.message.areply(reply_request)
+            if response.success():
+                return
+
+        create_request = (
+            CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("text")
+                .content(content)
+                .uuid(str(uuid.uuid4()))
+                .build()
+            )
+            .build()
+        )
+        response = await self._api_client.im.v1.message.acreate(create_request)
+        if response.success():
+            return
+        logger.error(
+            "feishu.create.failed code={} msg={} log_id={}",
+            response.code,
+            response.msg,
+            response.get_log_id(),
+        )
+
+    @staticmethod
+    def _session_chat_id(session_id: str) -> str:
+        _, _, chat_id = session_id.partition(":")
+        return chat_id
+
+    def _pop_command_message_id(self, session_id: str) -> str | None:
+        queue = self._pending_command_message_ids.get(session_id)
+        if not queue:
+            return None
+        message_id = queue.popleft()
+        if not queue:
+            self._pending_command_message_ids.pop(session_id, None)
+        return message_id
 
     @staticmethod
     def _to_payload_dict(data: Any) -> dict[str, Any]:

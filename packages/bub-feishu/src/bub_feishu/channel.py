@@ -7,32 +7,22 @@ import contextlib
 import json
 import threading
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import (
+    CreateMessageRequest,
+    CreateMessageRequestBody,
+    ReplyMessageRequest,
+    ReplyMessageRequestBody,
+)
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-try:
-    import lark_oapi as lark
-    from lark_oapi.api.im.v1 import (
-        CreateMessageRequest,
-        CreateMessageRequestBody,
-        ReplyMessageRequest,
-        ReplyMessageRequestBody,
-    )
-except Exception:  # pragma: no cover - optional dependency during local dev
-    lark = None
-    CreateMessageRequest = Any
-    CreateMessageRequestBody = Any
-    ReplyMessageRequest = Any
-    ReplyMessageRequestBody = Any
-
-
-MESSAGE_CHUNK_LIMIT = 4000
 
 
 @dataclass(frozen=True)
@@ -85,6 +75,16 @@ def exclude_none(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _payload_timestamp(value: str | None) -> float | None:
+    if not value:
+        return None
+    with contextlib.suppress(ValueError):
+        if len(value) >= 13:
+            return int(value) / 1000
+        return float(value)
+    return None
+
+
 def _parse_collection(value: str | None) -> set[str]:
     if not value:
         return set()
@@ -131,8 +131,7 @@ class FeishuChannel(Channel):
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
-        self._latest_message_by_session: dict[str, FeishuMessage] = {}
-        self._bot_message_ids: set[str] = set()
+        self._pending_command_message_ids: dict[str, deque[str]] = {}
 
     @property
     def needs_debounce(self) -> bool:
@@ -156,9 +155,8 @@ class FeishuChannel(Channel):
             logger.warning("feishu.outbound unresolved chat session_id={}", message.session_id)
             return
 
-        source = self._latest_message_by_session.get(message.session_id)
-        for chunk in self._chunk_text(message.content):
-            await asyncio.to_thread(self._send_text_sync, source, chat_id, chunk)
+        reply_to_message_id = self._pop_command_message_id(message.session_id)
+        await self._send_text(reply_to_message_id, chat_id, message.content)
 
     def _mentions_bot(self, message: FeishuMessage) -> bool:
         if self._config.bot_open_id and any(
@@ -170,25 +168,48 @@ class FeishuChannel(Channel):
             return True
         return any("bub" in (mention.name or "").lower() for mention in message.mentions)
 
-    def _is_reply_to_bot(self, message: FeishuMessage) -> bool:
-        return bool(
-            (message.parent_id and message.parent_id in self._bot_message_ids)
-            or (message.root_id and message.root_id in self._bot_message_ids)
-        )
+    async def _is_reply_to_bot(self, message: FeishuMessage) -> bool:
+        """Check whether the parent message was sent by the bot."""
+        if not message.parent_id:
+            return False
 
-    def is_mentioned(self, message: FeishuMessage) -> bool:
+        if self._api_client is None:
+            return False
+
+        try:
+            from lark_oapi.api.im.v1 import GetMessageRequest
+
+            request = (
+                GetMessageRequest.builder()
+                .message_id(message.parent_id)
+                .build()
+            )
+            response = await self._api_client.im.v1.message.aget(request)
+
+            if not response.success():
+                return False
+
+            parent_sender = response.data.sender if response.data else None
+            if not parent_sender:
+                return False
+
+            return parent_sender.id == self._config.bot_open_id
+        except Exception:
+            return False
+
+    async def is_mentioned(self, message: FeishuMessage) -> bool:
         text = message.text.strip()
         if text.startswith(","):
             return True
         if message.chat_type == "p2p":
             return True
-        return self._mentions_bot(message) or self._is_reply_to_bot(message)
+        return self._mentions_bot(message) or await self._is_reply_to_bot(message)
 
-    def _build_message(self, message: FeishuMessage) -> ChannelMessage:
+    async def _build_message(self, message: FeishuMessage) -> ChannelMessage:
         session_id = f"{self.name}:{message.chat_id}"
-        self._latest_message_by_session[session_id] = message
 
         if message.text.strip().startswith(","):
+            self._pending_command_message_ids.setdefault(session_id, deque()).append(message.message_id)
             return ChannelMessage(
                 session_id=session_id,
                 content=message.text.strip(),
@@ -198,35 +219,21 @@ class FeishuChannel(Channel):
                 is_active=True,
             )
 
-        is_reply_to_bot = self._is_reply_to_bot(message)
-        is_exact_bot_mentioned = bool(
-            self._config.bot_open_id
-            and any(mention.open_id == self._config.bot_open_id for mention in message.mentions)
-        )
         payload = exclude_none(
             {
                 "message": message.text,
-                "chat_id": message.chat_id,
-                "chat_type": message.chat_type,
                 "message_id": message.message_id,
-                "message_type": message.message_type,
-                "sender_id": message.sender_id,
-                "sender_open_id": message.sender_open_id,
-                "sender_union_id": message.sender_union_id,
-                "sender_user_id": message.sender_user_id,
-                "sender_type": message.sender_type,
-                "tenant_key": message.tenant_key,
-                "date": message.create_time,
-                "parent_id": message.parent_id,
-                "root_id": message.root_id,
-                "mentions": [
-                    exclude_none({"open_id": item.open_id, "name": item.name, "key": item.key})
-                    for item in message.mentions
-                ],
-                "is_reply_to_bot": is_reply_to_bot,
-                "is_exact_bot_mentioned": is_exact_bot_mentioned,
-                "raw_content": message.raw_content,
-                "event_type": message.event_type,
+                "type": message.message_type,
+                "sender_id": message.sender_id or "",
+                "sender_is_bot": message.sender_type == "bot",
+                "date": _payload_timestamp(message.create_time),
+                "reply_to_message": exclude_none(
+                    {
+                        "message_id": message.parent_id,
+                    }
+                )
+                if message.parent_id
+                else None,
             }
         )
         return ChannelMessage(
@@ -234,12 +241,11 @@ class FeishuChannel(Channel):
             content=json.dumps(payload, ensure_ascii=False),
             channel=self.name,
             chat_id=message.chat_id,
-            is_active=self.is_mentioned(message),
+            is_active=await self.is_mentioned(message),
+            output_channel="null",
         )
 
     async def _main_loop_task(self) -> None:
-        if lark is None:
-            raise RuntimeError("lark-oapi is required for Feishu channel")
         if not self._config.app_id or not self._config.app_secret:
             raise RuntimeError("feishu app_id/app_secret is empty")
         if self._stop_event is None:
@@ -294,14 +300,8 @@ class FeishuChannel(Channel):
         if normalized is None:
             return
         if not self._is_allowed(normalized):
-            logger.warning(
-                "feishu.inbound.denied chat_id={} sender_id={}",
-                normalized.chat_id,
-                normalized.sender_id,
-            )
             return
         if not normalized.text.strip():
-            logger.warning("feishu.inbound.empty chat_id={} message_id={}", normalized.chat_id, normalized.message_id)
             return
         if self._main_loop is None:
             logger.warning("feishu.inbound no main loop for message {}", normalized.message_id)
@@ -311,13 +311,7 @@ class FeishuChannel(Channel):
             future.result()
 
     async def _dispatch_message(self, message: FeishuMessage) -> None:
-        payload = self._build_message(message)
-        logger.info(
-            "feishu.inbound chat_id={} sender_id={} content={}",
-            message.chat_id,
-            message.sender_id,
-            payload.content[:100],
-        )
+        payload = await self._build_message(message)
         await self._on_receive(payload)
 
     def _run_ws_client(self) -> None:
@@ -365,15 +359,15 @@ class FeishuChannel(Channel):
         }
         return not (self._allow_users and sender_tokens.isdisjoint(self._allow_users))
 
-    def _send_text_sync(self, source: FeishuMessage | None, chat_id: str, text: str) -> None:
-        if self._api_client is None:
+    async def _send_text(self, reply_to_message_id: str | None, chat_id: str, text: str) -> None:
+        if self._api_client is None or not text.strip():
             return
 
         content = json.dumps({"text": text}, ensure_ascii=False)
-        if source is not None and source.message_id:
-            reply_request: ReplyMessageRequest = (
+        if reply_to_message_id:
+            reply_request = (
                 ReplyMessageRequest.builder()
-                .message_id(source.message_id)
+                .message_id(reply_to_message_id)
                 .request_body(
                     ReplyMessageRequestBody.builder()
                     .msg_type("text")
@@ -384,18 +378,11 @@ class FeishuChannel(Channel):
                 )
                 .build()
             )
-            response = self._api_client.im.v1.message.reply(reply_request)
+            response = await self._api_client.im.v1.message.areply(reply_request)
             if response.success():
-                self._record_bot_message_id(response)
                 return
-            logger.warning(
-                "feishu.reply.failed code={} msg={} log_id={}",
-                response.code,
-                response.msg,
-                response.get_log_id(),
-            )
 
-        create_request: CreateMessageRequest = (
+        create_request = (
             CreateMessageRequest.builder()
             .receive_id_type("chat_id")
             .request_body(
@@ -408,9 +395,8 @@ class FeishuChannel(Channel):
             )
             .build()
         )
-        response = self._api_client.im.v1.message.create(create_request)
+        response = await self._api_client.im.v1.message.acreate(create_request)
         if response.success():
-            self._record_bot_message_id(response)
             return
         logger.error(
             "feishu.create.failed code={} msg={} log_id={}",
@@ -419,16 +405,19 @@ class FeishuChannel(Channel):
             response.get_log_id(),
         )
 
-    def _record_bot_message_id(self, response: Any) -> None:
-        with contextlib.suppress(Exception):
-            message_id = getattr(response.data, "message_id", None)
-            if message_id:
-                self._bot_message_ids.add(str(message_id))
-
     @staticmethod
     def _session_chat_id(session_id: str) -> str:
         _, _, chat_id = session_id.partition(":")
         return chat_id
+
+    def _pop_command_message_id(self, session_id: str) -> str | None:
+        queue = self._pending_command_message_ids.get(session_id)
+        if not queue:
+            return None
+        message_id = queue.popleft()
+        if not queue:
+            self._pending_command_message_ids.pop(session_id, None)
+        return message_id
 
     @staticmethod
     def _to_payload_dict(data: Any) -> dict[str, Any]:
@@ -498,20 +487,3 @@ class FeishuChannel(Channel):
         if not normalized.chat_id or not normalized.message_id:
             return None
         return normalized
-
-    @staticmethod
-    def _chunk_text(text: str, *, limit: int = MESSAGE_CHUNK_LIMIT) -> list[str]:
-        if len(text) <= limit:
-            return [text]
-        chunks: list[str] = []
-        remaining = text
-        while remaining:
-            if len(remaining) <= limit:
-                chunks.append(remaining)
-                break
-            split_at = remaining.rfind("\n", 0, limit)
-            if split_at <= 0:
-                split_at = limit
-            chunks.append(remaining[:split_at].rstrip())
-            remaining = remaining[split_at:].lstrip("\n")
-        return [chunk for chunk in chunks if chunk]

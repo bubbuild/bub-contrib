@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "requests>=2.31.0",
+#     "httpx>=0.27.0",
 # ]
 # ///
 
@@ -12,55 +12,7 @@ import os
 import sys
 from typing import Any
 
-import requests
-
-OPENAPI_BASE_URL = "https://open.larksuite.com/open-apis"
-TOKEN_URL = f"{OPENAPI_BASE_URL}/auth/v3/tenant_access_token/internal"
-
-
-def _raise_for_api_error(payload: dict[str, Any], *, prefix: str) -> None:
-    if payload.get("code") == 0:
-        return
-    raise RuntimeError(f"{prefix}: {payload.get('msg') or 'unknown error'}")
-
-
-def get_tenant_access_token(app_id: str, app_secret: str) -> str:
-    response = requests.post(
-        TOKEN_URL,
-        json={"app_id": app_id, "app_secret": app_secret},
-        timeout=30,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    _raise_for_api_error(payload, prefix="Failed to get token")
-    return str(payload["tenant_access_token"])
-
-
-def _authorized_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-
-def _request_json(
-    method: str,
-    path: str,
-    *,
-    token: str,
-    params: dict[str, Any] | None = None,
-    payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    response = requests.request(
-        method,
-        f"{OPENAPI_BASE_URL}{path}",
-        headers=_authorized_headers(token),
-        params=params,
-        json=payload,
-        timeout=30,
-    )
-    response.raise_for_status()
-    return response.json()
+from feishu_utils import get_tenant_access_token, request_json
 
 
 def send_text_message(
@@ -73,13 +25,13 @@ def send_text_message(
     token = get_tenant_access_token(app_id, app_secret)
     content = json.dumps({"text": text}, ensure_ascii=False)
     if reply_to_message_id:
-        return _request_json(
+        return request_json(
             "POST",
             f"/im/v1/messages/{reply_to_message_id}/reply",
             token=token,
             payload={"content": content, "msg_type": "text", "reply_in_thread": False},
         )
-    return _request_json(
+    return request_json(
         "POST",
         "/im/v1/messages",
         token=token,
@@ -101,12 +53,16 @@ def send_card_message(
         "header": {"title": {"tag": "plain_text", "content": title}},
         "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": content}}],
     }
-    return _request_json(
+    return request_json(
         "POST",
         "/im/v1/messages",
         token=token,
         params={"receive_id_type": "chat_id"},
-        payload={"receive_id": chat_id, "msg_type": "interactive", "content": json.dumps(card)},
+        payload={
+            "receive_id": chat_id,
+            "msg_type": "interactive",
+            "content": json.dumps(card),
+        },
     )
 
 
@@ -121,7 +77,9 @@ def send_message(
     reply_to_message_id: str | None = None,
 ) -> dict[str, Any]:
     if message_format == "card":
-        return send_card_message(app_id, app_secret, chat_id, title or "Bub", content)
+        return send_card_message(
+            app_id, app_secret, chat_id, title or "Bub", content
+        )
     return send_text_message(
         app_id,
         app_secret,
@@ -142,7 +100,9 @@ def main() -> None:
         help="Message format to send",
     )
     parser.add_argument("--title", "-t", help="Card title when --format card is used")
-    parser.add_argument("--reply-to", "-r", help="Message ID to reply to for text messages")
+    parser.add_argument(
+        "--reply-to", "-r", help="Message ID to reply to for text messages"
+    )
     parser.add_argument("--app-id", default=os.environ.get("BUB_FEISHU_APP_ID"))
     parser.add_argument("--app-secret", default=os.environ.get("BUB_FEISHU_APP_SECRET"))
     args = parser.parse_args()

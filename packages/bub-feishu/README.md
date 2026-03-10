@@ -6,9 +6,6 @@ Feishu channel adapter for `bub`.
 
 - Channel implementation: `FeishuChannel` (`name = "feishu"`)
 - Inbound message adaptation from Feishu to Bub `ChannelMessage`
-- Outbound sending to Feishu chats with:
-  - reply-to-latest-message behavior per session when possible
-  - automatic chunking for long text outputs
 - Packaged Feishu skill resources under `bub_skills/feishu`
 - `feishu_send.py` supports both text and card sending via `--format text|card`
 - `feishu_edit.py` updates an existing bot message
@@ -51,26 +48,21 @@ uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=pac
 Inbound non-command messages are encoded as JSON string content, including fields like:
 
 - `message`
-- `chat_id`
-- `chat_type`
 - `message_id`
-- `message_type`
+- `type`
 - `sender_id`
-- `sender_open_id`
-- `sender_union_id`
-- `sender_user_id`
-- `tenant_key`
+- `sender_is_bot`
 - `date`
-- `parent_id`
-- `root_id`
-- `mentions`
-- `is_reply_to_bot`
-- `is_exact_bot_mentioned`
-- `event_type`
+- `reply_to_message`
 
 ## Outbound Notes
 
-- Uses `session_id` to resolve destination chat.
-- Prefers replying to the latest inbound message in the same session when possible.
-- Splits long text output into multiple Feishu messages.
+- Inbound non-command messages set `output_channel="null"` to disable channel outbound routing.
+- The channel is inbound-only; Feishu send/edit/reaction actions are handled through the packaged scripts or direct OpenAPI calls.
 - Reaction support is available through the Feishu message reaction API.
+
+## TODO
+
+- Evaluate Feishu bot menu / chat menu tree as a Telegram-like command entrypoint for common actions and submenus.
+- Evaluate a Feishu-native processing feedback mechanism comparable to Telegram typing updates.
+- Evaluate whether voice-message handling is feasible and worth supporting in the Feishu skill/runtime.

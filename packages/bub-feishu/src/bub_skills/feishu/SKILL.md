@@ -17,29 +17,31 @@ Assumption: `BUB_FEISHU_APP_ID` and `BUB_FEISHU_APP_SECRET` are already availabl
 
 Collect these fields before execution whenever possible:
 
-- `chat_id`: required for sending a new message or card
+- `chat_id`: required for sending a new message or card; obtain it from the current channel/session context, not from the inbound JSON payload
 - `message` / `text` / `content`: required for sending or editing content
 - `message_id`: required for reply, edit, and reaction actions
-- `chat_type`: used to determine whether the source is `p2p` or a group chat
-- `mentions` / `parent_id` / `root_id`: used to detect thread context and explicit bot addressing
+- `reply_to_message.message_id`: optional source reference from inbound metadata; use it only for context, not as a replacement for the current message id
 
 ## Execution Policy
 
-1. When handling the current Feishu conversation, if a user `message_id` is available, prefer reply semantics instead of sending an unrelated new message.
-2. Prefer plain text for short, direct, conversational responses.
-3. Prefer cards for Markdown content, status summaries, step lists, and structured updates.
-4. Long-running tasks may send a short acknowledgment first, then use edits or follow-up messages for progress updates.
-5. Only call scripts when a Feishu-specific platform action is required; otherwise return the final content directly.
-6. When only lightweight acknowledgment is needed, prefer the Feishu message reaction API; if explanation or context is needed, send a normal reply instead.
+1. If handling an active Feishu conversation and `message_id` is known, prefer reply semantics instead of sending an unrelated new message.
+2. If source metadata says sender is a bot (`sender_is_bot=true`), do not assume reply mode is appropriate; prefer a normal message unless there is a clear user-authored message to reply to.
+3. Prefer plain text for short, direct, conversational responses.
+4. Prefer cards for Markdown content, status summaries, step lists, and structured updates.
+5. For long-running tasks, send one acknowledgment first, then prefer edits or one follow-up update to close the loop.
+6. For multi-line text passed through shell commands, prefer heredoc command substitution instead of embedding raw line breaks in quoted strings.
+7. Only call scripts when a Feishu-specific platform action is required; otherwise return the final content directly.
+8. When only lightweight acknowledgment is needed, prefer the Feishu message reaction API; if explanation or context is needed, use a normal reply instead.
+9. Do not assume the Feishu channel will send replies automatically; all platform actions must go through the Feishu scripts or direct OpenAPI calls.
 
 ## Active Response Policy
 
-When this skill is in scope, prefer timely and proactive Feishu updates:
+When this skill is in scope, prefer proactive and timely Feishu updates:
 
-- Send a short acknowledgment when a new task starts
-- Send progress updates for long-running work when appropriate
-- Send a completion update when work finishes
-- Send a problem report immediately when execution is blocked or fails
+- Send an immediate acknowledgment for newly assigned tasks
+- Send progress updates for long-running work using message edits when possible
+- Send completion notifications when work finishes
+- Send important status or failure notifications without waiting for follow-up prompts
 - If an acknowledgment has already been sent, prefer editing that message; send a new one only when editing is not appropriate
 
 Recommended flow:
@@ -63,11 +65,10 @@ When explanation, context, risk notes, result summaries, or next steps are neede
 
 ## Special Message Policy
 
-- In group chats, do not proactively join unless the bot is explicitly mentioned, replied to, or the message content includes `bub`.
-- In group chats, if the bot is explicitly mentioned, replied to, or the current thread/reply chain already points to a previous bot message, continue within the same context.
-- Treat `p2p` private chats as active by default and reply directly without requiring an explicit mention.
+- Respect the current runtime context prepared by the channel: only act when the current message has already reached the agent.
+- If `sender_is_bot=true`, prefer a normal message unless a reply target is explicitly required and known to be correct.
 - When only lightweight acknowledgment is needed, prefer reactions; once explanation, risk notes, result summaries, or next steps are needed, switch to a normal reply.
-- For thread messages, reply chains, and sequential status updates, prefer staying in the original context; when possible, close the loop by editing, otherwise send a follow-up message.
+- For reply chains and sequential status updates, prefer staying in the original context; when possible, close the loop by editing, otherwise send a follow-up message.
 - Long-running tasks should follow an acknowledgment → progress → completion / blocked lifecycle so the user is not left without feedback.
 - When blocked, failing, or waiting on an external dependency, send a problem report immediately, including failure point, completed work, impact, and next action.
 - If `message_id` is missing, do not perform reply, edit, or reaction actions; if `chat_id` is missing, do not perform send actions.
@@ -75,21 +76,19 @@ When explanation, context, risk notes, result summaries, or next steps are neede
 
 ## Runtime Context Mapping
 
-The current Feishu channel message JSON usually includes:
+The current Feishu channel message JSON includes:
 
-- `chat_id`: current conversation ID
-- `message_id`: current user message ID
 - `message`: normalized text content
-- `chat_type`: `p2p` or group chat
-- `sender_id` / `sender_open_id`
-- `mentions`
-- `parent_id`
-- `root_id`
-- `event_type`
+- `message_id`: current user message ID
+- `type`: normalized message type
+- `sender_id`
+- `sender_is_bot`
+- `date`
+- `reply_to_message`
 
 Typical mappings:
 
-- Send a new message to the current conversation: use `chat_id`
+- Send a new message to the current conversation: use `chat_id` from the current channel/session context
 - Reply to the current user message: use `message_id` as the reply target
 - Edit a previously sent bot message: use the target bot message `message_id`
 - Add a reaction to the current message: use the current message `message_id`
@@ -103,6 +102,18 @@ Paths are relative to this skill directory.
 uv run ./scripts/feishu_send.py \
   --chat-id <CHAT_ID> \
   --content "<TEXT>" \
+  --format text
+
+# Send multi-line text message (heredoc)
+uv run ./scripts/feishu_send.py \
+  --chat-id <CHAT_ID> \
+  --content "$(cat <<'EOF'
+Build finished successfully.
+Summary:
+- 12 tests passed
+- 0 failures
+EOF
+)" \
   --format text
 
 # Reply to a specific message
@@ -148,9 +159,7 @@ For actions not covered by the packaged scripts, such as reactions, call the Fei
 
 ## API Docs
 
-- Feishu Open Platform: `https://open.feishu.cn/`
 - Feishu OpenAPI docs: `https://open.feishu.cn/document/`
-- Lark Open Platform: `https://open.larksuite.com/`
 - Lark OpenAPI docs: `https://open.larksuite.com/document/`
 - For IM APIs, see the official `IM` / `Message` documentation
 - Common endpoints:
@@ -163,6 +172,7 @@ For actions not covered by the packaged scripts, such as reactions, call the Fei
 
 - If text or card sending fails, first check `chat_id`, message format, application permissions, and credentials.
 - If card sending fails, fall back to `feishu_send.py --format text`.
+- If reply sending fails, fall back to sending a normal message to the same `chat_id`.
 - If editing fails, fall back to sending a new message and state that it is the updated result.
 - If a reaction fails, fall back to a short text acknowledgment.
 - If `message_id` is missing, do not perform reply, edit, or reaction actions.

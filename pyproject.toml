@@ -8,6 +8,7 @@ dependencies = [
     "bub",
     "bub-codex",
     "bub-discord",
+    "bub-dingtalk",
     "bub-schedule",
     "bub-tapestore-sqlalchemy",
     "bub-tapestore-sqlite",
@@ -24,6 +25,7 @@ bub = { git = "https://github.com/bubbuild/bub.git" }
 bub-tg-feed = { workspace = true }
 bub-codex = { workspace = true }
 bub-discord = { workspace = true }
+bub-dingtalk = { workspace = true }
 bub-schedule = { workspace = true }
 bub-tapestore-sqlalchemy = { workspace = true }
 bub-tapestore-sqlite = { workspace = true }

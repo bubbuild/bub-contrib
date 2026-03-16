@@ -1,0 +1,22 @@
+[project]
+name = "bub-dingtalk"
+version = "0.1.0"
+description = "DingTalk channel for Bub"
+readme = "README.md"
+authors = [{ name = "Chojan Shang", email = "psiace@apache.org" }]
+requires-python = ">=3.12"
+dependencies = [
+    "bub",
+    "dingtalk-stream>=0.24.0",
+]
+
+[project.entry-points.bub]
+dingtalk = "bub_dingtalk.plugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["bub_dingtalk", "skills.dingtalk"]
+source-include = ["src/skills/dingtalk/SKILL.md", "src/skills/dingtalk/scripts/*.py"]

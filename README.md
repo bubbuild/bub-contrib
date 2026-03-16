@@ -22,6 +22,9 @@ Contrib packages for the `bub` ecosystem.
 - `packages/bub-discord`
   - Bub plugin entry point: `discord`
   - Provides a Discord channel adapter for Bub message IO.
+- `packages/bub-dingtalk`
+  - Bub plugin entry point: `dingtalk`
+  - Provides a DingTalk Stream Mode channel adapter for Bub message IO.
 - `packages/bub-web-search`
   - Provides a `web.search` tool backed by the Ollama web search API.
   - Registers the tool only when `BUB_SEARCH_OLLAMA_API_KEY` is configured.
@@ -39,7 +42,7 @@ Contrib packages for the `bub` ecosystem.
 To install an individual package, run:
 
 ```bash
-uv pip install git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-schedule
+uv pip install git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/<package-name>
 ```
 
 ## Development Setup

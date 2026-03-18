@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import bub_tapestore_redis.plugin as plugin
 from bub_tapestore_redis.plugin import RedisTapeStoreSettings
 from bub_tapestore_redis.store import DEFAULT_KEY_PREFIX, RedisTapeStore
@@ -38,12 +40,16 @@ def test_tape_store_from_env_returns_fresh_store(monkeypatch) -> None:
     first = plugin.tape_store_from_env()
     second = plugin.tape_store_from_env()
 
-    assert isinstance(first, RedisTapeStore)
-    assert isinstance(second, RedisTapeStore)
-    assert first is not second
-    assert first._client.connection_pool.connection_kwargs["host"] == "env.example"
-    assert first._client.connection_pool.connection_kwargs["db"] == 2
-    assert first._keys.tapes == "env:tapes:tapes"
+    try:
+        assert isinstance(first, RedisTapeStore)
+        assert isinstance(second, RedisTapeStore)
+        assert first is not second
+        assert first._client.connection_pool.connection_kwargs["host"] == "env.example"
+        assert first._client.connection_pool.connection_kwargs["db"] == 2
+        assert first._keys.tapes == "{ZW52OnRhcGVz}:env:tapes:tapes"
+    finally:
+        asyncio.run(first._client.aclose())
+        asyncio.run(second._client.aclose())
 
 
 def test_plugin_provides_singleton_store(monkeypatch) -> None:
@@ -54,7 +60,11 @@ def test_plugin_provides_singleton_store(monkeypatch) -> None:
     first = plugin.provide_tape_store()
     second = plugin.provide_tape_store()
 
-    assert isinstance(first, RedisTapeStore)
-    assert first is second
-    assert first._client.connection_pool.connection_kwargs["host"] == "cached.example"
-    assert first._client.connection_pool.connection_kwargs["db"] == 4
+    try:
+        assert isinstance(first, RedisTapeStore)
+        assert first is second
+        assert first._client.connection_pool.connection_kwargs["host"] == "cached.example"
+        assert first._client.connection_pool.connection_kwargs["db"] == 4
+    finally:
+        plugin._store.cache_clear()
+        asyncio.run(first._client.aclose())

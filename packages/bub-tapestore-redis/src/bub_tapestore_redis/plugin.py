@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import lru_cache
 
-import redis
+import redis.asyncio as redis
 from bub import hookimpl
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict

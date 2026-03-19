@@ -1,0 +1,15 @@
+[project]
+name = "bub-tapestore-redis"
+version = "0.1.0"
+description = "Redis tape store plugin for Bub"
+readme = "README.md"
+authors = [{ name = "Johnson Lee", email = "0xjohnsonlee@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = ["pydantic-settings", "redis>=6.0.0", "republic>=0.5.4"]
+
+[project.entry-points.bub]
+tapestore-redis = "bub_tapestore_redis.plugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"

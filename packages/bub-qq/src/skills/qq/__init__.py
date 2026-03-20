@@ -1,0 +1,1 @@
+"""QQ skill package."""

@@ -52,9 +52,10 @@ class SQLiteTapeStore:
     ) -> None:
         from bub.builtin.agent import _build_llm
         from bub.builtin.settings import AgentSettings
+        from republic.tape.context import TapeContext
 
         self._path = Path(path)
-        self._llm = _build_llm(AgentSettings(), self)  # type: ignore
+        self._llm = _build_llm(AgentSettings(), self, TapeContext())  # type: ignore[arg-type]
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._busy_timeout_ms = busy_timeout_ms
         self._journal_mode = normalize_journal_mode(journal_mode)
@@ -198,9 +199,7 @@ class SQLiteTapeStore:
             raise RuntimeError("No embedding model configured for tape store.")
         provider, model = self._embedding_model.split(":", 1)
         llm: AnyLLM = self._llm._core.get_client(provider)
-        response = await llm.aembedding(
-            model, texts, dimensions=self._vector_dimensions
-        )
+        response = await llm.aembedding(model, texts)
         return self._embedding_response_to_vectors(response)
 
     async def _fetch_by_semantic_query(

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 from republic import TapeEntry, TapeQuery
 from republic.core.results import ErrorPayload
+from republic.tape.context import TapeContext
 
-import bub_tapestore_sqlite.store as store_module
 from bub_tapestore_sqlite.store import SQLiteTapeStore
 
 
@@ -28,6 +28,27 @@ def _embedding_response(vectors: list[list[float]]) -> SimpleNamespace:
     return SimpleNamespace(
         data=[SimpleNamespace(embedding=vector) for vector in vectors],
     )
+
+
+def _mock_embedding_client(monkeypatch, fake_aembedding):
+    from bub.builtin import agent as agent_module
+
+    build_calls: list[TapeContext] = []
+
+    def fake_build_llm(settings, tape_store, tape_context):
+        del settings, tape_store
+        assert isinstance(tape_context, TapeContext)
+        build_calls.append(tape_context)
+        return SimpleNamespace(
+            _core=SimpleNamespace(
+                get_client=lambda provider: SimpleNamespace(
+                    aembedding=fake_aembedding,
+                )
+            )
+        )
+
+    monkeypatch.setattr(agent_module, "_build_llm", fake_build_llm)
+    return build_calls
 
 
 def test_append_list_and_reset_tapes(tmp_path: Path) -> None:
@@ -169,17 +190,13 @@ def test_store_constructor_validates_modes(tmp_path: Path) -> None:
 
 def test_semantic_query_flows_through_fetch_all(tmp_path: Path, monkeypatch) -> None:
     async def scenario() -> None:
-        store = await _semantic_store(tmp_path)
-        tape = "session__vec"
-        await store.append(tape, TapeEntry.message({"content": "alpha"}))
-        await store.append(tape, TapeEntry.message({"content": "beta"}))
-        await store.append(tape, TapeEntry.system("ignored"))
-
-        calls: list[list[str] | str] = []
+        calls: list[list[str]] = []
+        kwargs_seen: list[dict[str, object]] = []
 
         async def fake_aembedding(model: str, inputs, **kwargs) -> SimpleNamespace:
             calls.append(inputs)
-            if isinstance(inputs, list):
+            kwargs_seen.append(dict(kwargs))
+            if inputs == ["alpha", "beta"]:
                 assert inputs == ["alpha", "beta"]
                 return _embedding_response(
                     [
@@ -187,10 +204,15 @@ def test_semantic_query_flows_through_fetch_all(tmp_path: Path, monkeypatch) -> 
                         [0.8, 0.2, 0.0],
                     ]
                 )
-            assert inputs == "alpha question"
+            assert inputs == ["alpha question"]
             return _embedding_response([[0.9, 0.1, 0.0]])
 
-        monkeypatch.setattr(store_module.any_llm, "aembedding", fake_aembedding)
+        build_calls = _mock_embedding_client(monkeypatch, fake_aembedding)
+        store = await _semantic_store(tmp_path)
+        tape = "session__vec"
+        await store.append(tape, TapeEntry.message({"content": "alpha"}))
+        await store.append(tape, TapeEntry.message({"content": "beta"}))
+        await store.append(tape, TapeEntry.system("ignored"))
 
         entries = list(
             await TapeQuery(tape, store)
@@ -204,7 +226,9 @@ def test_semantic_query_flows_through_fetch_all(tmp_path: Path, monkeypatch) -> 
             "beta",
             "alpha",
         ]
-        assert calls == [["alpha", "beta"], "alpha question"]
+        assert calls == [["alpha", "beta"], ["alpha question"]]
+        assert kwargs_seen == [{}, {}]
+        assert len(build_calls) == 1
         await store.close()
 
     asyncio.run(scenario())
@@ -214,11 +238,7 @@ def test_semantic_query_skips_reembedding_indexed_messages(
     tmp_path: Path, monkeypatch
 ) -> None:
     async def scenario() -> None:
-        store = await _semantic_store(tmp_path)
-        tape = "session__vec_skip"
-        await store.append(tape, TapeEntry.message({"content": "alpha"}))
-
-        calls: list[list[str] | str] = []
+        calls: list[list[str]] = []
 
         async def fake_aembedding(model: str, inputs, **kwargs) -> SimpleNamespace:
             calls.append(inputs)
@@ -226,14 +246,18 @@ def test_semantic_query_skips_reembedding_indexed_messages(
                 return _embedding_response([[1.0, 0.0, 0.0]])
             return _embedding_response([[1.0, 0.0, 0.0]])
 
-        monkeypatch.setattr(store_module.any_llm, "aembedding", fake_aembedding)
+        build_calls = _mock_embedding_client(monkeypatch, fake_aembedding)
+        store = await _semantic_store(tmp_path)
+        tape = "session__vec_skip"
+        await store.append(tape, TapeEntry.message({"content": "alpha"}))
 
         first = list(await TapeQuery(tape, store).query("alpha").all())
         second = list(await TapeQuery(tape, store).query("alpha").all())
 
         assert len(first) == 1
         assert len(second) == 1
-        assert calls == [["alpha"], "alpha", "alpha"]
+        assert calls == [["alpha"], ["alpha"], ["alpha"]]
+        assert len(build_calls) == 1
         await store.close()
 
     asyncio.run(scenario())
@@ -265,11 +289,6 @@ def test_query_falls_back_to_ilike_without_embedding_model(tmp_path: Path) -> No
 
 def test_semantic_query_rejects_dimension_mismatch(tmp_path: Path, monkeypatch) -> None:
     async def scenario() -> None:
-        store = await _semantic_store(tmp_path)
-        tape = "session__bad_vec"
-        await store.append(tape, TapeEntry.message({"content": "alpha"}))
-        await store.append(tape, TapeEntry.message({"content": "beta"}))
-
         responses = [
             _embedding_response([[1.0, 0.0, 0.0], [0.8, 0.2, 0.0]]),
             _embedding_response([[0.9, 0.1, 0.0]]),
@@ -279,13 +298,18 @@ def test_semantic_query_rejects_dimension_mismatch(tmp_path: Path, monkeypatch) 
         async def fake_aembedding(model: str, inputs, **kwargs) -> SimpleNamespace:
             return responses.pop(0)
 
-        monkeypatch.setattr(store_module.any_llm, "aembedding", fake_aembedding)
+        build_calls = _mock_embedding_client(monkeypatch, fake_aembedding)
+        store = await _semantic_store(tmp_path)
+        tape = "session__bad_vec"
+        await store.append(tape, TapeEntry.message({"content": "alpha"}))
+        await store.append(tape, TapeEntry.message({"content": "beta"}))
 
         assert len(list(await TapeQuery(tape, store).query("alpha").all())) == 2
         await store.append(tape, TapeEntry.message({"content": "gamma"}))
         with pytest.raises(RuntimeError, match="Embedding dimensions 2 do not match"):
             await TapeQuery(tape, store).query("alpha").all()
 
+        assert len(build_calls) == 1
         await store.close()
 
     asyncio.run(scenario())

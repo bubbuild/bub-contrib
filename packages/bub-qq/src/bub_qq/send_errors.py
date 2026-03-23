@@ -5,6 +5,32 @@ from loguru import logger
 from .openapi_errors import QQOpenAPIError
 
 
+def is_duplicate_send_error(exc: QQOpenAPIError) -> bool:
+    return exc.error_code == 40054005
+
+
+def log_send_duplicate_error(
+    exc: QQOpenAPIError,
+    *,
+    session_id: str,
+    openid: str,
+    msg_id: str,
+    msg_seq: int,
+    content_hash: str,
+) -> None:
+    logger.warning(
+        "qq.send failed session_id={} openid={} msg_id={} msg_seq={} reason=already_sent source=remote_dedup_hit code={} trace_id={} content_hash={} error={}",
+        session_id,
+        openid,
+        msg_id,
+        msg_seq,
+        exc.error_code,
+        exc.trace_id or "-",
+        content_hash,
+        exc.error_message,
+    )
+
+
 def log_send_error(
     exc: QQOpenAPIError,
     *,
@@ -16,6 +42,16 @@ def log_send_error(
 ) -> None:
     code = exc.error_code
     trace_id = exc.trace_id or "-"
+    if is_duplicate_send_error(exc):
+        log_send_duplicate_error(
+            exc,
+            session_id=session_id,
+            openid=openid,
+            msg_id=msg_id,
+            msg_seq=msg_seq,
+            content_hash="-",
+        )
+        return
     if code == 304027:
         logger.warning(
             "qq.send failed session_id={} openid={} msg_id={} msg_seq={} reason=reply_expired trace_id={}",

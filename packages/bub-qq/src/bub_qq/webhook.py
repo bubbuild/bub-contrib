@@ -105,14 +105,7 @@ class QQWebhookServer:
             self._write_json(handler, HTTPStatus.SERVICE_UNAVAILABLE, {"error": "loop not ready"})
             return
 
-        future = asyncio.run_coroutine_threadsafe(self._on_payload(payload), self._loop)
-        try:
-            future.result(timeout=self._config.webhook_callback_timeout_seconds)
-        except Exception as exc:
-            logger.exception("qq.webhook.callback_failed op={} t={}", payload.get("op"), payload.get("t"))
-            self._write_json(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
-            return
-
+        self._schedule_payload(payload)
         self._write_json(handler, HTTPStatus.OK, {"op": 12})
 
     def _handle_validation(
@@ -164,6 +157,25 @@ class QQWebhookServer:
             body=body,
             signature_hex=signature,
         )
+
+    def _schedule_payload(self, payload: dict[str, Any]) -> None:
+        if self._loop is None:
+            raise RuntimeError("qq webhook loop not ready")
+
+        future = asyncio.run_coroutine_threadsafe(self._on_payload(payload), self._loop)
+        future.add_done_callback(
+            lambda task: self._log_callback_result(
+                task,
+                op=payload.get("op"),
+                event_type=payload.get("t"),
+            )
+        )
+
+    def _log_callback_result(self, future: Any, *, op: Any, event_type: Any) -> None:
+        try:
+            future.result()
+        except Exception:
+            logger.exception("qq.webhook.callback_failed op={} t={}", op, event_type)
 
     def _write_json(
         self,

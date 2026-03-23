@@ -19,12 +19,11 @@ def main(
     openid: str = typer.Option(..., "--openid", help="QQ user_openid for the current C2C conversation"),
     content: str = typer.Option(..., "--content", help="Reply text to send"),
     msg_id: str = typer.Option(..., "--msg-id", help="Inbound QQ message id to reply to"),
-    msg_seq: int = typer.Option(1, "--msg-seq", help="Reply sequence number for the current inbound message"),
 ) -> None:
-    asyncio.run(_send(openid=openid, content=content, msg_id=msg_id, msg_seq=msg_seq))
+    asyncio.run(_send(openid=openid, content=content, msg_id=msg_id))
 
 
-async def _send(*, openid: str, content: str, msg_id: str, msg_seq: int) -> None:
+async def _send(*, openid: str, content: str, msg_id: str) -> None:
     config = QQConfig()
     if not config.appid or not config.secret:
         raise RuntimeError("qq appid/secret is empty")
@@ -36,7 +35,7 @@ async def _send(*, openid: str, content: str, msg_id: str, msg_seq: int) -> None
             openid=openid,
             content=content,
             msg_id=msg_id,
-            msg_seq=msg_seq,
+            msg_seq=1,
         )
     finally:
         await openapi.aclose()

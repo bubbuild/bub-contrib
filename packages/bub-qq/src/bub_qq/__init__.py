@@ -4,6 +4,7 @@ from .auth import QQTokenProvider
 from .channel import QQChannel
 from .config import QQConfig
 from .gateway import QQGatewayInfo
+from .gateway import QQSessionStartLimit
 from .models import QQC2CMessage
 from .openapi import QQOpenAPI
 from .openapi_errors import QQOpenAPIError
@@ -16,6 +17,7 @@ __all__ = [
     "QQGatewayInfo",
     "QQOpenAPI",
     "QQOpenAPIError",
+    "QQSessionStartLimit",
     "QQTokenProvider",
     "QQWebhookServer",
     "QQWebSocketClient",

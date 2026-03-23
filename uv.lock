@@ -434,18 +434,14 @@ version = "0.1.0"
 source = { editable = "packages/bub-qq" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "bub" },
     { name = "cryptography" },
-    { name = "httpx" },
     { name = "pydantic-settings" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
-    { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "cryptography", specifier = ">=45.0.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
 

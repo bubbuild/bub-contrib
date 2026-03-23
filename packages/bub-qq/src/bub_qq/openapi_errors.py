@@ -129,6 +129,7 @@ KNOWN_OPENAPI_ERRORS: dict[int, QQKnownOpenAPIError] = {
     50055: _e(50055, "InvalidMarkdownContent", "无效的 markdown content", "request", False),
     50056: _e(50056, "MarkdownContentForbidden", "不允许发送 markdown content", "permission", False),
     50057: _e(50057, "MarkdownModeConflict", "markdown 参数只支持原生语法或者模版二选一", "request", False),
+    40054005: _e(40054005, "MessageDeduplicated", "消息被去重，请检查请求 msgseq", "reply", False),
     301000: _e(301000, "ChannelPermissionParamInvalid", "参数错误", "channel_permission", False),
     301001: _e(301001, "ChannelPermissionQueryGuildError", "查询频道信息错误", "channel_permission", True),
     301002: _e(301002, "ChannelPermissionQueryError", "查询子频道权限错误", "channel_permission", True),

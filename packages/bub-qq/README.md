@@ -19,16 +19,21 @@ Implemented today:
 - `C2C_MESSAGE_CREATE` parsing and Bub `ChannelMessage` adaptation for single-chat inbound events
 - Inbound `msg_id` dedupe cache to avoid duplicate passive replies on repeated deliveries
 - C2C text replies through `POST /v2/users/{openid}/messages` using passive reply `msg_id + msg_seq`
+- Standard Bub outbound routing for normal QQ text replies
+- In-memory idempotency for repeated sends on the same `session_id + msg_id`
 - OpenAPI failures now expose HTTP status, platform business code, and `X-Tps-trace-ID`
 - OpenAPI known error codes now live in a dedicated catalog module with category and retryability metadata
 - WebSocket close codes now distinguish fatal stop conditions from reconnectable conditions
+- WebSocket shard orchestration using `/gateway/bot` recommended shard count
+- Per-shard websocket session state for reconnect and resume
+- Identify pacing based on `session_start_limit.max_concurrency`
 
 Not implemented yet:
 
 - QQ group / channel / DM send APIs
-- Full event-specific ACK semantics beyond basic `{"op":12}` callback acknowledgement
+- Full event-specific webhook acknowledgement handling beyond basic `{"op":12}` receive acknowledgement
 - Group and other QQ event types
-- WebSocket resume / shard orchestration beyond the minimal single-connection flow
+- Dynamic shard rebalancing or in-process shard-count refresh after startup
 
 ## Confirmed Interface Rules
 
@@ -62,19 +67,24 @@ Based on the official QQ Bot docs for "事件订阅与通知":
 
 ## Environment Variables
 
+Required:
+
 - `BUB_QQ_APPID`: QQ bot app ID
 - `BUB_QQ_SECRET`: QQ bot secret
-- `BUB_QQ_TOKEN_URL`: override token endpoint if needed
-- `BUB_QQ_OPENAPI_BASE_URL`: override OpenAPI base URL if needed
-- `BUB_QQ_TIMEOUT_SECONDS`: HTTP timeout for token and OpenAPI requests
-- `BUB_QQ_TOKEN_REFRESH_SKEW_SECONDS`: token refresh lead time, defaults to `60`
-- `BUB_QQ_RECEIVE_MODE`: `webhook` or `websocket`, defaults to `webhook`
-- `BUB_QQ_WEBHOOK_HOST`: embedded webhook bind host, defaults to `127.0.0.1`
-- `BUB_QQ_WEBHOOK_PORT`: embedded webhook bind port, defaults to `9009`
-- `BUB_QQ_WEBHOOK_PATH`: webhook path, defaults to `/qq/webhook`
-- `BUB_QQ_WEBHOOK_CALLBACK_TIMEOUT_SECONDS`: max time to wait for async event handling before returning HTTP 500
-- `BUB_QQ_VERIFY_SIGNATURE`: whether to enforce webhook request signature validation, defaults to `true`
-- `BUB_QQ_INBOUND_DEDUPE_SIZE`: recent `msg_id` cache size, defaults to `1024`
-- `BUB_QQ_WEBSOCKET_INTENTS`: websocket identify intents, defaults to `1 << 25`
-- `BUB_QQ_WEBSOCKET_USE_SHARD_GATEWAY`: whether to call `/gateway/bot`, defaults to `false`
-- `BUB_QQ_WEBSOCKET_RECONNECT_DELAY_SECONDS`: reconnect delay after websocket disconnect, defaults to `5`
+
+Optional:
+
+- `BUB_QQ_TOKEN_URL`: override token endpoint if needed; defaults to `https://bots.qq.com/app/getAppAccessToken`
+- `BUB_QQ_OPENAPI_BASE_URL`: override OpenAPI base URL if needed; defaults to `https://api.sgroup.qq.com`
+- `BUB_QQ_TIMEOUT_SECONDS`: HTTP timeout for token and OpenAPI requests; defaults to `30`
+- `BUB_QQ_TOKEN_REFRESH_SKEW_SECONDS`: token refresh lead time; defaults to `60`
+- `BUB_QQ_RECEIVE_MODE`: `webhook` or `websocket`; defaults to `webhook`
+- `BUB_QQ_WEBHOOK_HOST`: embedded webhook bind host; defaults to `127.0.0.1`
+- `BUB_QQ_WEBHOOK_PORT`: embedded webhook bind port; defaults to `9009`
+- `BUB_QQ_WEBHOOK_PATH`: webhook path; defaults to `/qq/webhook`
+- `BUB_QQ_WEBHOOK_CALLBACK_TIMEOUT_SECONDS`: reserved for future callback handling controls; defaults to `15`
+- `BUB_QQ_VERIFY_SIGNATURE`: whether to enforce webhook request signature validation; defaults to `true`
+- `BUB_QQ_INBOUND_DEDUPE_SIZE`: recent `msg_id` cache size; defaults to `1024`
+- `BUB_QQ_WEBSOCKET_INTENTS`: websocket identify intents; defaults to `1 << 25`
+- `BUB_QQ_WEBSOCKET_USE_SHARD_GATEWAY`: whether to call `/gateway/bot` and start the recommended number of shard connections; defaults to `false`
+- `BUB_QQ_WEBSOCKET_RECONNECT_DELAY_SECONDS`: reconnect delay after websocket disconnect; defaults to `5`

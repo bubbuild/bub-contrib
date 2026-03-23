@@ -6,6 +6,7 @@ from bub.channels.message import ChannelMessage
 
 from bub_qq.channel import QQChannel
 from bub_qq.c2c import build_c2c_channel_message
+from bub_qq.c2c import QQC2CSendService
 from bub_qq.models import QQC2CMessage
 from bub_qq.openapi_errors import QQKnownOpenAPIError
 from bub_qq.openapi_errors import QQOpenAPIError
@@ -58,10 +59,20 @@ class FailingOpenAPIStub:
         return None
 
 
+def _install_send_service(channel: QQChannel, openapi: object) -> None:
+    channel._c2c_send = QQC2CSendService(  # type: ignore[assignment]
+        channel_name=channel.name,
+        receive_mode=channel._config.receive_mode,
+        state=channel._c2c_state,
+        openapi=openapi,  # type: ignore[arg-type]
+    )
+
+
 def test_channel_send_uses_latest_c2c_message_context() -> None:
     async def _run() -> None:
         channel = QQChannel(lambda message: None)
-        channel._openapi = OpenAPIStub()  # type: ignore[assignment]
+        openapi = OpenAPIStub()
+        _install_send_service(channel, openapi)
         channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
         channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
 
@@ -74,7 +85,7 @@ def test_channel_send_uses_latest_c2c_message_context() -> None:
             )
         )
 
-        assert channel._openapi.calls == [  # type: ignore[attr-defined]
+        assert openapi.calls == [
             {
                 "openid": "user-openid",
                 "content": "hello",
@@ -89,7 +100,7 @@ def test_channel_send_uses_latest_c2c_message_context() -> None:
 def test_channel_send_handles_reply_expired_error() -> None:
     async def _run() -> None:
         channel = QQChannel(lambda message: None)
-        channel._openapi = FailingOpenAPIStub(  # type: ignore[assignment]
+        openapi = FailingOpenAPIStub(
             QQOpenAPIError(
                 status_code=400,
                 trace_id="trace-1",
@@ -98,6 +109,7 @@ def test_channel_send_handles_reply_expired_error() -> None:
                 known=QQKnownOpenAPIError(304027, "MSG_EXPIRE", "回复的消息过期", "reply", False),
             )
         )
+        _install_send_service(channel, openapi)
         channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
         channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
 
@@ -110,7 +122,7 @@ def test_channel_send_handles_reply_expired_error() -> None:
             )
         )
 
-        assert channel._openapi.calls == 1  # type: ignore[attr-defined]
+        assert openapi.calls == 1
 
     asyncio.run(_run())
 
@@ -118,7 +130,7 @@ def test_channel_send_handles_reply_expired_error() -> None:
 def test_channel_send_handles_rate_limit_error() -> None:
     async def _run() -> None:
         channel = QQChannel(lambda message: None)
-        channel._openapi = FailingOpenAPIStub(  # type: ignore[assignment]
+        openapi = FailingOpenAPIStub(
             QQOpenAPIError(
                 status_code=429,
                 trace_id="trace-2",
@@ -127,6 +139,7 @@ def test_channel_send_handles_rate_limit_error() -> None:
                 known=QQKnownOpenAPIError(22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True),
             )
         )
+        _install_send_service(channel, openapi)
         channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
         channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
 
@@ -139,7 +152,7 @@ def test_channel_send_handles_rate_limit_error() -> None:
             )
         )
 
-        assert channel._openapi.calls == 1  # type: ignore[attr-defined]
+        assert openapi.calls == 1
 
     asyncio.run(_run())
 
@@ -157,4 +170,4 @@ def test_c2c_inbound_defaults_outbound_to_qq_channel() -> None:
 
     channel_message = build_c2c_channel_message("qq", message)
 
-    assert channel_message.output_channel == "null"
+    assert channel_message.output_channel != "null"

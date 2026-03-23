@@ -7,10 +7,24 @@ from .openapi import QQOpenAPI
 
 
 @dataclass(frozen=True)
+class QQSessionStartLimit:
+    total: int
+    remaining: int
+    reset_after: int
+    max_concurrency: int
+
+
+@dataclass(frozen=True)
 class QQGatewayInfo:
     url: str
     shards: int | None = None
-    max_concurrency: int | None = None
+    session_start_limit: QQSessionStartLimit | None = None
+
+    @property
+    def max_concurrency(self) -> int | None:
+        if self.session_start_limit is None:
+            return None
+        return self.session_start_limit.max_concurrency
 
 
 async def get_gateway(openapi: QQOpenAPI) -> QQGatewayInfo:
@@ -20,16 +34,10 @@ async def get_gateway(openapi: QQOpenAPI) -> QQGatewayInfo:
 
 async def get_shard_gateway(openapi: QQOpenAPI) -> QQGatewayInfo:
     payload = await openapi.get("/gateway/bot")
-    limit = payload.get("session_start_limit")
-    max_concurrency = None
-    if isinstance(limit, dict):
-        value = limit.get("max_concurrency")
-        if value is not None:
-            max_concurrency = int(value)
     return QQGatewayInfo(
         url=str(payload["url"]),
         shards=int(payload["shards"]) if payload.get("shards") is not None else None,
-        max_concurrency=max_concurrency,
+        session_start_limit=_parse_session_start_limit(payload.get("session_start_limit")),
     )
 
 
@@ -61,3 +69,17 @@ def resume_payload(*, token: str, session_id: str, sequence: int) -> dict[str, A
 
 def heartbeat_payload(sequence: int | None) -> dict[str, Any]:
     return {"op": 1, "d": sequence}
+
+
+def _parse_session_start_limit(payload: Any) -> QQSessionStartLimit | None:
+    if not isinstance(payload, dict):
+        return None
+    required_fields = ("total", "remaining", "reset_after", "max_concurrency")
+    if any(payload.get(field) is None for field in required_fields):
+        return None
+    return QQSessionStartLimit(
+        total=int(payload["total"]),
+        remaining=int(payload["remaining"]),
+        reset_after=int(payload["reset_after"]),
+        max_concurrency=int(payload["max_concurrency"]),
+    )

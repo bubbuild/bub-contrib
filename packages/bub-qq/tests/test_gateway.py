@@ -1,14 +1,100 @@
 from __future__ import annotations
 
+import asyncio
+
 from bub_qq.auth import QQAuthError
+from bub_qq.gateway import get_gateway
+from bub_qq.gateway import get_shard_gateway
 from bub_qq.gateway import heartbeat_payload
 from bub_qq.gateway import identify_payload
 from bub_qq.gateway import resume_payload
+from bub_qq.openapi import QQOpenAPI
 from bub_qq.openapi_errors import QQKnownOpenAPIError
 from bub_qq.openapi_errors import QQOpenAPIError
 from bub_qq.websocket import _is_permanent_connect_error
 from bub_qq.ws_errors import QQWebSocketFatalError
 from bub_qq.ws_errors import raise_for_close_code
+
+
+class TokenProviderStub:
+    async def get_token(self) -> str:
+        return "token"
+
+
+class OpenAPIClientStub:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    async def request(
+        self,
+        *,
+        method: str,
+        url: str,
+        params: dict[str, object] | None,
+        json: dict[str, object] | None,
+        headers: dict[str, str],
+    ) -> object:
+        del method, params, json, headers
+        return _Response(status=200, payload=self.payload if url.startswith("/gateway") else {})
+
+
+class _Response:
+    def __init__(self, *, status: int, payload: object) -> None:
+        self.status = status
+        self.payload = payload
+        self.headers: dict[str, str] = {}
+        self.reason = "OK"
+
+
+def test_get_gateway_returns_url() -> None:
+    async def _run() -> None:
+        openapi = QQOpenAPI(
+            config=_ConfigStub(),
+            token_provider=TokenProviderStub(),
+            client=OpenAPIClientStub({"url": "wss://api.sgroup.qq.com/websocket/"}),
+        )
+
+        gateway = await get_gateway(openapi)
+
+        assert gateway.url == "wss://api.sgroup.qq.com/websocket/"
+        assert gateway.shards is None
+        assert gateway.session_start_limit is None
+        assert gateway.max_concurrency is None
+
+    asyncio.run(_run())
+
+
+def test_get_shard_gateway_returns_full_session_start_limit() -> None:
+    async def _run() -> None:
+        openapi = QQOpenAPI(
+            config=_ConfigStub(),
+            token_provider=TokenProviderStub(),
+            client=OpenAPIClientStub(
+                {
+                    "url": "wss://api.sgroup.qq.com/websocket/",
+                    "shards": 9,
+                    "session_start_limit": {
+                        "total": 1000,
+                        "remaining": 999,
+                        "reset_after": 14400000,
+                        "max_concurrency": 1,
+                    },
+                }
+            ),
+        )
+
+        gateway = await get_shard_gateway(openapi)
+
+        assert gateway.url == "wss://api.sgroup.qq.com/websocket/"
+        assert gateway.shards == 9
+        assert gateway.session_start_limit is not None
+        assert gateway.session_start_limit.total == 1000
+        assert gateway.session_start_limit.remaining == 999
+        assert gateway.session_start_limit.reset_after == 14400000
+        assert gateway.session_start_limit.max_concurrency == 1
+        assert gateway.max_concurrency == 1
+
+    asyncio.run(_run())
 
 
 def test_identify_payload_uses_qqbot_token_and_intents() -> None:
@@ -73,3 +159,8 @@ def test_websocket_retryable_openapi_errors_are_not_treated_as_permanent() -> No
     )
 
     assert _is_permanent_connect_error(error) is False
+
+
+class _ConfigStub:
+    timeout_seconds = 5.0
+    openapi_base_url = "https://api.sgroup.qq.com"

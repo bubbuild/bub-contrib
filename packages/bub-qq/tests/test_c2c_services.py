@@ -56,9 +56,9 @@ class FailingOpenAPIStub:
 def _state() -> QQC2CSessionState:
     return QQC2CSessionState(
         latest_message_id_by_session={},
-        latest_sequence_by_session={},
+        latest_sequence_by_session_and_msg_id={},
         latest_timestamp_by_session={},
-        send_record_by_session_and_msg_id={},
+        send_record_by_session_msg_id_and_seq={},
     )
 
 
@@ -88,7 +88,7 @@ def test_c2c_inbound_service_parses_and_remembers_session() -> None:
     assert message.message_id == "message-1"
     assert channel_message.session_id == "qq:c2c:user-openid"
     assert state.latest_message_id_by_session["qq:c2c:user-openid"] == "message-1"
-    assert state.latest_sequence_by_session == {}
+    assert state.latest_sequence_by_session_and_msg_id == {}
 
 
 def test_c2c_inbound_service_dedupes_repeated_messages() -> None:
@@ -168,7 +168,76 @@ def test_c2c_send_service_starts_msg_seq_at_one_after_inbound_transport_sequence
                 "msg_seq": 1,
             }
         ]
-        assert state.latest_sequence_by_session["qq:c2c:user-openid"] == 1
+        assert state.latest_sequence_by_session_and_msg_id[
+            ("qq:c2c:user-openid", "message-1")
+        ] == 1
+
+    asyncio.run(_run())
+
+
+def test_c2c_send_service_resets_msg_seq_for_new_inbound_msg_id() -> None:
+    async def _run() -> None:
+        state = _state()
+        openapi = OpenAPIStub()
+        inbound = QQC2CInboundService(channel_name="qq", deduper=QQC2CDeduper(16), state=state)
+        service = QQC2CSendService(
+            channel_name="qq",
+            receive_mode="webhook",
+            state=state,
+            openapi=openapi,
+        )
+
+        assert inbound.parse_inbound(_payload("message-1")) is not None
+        first = await service.send(
+            ChannelMessage(
+                session_id="qq:c2c:user-openid",
+                chat_id="c2c:user-openid",
+                content="first reply",
+                channel="qq",
+            )
+        )
+        second = await service.send(
+            ChannelMessage(
+                session_id="qq:c2c:user-openid",
+                chat_id="c2c:user-openid",
+                content="second reply",
+                channel="qq",
+            )
+        )
+
+        assert inbound.parse_inbound(_payload("message-2")) is not None
+        third = await service.send(
+            ChannelMessage(
+                session_id="qq:c2c:user-openid",
+                chat_id="c2c:user-openid",
+                content="reply for new inbound message",
+                channel="qq",
+            )
+        )
+
+        assert first == {"id": "reply-1"}
+        assert second == {"id": "reply-1"}
+        assert third == {"id": "reply-1"}
+        assert openapi.calls == [
+            {
+                "openid": "user-openid",
+                "content": "first reply",
+                "msg_id": "message-1",
+                "msg_seq": 1,
+            },
+            {
+                "openid": "user-openid",
+                "content": "second reply",
+                "msg_id": "message-1",
+                "msg_seq": 2,
+            },
+            {
+                "openid": "user-openid",
+                "content": "reply for new inbound message",
+                "msg_id": "message-2",
+                "msg_seq": 1,
+            },
+        ]
 
     asyncio.run(_run())
 
@@ -208,7 +277,7 @@ def test_c2c_send_service_strips_qq_wrapper_prefix_before_sending() -> None:
     asyncio.run(_run())
 
 
-def test_c2c_send_service_returns_already_sent_for_same_content() -> None:
+def test_c2c_send_service_allows_multiple_replies_for_same_msg_id() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
@@ -233,63 +302,25 @@ def test_c2c_send_service_returns_already_sent_for_same_content() -> None:
             ChannelMessage(
                 session_id="qq:c2c:user-openid",
                 chat_id="c2c:user-openid",
-                content="hello",
+                content="job finished",
                 channel="qq",
             )
         )
 
         assert first == {"id": "reply-1"}
-        assert second == {"id": "reply-1", "status": "already_sent"}
+        assert second == {"id": "reply-1"}
         assert openapi.calls == [
             {
                 "openid": "user-openid",
                 "content": "hello",
                 "msg_id": "message-1",
                 "msg_seq": 1,
-            }
-        ]
-
-    asyncio.run(_run())
-
-
-def test_c2c_send_service_rejects_duplicate_reply_with_different_content() -> None:
-    async def _run() -> None:
-        state = _state()
-        state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
-        openapi = OpenAPIStub()
-        service = QQC2CSendService(
-            channel_name="qq",
-            receive_mode="webhook",
-            state=state,
-            openapi=openapi,
-        )
-
-        first = await service.send(
-            ChannelMessage(
-                session_id="qq:c2c:user-openid",
-                chat_id="c2c:user-openid",
-                content="hello",
-                channel="qq",
-            )
-        )
-        second = await service.send(
-            ChannelMessage(
-                session_id="qq:c2c:user-openid",
-                chat_id="c2c:user-openid",
-                content="different reply",
-                channel="qq",
-            )
-        )
-
-        assert first == {"id": "reply-1"}
-        assert second == {"status": "duplicate_reply_blocked"}
-        assert openapi.calls == [
+            },
             {
                 "openid": "user-openid",
-                "content": "hello",
+                "content": "job finished",
                 "msg_id": "message-1",
-                "msg_seq": 1,
+                "msg_seq": 2,
             }
         ]
 
@@ -406,6 +437,6 @@ def test_c2c_send_service_treats_remote_duplicate_as_already_sent() -> None:
 
         assert first == {"status": "already_sent"}
         assert second == {"status": "already_sent"}
-        assert openapi.calls == 1
+        assert openapi.calls == 2
 
     asyncio.run(_run())

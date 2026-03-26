@@ -36,9 +36,9 @@ class QQChannel(Channel):
         self._c2c_deduper = QQC2CDeduper(self._config.inbound_dedupe_size)
         self._c2c_state = QQC2CSessionState(
             latest_message_id_by_session={},
-            latest_sequence_by_session={},
+            latest_sequence_by_session_and_msg_id={},
             latest_timestamp_by_session={},
-            send_record_by_session_and_msg_id={},
+            send_record_by_session_msg_id_and_seq={},
         )
         self._c2c_inbound = QQC2CInboundService(
             channel_name=self.name,

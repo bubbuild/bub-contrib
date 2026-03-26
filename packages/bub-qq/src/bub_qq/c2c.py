@@ -24,9 +24,9 @@ from .send_errors import log_send_error
 @dataclass
 class QQC2CSessionState:
     latest_message_id_by_session: dict[str, str]
-    latest_sequence_by_session: dict[str, int]
+    latest_sequence_by_session_and_msg_id: dict[tuple[str, str], int]
     latest_timestamp_by_session: dict[str, str]
-    send_record_by_session_and_msg_id: dict[tuple[str, str], "QQC2CSendRecord"]
+    send_record_by_session_msg_id_and_seq: dict[tuple[str, str, int], "QQC2CSendRecord"]
 
 
 @dataclass
@@ -148,7 +148,10 @@ class QQC2CSendService:
             return None
 
         content_hash = hash_c2c_content(content)
-        send_record = self._state.send_record_by_session_and_msg_id.get((session_id, msg_id))
+        msg_seq = next_c2c_msg_seq(self._state, session_id, msg_id)
+        send_record = self._state.send_record_by_session_msg_id_and_seq.get(
+            (session_id, msg_id, msg_seq)
+        )
         if send_record is not None:
             if send_record.content_hash == content_hash:
                 logger.info(
@@ -161,17 +164,15 @@ class QQC2CSendService:
                 )
                 return build_already_sent_result(send_record)
             logger.warning(
-                "qq.send duplicate session_id={} openid={} msg_id={} reason=duplicate_reply_blocked source=local_dedup_hit previous_msg_seq={} previous_content_hash={} content_hash={}",
+                "qq.send duplicate session_id={} openid={} msg_id={} reason=duplicate_msg_seq_blocked source=local_dedup_hit msg_seq={} previous_content_hash={} content_hash={}",
                 session_id,
                 openid,
                 msg_id,
-                send_record.msg_seq,
+                msg_seq,
                 send_record.content_hash,
                 content_hash,
             )
-            return {"status": "duplicate_reply_blocked"}
-
-        msg_seq = next_c2c_msg_seq(self._state, session_id)
+            return {"status": "duplicate_msg_seq_blocked"}
         try:
             result = await self._openapi.post_c2c_text_message(
                 openid=openid,
@@ -195,7 +196,7 @@ class QQC2CSendService:
                     msg_seq=msg_seq,
                     result={},
                 )
-                self._state.send_record_by_session_and_msg_id[(session_id, msg_id)] = duplicate_record
+                self._state.send_record_by_session_msg_id_and_seq[(session_id, msg_id, msg_seq)] = duplicate_record
                 return build_already_sent_result(duplicate_record)
             log_send_error(
                 exc,
@@ -213,7 +214,7 @@ class QQC2CSendService:
             msg_seq=msg_seq,
             result=dict(result),
         )
-        self._state.send_record_by_session_and_msg_id[(session_id, msg_id)] = send_record
+        self._state.send_record_by_session_msg_id_and_seq[(session_id, msg_id, msg_seq)] = send_record
         logger.info(
             "qq.send success session_id={} openid={} msg_id={} msg_seq={} response_id={}",
             session_id,
@@ -294,9 +295,10 @@ def resolve_c2c_openid(*, channel_name: str, session_id: str, chat_id: str) -> s
     return None
 
 
-def next_c2c_msg_seq(state: QQC2CSessionState, session_id: str) -> int:
-    current = state.latest_sequence_by_session.get(session_id, 0) + 1
-    state.latest_sequence_by_session[session_id] = current
+def next_c2c_msg_seq(state: QQC2CSessionState, session_id: str, msg_id: str) -> int:
+    key = (session_id, msg_id)
+    current = state.latest_sequence_by_session_and_msg_id.get(key, 0) + 1
+    state.latest_sequence_by_session_and_msg_id[key] = current
     return current
 
 

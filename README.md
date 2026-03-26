@@ -4,20 +4,20 @@ Contrib packages for the `bub` ecosystem.
 
 ## Packages
 
-| Package                             | Bub Plugin Entry Point | Description                                                                                                                               |
-| ----------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/bub-codex`                | `codex`                | Provides a `run_model` hook that delegates model execution to the Codex CLI.                                                              |
-| `packages/bub-tg-feed`              | `tg-feed`              | Provides an AMQP-based channel adapter for Telegram feed messages.                                                                        |
-| `packages/bub-schedule`             | `schedule`             | Provides scheduling channel/tools backed by APScheduler with a JSON job store.                                                            |
-| `packages/bub-tapestore-sqlalchemy` | `tapestore-sqlalchemy` | Provides a SQLAlchemy-backed tape store for Bub conversation history.                                                                     |
-| `packages/bub-tapestore-sqlite`     | `tapestore-sqlite`     | Provides a SQLite-backed tape store for Bub conversation history.                                                                         |
-| `packages/bub-discord`              | `discord`              | Provides a Discord channel adapter for Bub message IO.                                                                                    |
-| `packages/bub-dingtalk`             | `dingtalk`             | Provides a DingTalk Stream Mode channel adapter for Bub message IO.                                                                       |
-| `packages/bub-qq`                   | `qq`                   | Provides a QQ Open Platform channel adapter for Bub message IO.                                                                           |
-| `packages/bub-web-search`           | `web-search`           | Provides a `web.search` tool backed by the Ollama web search API. Registers the tool only when `BUB_SEARCH_OLLAMA_API_KEY` is configured. |
-| `packages/bub-feishu`               | `feishu`               | Provides a Feishu channel adapter for Bub message IO.                                                                                     |
-| `packages/bub-session-prompt`       | `session-prompt`       | Provides a session-specific system prompt sourced from `~/.bub/sessions/<session_id>/AGENTS.md`.                                          |
-| `packages/bub-wechat`               | `wechat`               | Provides a WeChat channel adapter for Bub message IO.                                                                                     |
+| Package                                                                              | Bub Plugin Entry Point | Description                                                                                                                               |
+| ------------------------------------------------------------------------------------ | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| [`packages/bub-codex`](./packages/bub-codex/README.md)                               | `codex`                | Provides a `run_model` hook that delegates model execution to the Codex CLI.                                                              |
+| [`packages/bub-tg-feed`](./packages/bub-tg-feed/README.md)                           | `tg-feed`              | Provides an AMQP-based channel adapter for Telegram feed messages.                                                                        |
+| [`packages/bub-schedule`](./packages/bub-schedule/README.md)                         | `schedule`             | Provides scheduling channel/tools backed by APScheduler with a JSON job store.                                                            |
+| [`packages/bub-tapestore-sqlalchemy`](./packages/bub-tapestore-sqlalchemy/README.md) | `tapestore-sqlalchemy` | Provides a SQLAlchemy-backed tape store for Bub conversation history.                                                                     |
+| [`packages/bub-tapestore-sqlite`](./packages/bub-tapestore-sqlite/README.md)         | `tapestore-sqlite`     | Provides a SQLite-backed tape store for Bub conversation history.                                                                         |
+| [`packages/bub-discord`](./packages/bub-discord/README.md)                           | `discord`              | Provides a Discord channel adapter for Bub message IO.                                                                                    |
+| [`packages/bub-dingtalk`](./packages/bub-dingtalk/README.md)                         | `dingtalk`             | Provides a DingTalk Stream Mode channel adapter for Bub message IO.                                                                       |
+| [`packages/bub-qq`](./packages/bub-qq/README.md)                                     | `qq`                   | Provides a QQ Open Platform channel adapter for Bub message IO.                                                                           |
+| [`packages/bub-web-search`](./packages/bub-web-search/README.md)                     | `web-search`           | Provides a `web.search` tool backed by the Ollama web search API. Registers the tool only when `BUB_SEARCH_OLLAMA_API_KEY` is configured. |
+| [`packages/bub-feishu`](./packages/bub-feishu/README.md)                             | `feishu`               | Provides a Feishu channel adapter for Bub message IO.                                                                                     |
+| [`packages/bub-session-prompt`](./packages/bub-session-prompt/README.md)             | `session-prompt`       | Provides a session-specific system prompt sourced from `~/.bub/sessions/<session_id>/AGENTS.md`.                                          |
+| [`packages/bub-wechat`](./packages/bub-wechat/README.md)                             | `wechat`               | Provides a WeChat channel adapter for Bub message IO.                                                                                     |
 
 ## Prerequisites
 

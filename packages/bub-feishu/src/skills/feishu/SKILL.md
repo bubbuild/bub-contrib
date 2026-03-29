@@ -1,10 +1,7 @@
 ---
 name: feishu
 description: |
-  Feishu Bot skill for sending messages, replying to specific messages, sending card messages,
-  editing bot messages, and reacting to messages in Feishu/Lark chats.
-metadata:
-  channel: feishu
+  Use this skill to respond to messages from feishu channel.
 ---
 
 # Feishu Skill
@@ -34,27 +31,6 @@ Collect these fields before execution whenever possible:
 8. When only lightweight acknowledgment is needed, prefer the Feishu message reaction API; if explanation or context is needed, use a normal reply instead.
 9. Do not assume the Feishu channel will send replies automatically; all platform actions must go through the Feishu scripts or direct OpenAPI calls.
 
-## Active Response Policy
-
-When this skill is in scope, prefer proactive and timely Feishu updates:
-
-- Send an immediate acknowledgment for newly assigned tasks
-- Send progress updates for long-running work using message edits when possible
-- Send completion notifications when work finishes
-- Send important status or failure notifications without waiting for follow-up prompts
-- If an acknowledgment has already been sent, prefer editing that message; send a new one only when editing is not appropriate
-
-Recommended flow:
-
-1. Send a short acknowledgment reply
-2. Continue processing
-3. If blocked, immediately edit the acknowledgment or send an issue update
-4. Prefer editing to close the loop; otherwise send a final result message
-
-## Reaction Policy
-
-When an inbound Feishu message only needs a lightweight acknowledgment such as read, received, approved, or done, prefer a reaction.
-When explanation, context, risk notes, result summaries, or next steps are needed, use a normal reply instead.
 
 ## Message Format Policy
 

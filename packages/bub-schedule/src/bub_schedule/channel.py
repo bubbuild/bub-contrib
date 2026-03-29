@@ -7,6 +7,8 @@ from loguru import logger
 
 
 class ScheduleChannel(Channel):
+    name = "schedule"
+
     def __init__(self, scheduler: BaseScheduler) -> None:
         self.scheduler = scheduler
 

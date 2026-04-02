@@ -75,13 +75,13 @@ Paths are relative to this skill directory.
 
 ```bash
 # Send text message
-uv run ./scripts/feishu_send.py \
+uv run ${SKILL_DIR}/scripts/feishu_send.py \
   --chat-id <CHAT_ID> \
   --content "<TEXT>" \
   --format text
 
 # Send multi-line text message (heredoc)
-uv run ./scripts/feishu_send.py \
+uv run ${SKILL_DIR}/scripts/feishu_send.py \
   --chat-id <CHAT_ID> \
   --content "$(cat <<'EOF'
 Build finished successfully.
@@ -93,21 +93,21 @@ EOF
   --format text
 
 # Reply to a specific message
-uv run ./scripts/feishu_send.py \
+uv run ${SKILL_DIR}/scripts/feishu_send.py \
   --chat-id <CHAT_ID> \
   --content "<TEXT>" \
   --format text \
   --reply-to <MESSAGE_ID>
 
 # Send card update
-uv run ./scripts/feishu_send.py \
+uv run ${SKILL_DIR}/scripts/feishu_send.py \
   --chat-id <CHAT_ID> \
   --content "<MARKDOWN_CONTENT>" \
   --format card \
   --title "<TITLE>"
 
 # Edit an existing bot message
-uv run ./scripts/feishu_edit.py \
+uv run ${SKILL_DIR}/scripts/feishu_edit.py \
   --message-id <MESSAGE_ID> \
   --text "<TEXT>"
 ```

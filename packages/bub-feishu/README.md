@@ -51,8 +51,10 @@ Inbound non-command messages are encoded as JSON string content, including field
 - `message_id`
 - `type`
 - `sender_id`
+- `sender_name`
 - `sender_is_bot`
 - `date`
+- `media`
 - `reply_to_message`
 
 ## Outbound Notes

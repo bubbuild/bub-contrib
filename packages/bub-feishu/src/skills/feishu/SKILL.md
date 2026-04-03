@@ -58,8 +58,10 @@ The current Feishu channel message JSON includes:
 - `message_id`: current user message ID
 - `type`: normalized message type
 - `sender_id`
+- `sender_name`
 - `sender_is_bot`
 - `date`
+- `media`
 - `reply_to_message`
 
 Typical mappings:

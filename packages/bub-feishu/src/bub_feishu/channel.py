@@ -9,8 +9,8 @@ import mimetypes
 import threading
 import uuid
 from collections import deque
-from dataclasses import dataclass, replace
 from collections.abc import Awaitable, Callable, Generator
+from dataclasses import dataclass, replace
 from typing import Any
 
 import lark_oapi as lark
@@ -537,7 +537,7 @@ class FeishuChannel(Channel):
             )
             return None
 
-        sender_name = getattr(response.data.user, "name", None)
+        sender_name = getattr(response.data.user, "nickname", None)
         if not sender_name:
             return None
         return str(sender_name)

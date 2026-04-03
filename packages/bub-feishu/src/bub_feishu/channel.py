@@ -9,7 +9,7 @@ import threading
 import uuid
 from collections import deque
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Generator
 
 import lark_oapi as lark
 from bub.channels import Channel
@@ -56,6 +56,7 @@ class FeishuMessage:
     sender_open_id: str | None
     sender_union_id: str | None
     sender_user_id: str | None
+    sender_name: str | None
     sender_type: str | None
     tenant_key: str | None
     create_time: str | None
@@ -141,6 +142,7 @@ class FeishuChannel(Channel):
         self._stop_event: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
         self._pending_command_message_ids: dict[str, deque[str]] = {}
+        self._sender_name_cache: dict[tuple[str, str], str | None] = {}
 
     @property
     def needs_debounce(self) -> bool:
@@ -218,8 +220,8 @@ class FeishuChannel(Channel):
                 "message_id": message.message_id,
                 "type": message.message_type,
                 "sender_id": message.sender_id or "",
+                "sender_name": message.sender_name,
                 "sender_is_bot": message.sender_type == "bot",
-                "date": _payload_timestamp(message.create_time),
                 "reply_to_message": exclude_none(
                     {
                         "message_id": message.parent_id,
@@ -320,6 +322,7 @@ class FeishuChannel(Channel):
             future.result()
 
     async def _dispatch_message(self, message: FeishuMessage) -> None:
+        message = await self._enrich_sender_name(message)
         message = await self._enrich_reply_to_message(message)
         payload = await self._build_message(message)
         await self._on_receive(payload)
@@ -435,6 +438,79 @@ class FeishuChannel(Channel):
             ),
         )
 
+    async def _enrich_sender_name(self, message: FeishuMessage) -> FeishuMessage:
+        if message.sender_name:
+            return message
+
+        sender_name = await self._get_sender_name(message)
+        if not sender_name:
+            return message
+
+        return replace(message, sender_name=sender_name)
+
+    async def _get_sender_name(self, message: FeishuMessage) -> str | None:
+        if self._api_client is None:
+            return None
+
+        for user_id_type, user_id in self._iter_sender_ids(message):
+            cache_key = (user_id_type, user_id)
+            if cache_key in self._sender_name_cache:
+                return self._sender_name_cache[cache_key]
+
+            sender_name = await self._fetch_user_name(user_id_type, user_id)
+            self._sender_name_cache[cache_key] = sender_name
+            if sender_name:
+                return sender_name
+
+        return None
+
+    @staticmethod
+    def _iter_sender_ids(
+        message: FeishuMessage,
+    ) -> Generator[tuple[str, str], None, None]:
+        for user_id_type, user_id in (
+            ("open_id", message.sender_open_id),
+            ("user_id", message.sender_user_id),
+            ("union_id", message.sender_union_id),
+        ):
+            if not user_id:
+                continue
+            yield (user_id_type, user_id)
+
+    async def _fetch_user_name(self, user_id_type: str, user_id: str) -> str | None:
+        if self._api_client is None or not user_id:
+            return None
+
+        from lark_oapi.api.contact.v3 import GetUserRequest
+
+        request = (
+            GetUserRequest.builder()
+            .user_id_type(user_id_type)
+            .department_id_type("open_department_id")
+            .user_id(user_id)
+            .build()
+        )
+        response = await self._api_client.contact.v3.user.aget(request)
+        if (
+            not response.success()
+            or response.data is None
+            or response.data.user is None
+        ):
+            logger.warning(
+                "feishu.user.get.failed user_id_type={} user_id={} code={} msg={} log_id={}",
+                user_id_type,
+                user_id,
+                response.code,
+                response.msg,
+                response.get_log_id(),
+            )
+            return None
+
+        sender_name = getattr(response.data.user, "name", None)
+        if not sender_name:
+            return None
+        return str(sender_name)
+
     async def _get_message_detail(self, message_id: str) -> dict[str, str | None]:
         if self._api_client is None or not message_id:
             return {}
@@ -535,6 +611,7 @@ class FeishuChannel(Channel):
             sender_open_id=sender_id_obj.get("open_id"),
             sender_union_id=sender_id_obj.get("union_id"),
             sender_user_id=sender_id_obj.get("user_id"),
+            sender_name=sender.get("sender_name"),
             sender_type=sender.get("sender_type"),
             tenant_key=sender.get("tenant_key"),
             create_time=str(message.get("create_time") or ""),

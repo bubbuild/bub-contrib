@@ -5,19 +5,23 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import mimetypes
 import threading
 import uuid
 from collections import deque
 from dataclasses import dataclass, replace
-from typing import Any, Generator
+from collections.abc import Awaitable, Callable, Generator
+from typing import Any
 
 import lark_oapi as lark
 from bub.channels import Channel
-from bub.channels.message import ChannelMessage
+from bub.channels.message import ChannelMessage, MediaItem
 from bub.types import MessageHandler
 from lark_oapi.api.im.v1 import (
     CreateMessageRequest,
     CreateMessageRequestBody,
+    GetImageRequest,
+    GetMessageResourceRequest,
     ReplyMessageRequest,
     ReplyMessageRequestBody,
 )
@@ -62,6 +66,16 @@ class FeishuMessage:
     create_time: str | None
     event_type: str | None
     raw_event: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class FeishuMedia:
+    type: str
+    resource_type: str
+    resource_key: str
+    file_name: str | None
+    mime_type: str | None
+    duration: int | None
 
 
 class FeishuConfig(BaseSettings):
@@ -121,6 +135,16 @@ def _normalize_text(message_type: str, content: str) -> str:
     if parsed is None:
         return f"[{message_type} message]"
     return f"[{message_type} message] {json.dumps(parsed, ensure_ascii=False)}"
+
+
+def _parse_message_content(raw_content: str) -> dict[str, Any] | None:
+    if not raw_content:
+        return None
+    with contextlib.suppress(json.JSONDecodeError):
+        parsed = json.loads(raw_content)
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 class FeishuChannel(Channel):
@@ -214,6 +238,7 @@ class FeishuChannel(Channel):
                 is_active=True,
             )
 
+        media = await self._get_media(message)
         payload = exclude_none(
             {
                 "message": message.text,
@@ -222,6 +247,8 @@ class FeishuChannel(Channel):
                 "sender_id": message.sender_id or "",
                 "sender_name": message.sender_name,
                 "sender_is_bot": message.sender_type == "bot",
+                "date": _payload_timestamp(message.create_time),
+                "media": self._media_metadata(media),
                 "reply_to_message": exclude_none(
                     {
                         "message_id": message.parent_id,
@@ -235,7 +262,7 @@ class FeishuChannel(Channel):
                 else None,
             }
         )
-        return ChannelMessage(
+        channel_message = ChannelMessage(
             session_id=session_id,
             content=json.dumps(payload, ensure_ascii=False),
             channel=self.name,
@@ -243,6 +270,10 @@ class FeishuChannel(Channel):
             is_active=await self.is_mentioned(message),
             output_channel="null",
         )
+        media_item = await self._build_media_item(message, media)
+        if media_item is not None:
+            channel_message.media.append(media_item)
+        return channel_message
 
     async def _main_loop_task(self) -> None:
         if not self._config.app_id or not self._config.app_secret:
@@ -510,6 +541,181 @@ class FeishuChannel(Channel):
         if not sender_name:
             return None
         return str(sender_name)
+
+    async def _get_media(self, message: FeishuMessage) -> FeishuMedia | None:
+        content = _parse_message_content(message.raw_content)
+        if not content:
+            return None
+
+        if message.message_type == "image":
+            image_key = content.get("image_key")
+            if isinstance(image_key, str) and image_key:
+                return FeishuMedia(
+                    type="image",
+                    resource_type="image",
+                    resource_key=image_key,
+                    file_name=None,
+                    mime_type=None,
+                    duration=None,
+                )
+            return None
+
+        if message.message_type not in {"file", "audio", "media", "video", "sticker"}:
+            return None
+
+        resource_key = next(
+            (
+                value
+                for value in (
+                    content.get("file_key"),
+                    content.get("media_key"),
+                    content.get("image_key"),
+                )
+                if isinstance(value, str) and value
+            ),
+            None,
+        )
+        if resource_key is None:
+            return None
+
+        file_name = next(
+            (
+                value
+                for value in (
+                    content.get("file_name"),
+                    content.get("name"),
+                    content.get("title"),
+                )
+                if isinstance(value, str) and value
+            ),
+            None,
+        )
+        duration = content.get("duration")
+        return FeishuMedia(
+            type=message.message_type,
+            resource_type=message.message_type,
+            resource_key=resource_key,
+            file_name=file_name,
+            mime_type=content.get("mime_type")
+            if isinstance(content.get("mime_type"), str)
+            else None,
+            duration=duration if isinstance(duration, int) else None,
+        )
+
+    @staticmethod
+    def _media_metadata(media: FeishuMedia | None) -> dict[str, Any] | None:
+        if media is None:
+            return None
+        return exclude_none(
+            {
+                "type": media.type,
+                "resource_type": media.resource_type,
+                "resource_key": media.resource_key,
+                "file_name": media.file_name,
+                "mime_type": media.mime_type,
+                "duration": media.duration,
+            }
+        )
+
+    async def _build_media_item(
+        self, message: FeishuMessage, media: FeishuMedia | None
+    ) -> MediaItem | None:
+        if self._api_client is None or media is None:
+            return None
+
+        return MediaItem(
+            type=self._media_item_type(media.type),
+            mime_type=media.mime_type or self._default_media_mime_type(media.type),
+            filename=media.file_name,
+            data_fetcher=self._make_media_data_fetcher(message, media),
+        )
+
+    def _make_media_data_fetcher(
+        self, message: FeishuMessage, media: FeishuMedia
+    ) -> Callable[[], Awaitable[bytes]]:
+        async def fetch() -> bytes:
+            response = await self._download_media(message, media)
+            if response is None or getattr(response, "file", None) is None:
+                return b""
+
+            raw = response.file.read()
+            if not raw:
+                return b""
+            return raw
+
+        return fetch
+
+    async def _download_media(
+        self, message: FeishuMessage, media: FeishuMedia
+    ) -> Any | None:
+        if self._api_client is None:
+            return None
+
+        if media.resource_type == "image":
+            request = GetImageRequest.builder().image_key(media.resource_key).build()
+            response = await self._api_client.im.v1.image.aget(request)
+        else:
+            request = (
+                GetMessageResourceRequest.builder()
+                .type(media.resource_type)
+                .message_id(message.message_id)
+                .file_key(media.resource_key)
+                .build()
+            )
+            response = await self._api_client.im.v1.message_resource.aget(request)
+
+        if response.success():
+            return response
+
+        logger.warning(
+            "feishu.media.get.failed message_id={} type={} resource_key={} code={} msg={} log_id={}",
+            message.message_id,
+            media.resource_type,
+            media.resource_key,
+            response.code,
+            response.msg,
+            response.get_log_id(),
+        )
+        return None
+
+    @staticmethod
+    def _resolve_media_mime_type(media: FeishuMedia, response: Any) -> str:
+        if media.mime_type:
+            return media.mime_type
+
+        headers = getattr(getattr(response, "raw", None), "headers", None)
+        if headers is not None:
+            content_type = headers.get("Content-Type") or headers.get("content-type")
+            if isinstance(content_type, str) and content_type:
+                return content_type.partition(";")[0]
+
+        file_name = getattr(response, "file_name", None) or media.file_name
+        if isinstance(file_name, str) and file_name:
+            guessed_type, _ = mimetypes.guess_type(file_name)
+            if guessed_type:
+                return guessed_type
+
+        return FeishuChannel._default_media_mime_type(media.type)
+
+    @staticmethod
+    def _media_item_type(message_type: str) -> str:
+        if message_type in {"image", "sticker"}:
+            return "image"
+        if message_type == "audio":
+            return "audio"
+        if message_type in {"video", "media"}:
+            return "video"
+        return "document"
+
+    @staticmethod
+    def _default_media_mime_type(message_type: str) -> str:
+        if message_type in {"image", "sticker"}:
+            return "image/jpeg"
+        if message_type == "audio":
+            return "audio/mpeg"
+        if message_type in {"video", "media"}:
+            return "video/mp4"
+        return "application/octet-stream"
 
     async def _get_message_detail(self, message_id: str) -> dict[str, str | None]:
         if self._api_client is None or not message_id:

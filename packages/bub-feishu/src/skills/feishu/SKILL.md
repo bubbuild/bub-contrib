@@ -36,6 +36,7 @@ Collect these fields before execution whenever possible:
 
 - Short replies, confirmations, and direct answers: use `feishu_send.py --format text`
 - Markdown content, progress summaries, checklists, and report-like output: use `feishu_send.py --format card`
+- Image messages: use `lark-cli im +messages-send` or `lark-cli im +messages-reply` with `--image`
 - Updates to an existing bot message: use `feishu_edit.py`
 - Lightweight acknowledgment: use the Feishu OpenAPI message reaction endpoint
 
@@ -48,6 +49,8 @@ Collect these fields before execution whenever possible:
 - Long-running tasks should follow an acknowledgment → progress → completion / blocked lifecycle so the user is not left without feedback.
 - When blocked, failing, or waiting on an external dependency, send a problem report immediately, including failure point, completed work, impact, and next action.
 - If `message_id` is missing, do not perform reply, edit, or reaction actions; if `chat_id` is missing, do not perform send actions.
+- `feishu_send.py` only supports text and card messages; when an outbound message must include an image, switch to `lark-cli`.
+- Do not put local image paths inside Markdown and expect automatic upload. For local files like `./image.png`, use `lark-cli ... --image ./image.png`.
 - If card delivery is unsuitable or fails, fall back to `feishu_send.py --format text` so the message still reaches the user.
 
 ## Runtime Context Mapping
@@ -113,6 +116,60 @@ uv run ${SKILL_DIR}/scripts/feishu_edit.py \
   --message-id <MESSAGE_ID> \
   --text "<TEXT>"
 ```
+
+## Sending Images via `lark-cli`
+
+Use `lark-cli` only when the message must contain an image. The packaged `feishu_send.py` script does not upload media.
+
+Prerequisites:
+
+- `lark-cli` is installed, typically via `npm install -g @larksuite/cli`
+- App config is initialized with `lark-cli config init`
+- For bot identity, the app has the required IM scopes and has already been added to the target chat
+- For user identity, `lark-cli auth login` has already granted the required user scopes
+
+Rules:
+
+- New image message to a chat: use `lark-cli im +messages-send --chat-id <CHAT_ID> --image <PATH_OR_IMAGE_KEY>`
+- Reply with an image: use `lark-cli im +messages-reply --message-id <MESSAGE_ID> --image <PATH_OR_IMAGE_KEY>`
+- `--image` accepts either a local file path like `./photo.png` or an existing `image_key` like `img_v3_...`
+- When `--image` is a local file path, `lark-cli` uploads it automatically before sending
+- If you need a dry run first, add `--dry-run`
+
+Examples:
+
+```bash
+# Send a new image message to the current chat as bot
+lark-cli im +messages-send \
+  --chat-id <CHAT_ID> \
+  --image ./photo.png \
+  --as bot
+
+# Reply to the current message with a local image
+lark-cli im +messages-reply \
+  --message-id <MESSAGE_ID> \
+  --image ./photo.png \
+  --as bot
+
+# Send an already uploaded image by image_key
+lark-cli im +messages-send \
+  --chat-id <CHAT_ID> \
+  --image img_v3_abc123 \
+  --as bot
+
+# Preview the request without executing it
+lark-cli im +messages-send \
+  --chat-id <CHAT_ID> \
+  --image ./photo.png \
+  --as bot \
+  --dry-run
+```
+
+Identity notes:
+
+- Prefer `--as bot` for image sends in this skill because the rest of this skill already assumes app credentials and bot-style outbound actions
+- `--as user` is supported by `lark-cli`, but local media upload is still performed with bot identity first, and the final send uses user identity
+- If `--as user` is required, make sure the user identity already has `im:message.send_as_user` and `im:message`
 
 For actions not covered by the packaged scripts, such as reactions, call the Feishu OpenAPI directly.
 

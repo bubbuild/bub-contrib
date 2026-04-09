@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "apscheduler>=3.11.2",
+    "republic>=0.5.6",
 ]
 
 [project.entry-points.bub]
@@ -16,3 +17,8 @@ schedule = "bub_schedule.plugin:main"
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

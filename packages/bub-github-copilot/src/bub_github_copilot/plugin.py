@@ -9,7 +9,8 @@ import typer
 from bub import BubFramework, hookimpl
 from bub.builtin.auth import app as auth_app
 from bub.types import State
-from copilot import CopilotClient, PermissionHandler, SubprocessConfig
+from copilot import CopilotClient, SubprocessConfig
+from copilot.session import PermissionHandler
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,7 +24,7 @@ from bub_github_copilot.auth import (
 from bub_github_copilot.utils import with_bub_skills
 
 if TYPE_CHECKING:
-    from copilot.types import Attachment
+    from copilot.session import Attachment
     from bub.builtin.agent import Agent
 
 DATA_URL_PATTERN = re.compile(r"^data:(?P<mime>[^;,]+);base64,(?P<data>.+)$", re.DOTALL)

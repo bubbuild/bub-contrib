@@ -19,6 +19,7 @@ Contrib packages for the `bub` ecosystem.
 | [`packages/bub-feishu`](./packages/bub-feishu/README.md)                             | `feishu`               | Provides a Feishu channel adapter for Bub message IO.                                                                                     |
 | [`packages/bub-session-prompt`](./packages/bub-session-prompt/README.md)             | `session-prompt`       | Provides a session-specific system prompt sourced from `~/.bub/sessions/<session_id>/AGENTS.md`.                                          |
 | [`packages/bub-wechat`](./packages/bub-wechat/README.md)                             | `wechat`               | Provides a WeChat channel adapter for Bub message IO.                                                                                     |
+| [`packages/bub-wecom`](./packages/bub-wecom/README.md)                               | `wecom`                | Provides a WeCom channel adapter for Bub message IO.                                                                                     |
 
 ## Prerequisites
 

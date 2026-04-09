@@ -112,12 +112,14 @@ def schedule_list(context: ToolContext) -> str:
 
 
 @tool(name="schedule.trigger", context=True)
-def schedule_trigger(job_id: str, context: ToolContext) -> str:
+async def schedule_trigger(job_id: str, context: ToolContext) -> str:
     """Manually trigger a scheduled job to run immediately.
     
     Executes the job function directly without modifying the schedule.
     The next scheduled run remains unchanged.
     """
+    import inspect
+    
     scheduler = _ensure_scheduler(context.state)
     try:
         job = scheduler.get_job(job_id)
@@ -125,7 +127,11 @@ def schedule_trigger(job_id: str, context: ToolContext) -> str:
             raise RuntimeError(f"job not found: {job_id}")
         
         # Execute job function directly, preserving original schedule
-        job.func(*job.args, **job.kwargs)
+        result = job.func(*job.args, **job.kwargs)
+        
+        # Handle async job functions
+        if inspect.iscoroutine(result):
+            await result
         
         next_run = "-"
         if isinstance(job.next_run_time, datetime):

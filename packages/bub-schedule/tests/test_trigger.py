@@ -198,3 +198,30 @@ def test_schedule_trigger_returns_next_run_info(scheduler, context):
     assert "next scheduled run:" in result
     # Should contain ISO format timestamp
     assert next_run.strftime("%Y-%m-%d") in result
+
+
+def test_schedule_trigger_async_job(scheduler, context):
+    """Test that trigger correctly handles async job functions."""
+    execution_log: list[str] = []
+    
+    async def async_job(value: str):
+        # Simulate async work
+        import asyncio
+        await asyncio.sleep(0.01)
+        execution_log.append(value)
+    
+    scheduler.add_job(
+        async_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="test_job_async",
+        args=["async_value"],
+        next_run_time=datetime.now(UTC) + timedelta(hours=1),
+    )
+    
+    # Trigger async job
+    result = _trigger("test_job_async", context)
+    
+    # Verify async job executed
+    assert len(execution_log) == 1
+    assert execution_log[0] == "async_value"
+    assert "test_job_async" in result

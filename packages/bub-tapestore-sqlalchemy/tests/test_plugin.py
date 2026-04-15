@@ -59,3 +59,17 @@ def test_tape_store_from_env_returns_fresh_store(monkeypatch, tmp_path: Path) ->
     assert isinstance(first, SQLAlchemyTapeStore)
     assert isinstance(second, SQLAlchemyTapeStore)
     assert first is not second
+
+
+def test_tape_store_from_env_creates_default_sqlite_parent_directory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    bub_home = tmp_path / "nested" / "runtime-home"
+    monkeypatch.setenv("BUB_HOME", str(bub_home))
+    monkeypatch.delenv("BUB_TAPESTORE_SQLALCHEMY_URL", raising=False)
+
+    store = plugin.tape_store_from_env()
+
+    assert isinstance(store, SQLAlchemyTapeStore)
+    assert bub_home.exists()
+    assert (bub_home / "tapes.db").exists()

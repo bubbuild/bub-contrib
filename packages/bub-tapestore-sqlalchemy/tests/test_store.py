@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 
 import pytest
 from republic import TapeEntry, TapeQuery
-from republic.core.results import ErrorPayload
+from republic.core.errors import ErrorKind, RepublicError
 
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 
@@ -166,13 +167,14 @@ def test_store_rejects_old_schema_database(tmp_path: Path) -> None:
         SQLAlchemyTapeStore(f"sqlite+pysqlite:///{database_path}")
 
 
-def test_query_missing_anchor_matches_existing_error_shape(tmp_path: Path) -> None:
+def test_query_missing_anchor_matches_latest_error_shape(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tape = "session__3"
     store.append(tape, TapeEntry.message({"content": "hello"}))
 
-    with pytest.raises(ErrorPayload, match="Anchor 'missing' was not found."):
+    with pytest.raises(RepublicError, match="Anchor 'missing' was not found.") as exc_info:
         list(TapeQuery(tape, store).after_anchor("missing").all())
+    assert exc_info.value.kind == ErrorKind.NOT_FOUND
 
 
 def test_store_constructor_validates_url() -> None:
@@ -193,3 +195,66 @@ def test_entry_from_payload_round_trip() -> None:
 
     assert entry is not None
     assert json.loads(json.dumps(entry.payload)) == {"content": "hello"}
+
+
+def test_query_text_and_date_filters_match_latest_contract(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    tape = "session__search"
+    store.append(
+        tape,
+        TapeEntry(
+            id=0,
+            kind="anchor",
+            payload={"name": "start"},
+            date="2026-03-01T00:00:00+00:00",
+        ),
+    )
+    store.append(
+        tape,
+        TapeEntry(
+            id=0,
+            kind="message",
+            payload={"role": "user", "content": "old timeout"},
+            meta={"source": "ops"},
+            date="2026-03-01T08:00:00+00:00",
+        ),
+    )
+    store.append(
+        tape,
+        TapeEntry(
+            id=0,
+            kind="anchor",
+            payload={"name": "phase-2"},
+            date="2026-03-02T00:00:00+00:00",
+        ),
+    )
+    store.append(
+        tape,
+        TapeEntry(
+            id=0,
+            kind="message",
+            payload={"role": "user", "content": "new timeout"},
+            meta={"source": "ops"},
+            date="2026-03-02T09:30:00+00:00",
+        ),
+    )
+    store.append(
+        tape,
+        TapeEntry(
+            id=0,
+            kind="event",
+            payload={"name": "run", "data": {"status": "ok"}},
+            meta={"source": "system"},
+            date="2026-03-03T09:30:00+00:00",
+        ),
+    )
+
+    entries = list(
+        TapeQuery(tape, store)
+        .after_anchor("phase-2")
+        .between_dates(date(2026, 3, 2), "2026-03-02")
+        .query("timeout")
+        .all()
+    )
+
+    assert [entry.payload["content"] for entry in entries] == ["new timeout"]

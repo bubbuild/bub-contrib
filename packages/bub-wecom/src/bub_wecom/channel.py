@@ -278,28 +278,48 @@ class WeComChannel(Channel):
         self._started = False
 
     async def send(self, message: ChannelMessage) -> None:
-        if self._client is None:
-            raise RuntimeError("wecom client is not initialized")
+        content = (message.content or "").strip()
         stream_session = self._stream_sessions.pop(message.session_id, None)
-        if stream_session is not None and hasattr(self._client, "reply_stream"):
+        if stream_session is not None:
+            if self._client is None:
+                raise RuntimeError("wecom client is not initialized")
             await self._client.reply_stream(
                 stream_session.frame,
                 stream_session.stream_id,
-                message.content[:4000],
+                content[:4000],
                 True,
             )
             return
+
         chat_id = message.chat_id or self._session_chat_id(message.session_id)
         if not chat_id:
             logger.warning("wecom.outbound missing chat_id session_id={}", message.session_id)
             return
-        await self._client.send_message(
+        if not content:
+            logger.warning("wecom.outbound skipping empty content session_id={}", message.session_id)
+            return
+
+        logger.info(
+            "wecom.outbound proactive_send session_id={} chat_id={} content_len={}",
+            message.session_id,
             chat_id,
-            {
-                "msgtype": "markdown",
-                "markdown": {"content": message.content[:4000]},
-            },
+            len(content),
         )
+        try:
+            from skills.wecom.scripts.wecom_send import send_message as send_proactive_message
+
+            await send_proactive_message(
+                self._settings.bot_id,
+                self._settings.secret,
+                chat_id,
+                content[:4000],
+                message_format="markdown",
+                websocket_url=self._settings.websocket_url,
+            )
+            logger.info("wecom.outbound proactive_send success chat_id={}", chat_id)
+        except Exception as e:
+            logger.error("wecom.outbound proactive_send failed chat_id={} error={}", chat_id, e)
+            raise
 
     def _register_handlers(self) -> None:
         if self._client is None:

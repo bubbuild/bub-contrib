@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 import aiohttp
+import pytest
 
 from bub.tools import REGISTRY
 from bub_searxng_search import tools
@@ -58,6 +59,11 @@ def test_register_tools_adds_tool_when_base_url_exists() -> None:
 
     assert tool_instance is not None
     assert REGISTRY[tools.TOOL_NAME] is tool_instance
+
+
+def test_search_input_rejects_blank_query() -> None:
+    with pytest.raises(ValueError, match="query must not be blank"):
+        tools.SearXNGSearchInput(query="   ")
 
 
 def test_search_formats_answers_infoboxes_and_results(monkeypatch) -> None:

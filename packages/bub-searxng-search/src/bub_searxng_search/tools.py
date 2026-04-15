@@ -4,13 +4,15 @@ import json
 import re
 from collections.abc import Callable, Iterable
 from json import JSONDecodeError
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from bub import tool
 from bub.tools import REGISTRY
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from republic import Tool
+
+if TYPE_CHECKING:
+    from republic import Tool
 
 TOOL_NAME = "searxng.search"
 DEFAULT_TIMEOUT_SECONDS = 10
@@ -36,6 +38,14 @@ class SearXNGSearchInput(BaseModel):
     safe_search: int | None = Field(
         None, ge=0, le=2, description="Optional safe search level: 0 off, 1 moderate, 2 strict."
     )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        query = value.strip()
+        if not query:
+            raise ValueError("query must not be blank")
+        return query
 
 
 class SearXNGSearchSettings(BaseSettings):
@@ -157,7 +167,7 @@ async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings)
 
 def _build_request_params(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings) -> dict[str, str | int]:
     request_params: dict[str, str | int] = {
-        "q": param.query.strip(),
+        "q": param.query,
         "format": "json",
         "safesearch": (
             param.safe_search if param.safe_search is not None else settings.resolved_default_safe_search

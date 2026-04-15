@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from pathlib import Path
 
 import pytest
@@ -34,14 +35,14 @@ def test_run_model_delegates_internal_commands_to_runtime_agent() -> None:
 def test_run_model_uses_codex_for_normal_prompt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[tuple[object, ...], str | None]] = []
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class FakeProcess:
         async def communicate(self) -> tuple[bytes, bytes]:
             return (b"codex-output\n", b"")
 
-    async def fake_create_subprocess_exec(*args, stdout=None, cwd=None):
-        calls.append((args, cwd))
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        calls.append((args, kwargs))
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
@@ -52,7 +53,33 @@ def test_run_model_uses_codex_for_normal_prompt(
 
     assert result == "codex-output\n"
     assert calls
-    args, cwd = calls[0]
+    args, kwargs = calls[0]
     assert args[:2] == ("codex", "e")
     assert args[-1] == "hello"
-    assert cwd == str(tmp_path)
+    assert kwargs["cwd"] == str(tmp_path)
+    assert kwargs["stdout"] == asyncio.subprocess.PIPE
+    assert kwargs["stderr"] == asyncio.subprocess.PIPE
+
+
+def test_run_model_saves_session_id_from_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeProcess:
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (
+                b"codex-output\n",
+                b"booting\nsession id: thread-123\nconnected\n",
+            )
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+
+    state = {"_runtime_workspace": str(tmp_path)}
+    result = asyncio.run(plugin.run_model("hello", session_id="session-3", state=state))
+
+    assert result == "codex-output\n"
+    threads_file = tmp_path / plugin.THREADS_FILE
+    assert json.loads(threads_file.read_text()) == {"session-3": "thread-123"}

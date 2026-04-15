@@ -6,7 +6,6 @@ import threading
 from collections.abc import Iterable
 from datetime import UTC, datetime, time
 from datetime import date as date_type
-from pathlib import Path
 
 from republic import TapeEntry, TapeQuery
 from republic.core.errors import ErrorKind, RepublicError
@@ -21,7 +20,6 @@ from bub_tapestore_sqlalchemy.models import Base, TapeEntryRecord, TapeRecord
 class SQLAlchemyTapeStore:
     def __init__(self, url: str, *, echo: bool = False) -> None:
         self._url = self._normalize_url(url)
-        self._ensure_sqlite_parent_directory(self._url)
         self._echo = echo
         self._write_lock = threading.RLock()
         self._engine = create_engine(
@@ -139,15 +137,6 @@ class SQLAlchemyTapeStore:
                 "timeout": 30,
             }
         return {}
-
-    @staticmethod
-    def _ensure_sqlite_parent_directory(url: URL) -> None:
-        if url.get_backend_name() != "sqlite":
-            return
-        database = url.database
-        if not database or database == ":memory:":
-            return
-        Path(database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _configure_engine(engine: Engine) -> None:

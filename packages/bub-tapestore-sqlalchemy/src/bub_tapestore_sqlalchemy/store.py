@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 from collections.abc import Iterable
-from datetime import UTC, datetime, time
-from datetime import date as date_type
+from dataclasses import replace
 
 from republic import TapeEntry, TapeQuery
-from republic.core.errors import ErrorKind, RepublicError
-from sqlalchemy import Engine, create_engine, event, inspect, select, update
+from republic.tape import InMemoryQueryMixin
+from sqlalchemy import Engine, Text, cast, create_engine, event, func, inspect, select, update
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError, IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from bub_tapestore_sqlalchemy.models import Base, TapeEntryRecord, TapeRecord
 
 
-class SQLAlchemyTapeStore:
+class SQLAlchemyTapeStore(InMemoryQueryMixin):
     def __init__(self, url: str, *, echo: bool = False) -> None:
         self._url = self._normalize_url(url)
         self._echo = echo
@@ -70,30 +68,36 @@ class SQLAlchemyTapeStore:
                     )
                 )
 
-    def fetch_all(self, query: TapeQuery[SQLAlchemyTapeStore]) -> Iterable[TapeEntry]:
-        with self._session_factory() as session:
-            tape_id = self._tape_id(session, query.tape)
-            if tape_id is None:
-                self._raise_missing_for_query(query)
-                return []
+    def fetch_all(self, query: TapeQuery) -> Iterable[TapeEntry]:
+        normalized_query = replace(query, _kinds=self._normalized_kinds(query._kinds))
+        if not normalized_query._query:
+            return super().fetch_all(normalized_query)
+        unrestricted_query = replace(normalized_query, _query=None, _limit=None)
+        entries = list(super().fetch_all(unrestricted_query))
+        if not entries:
+            return []
+        entry_by_id = {entry.id: entry for entry in entries}
+        filtered = [
+            entry_by_id[entry_id]
+            for entry_id in self._matched_entry_ids(normalized_query.tape, normalized_query._query)
+            if entry_id in entry_by_id
+        ]
+        if normalized_query._limit is not None:
+            return filtered[: normalized_query._limit]
+        return filtered
 
-            lower_bound, upper_bound = self._resolve_bounds(
-                session=session,
-                tape_id=tape_id,
-                query=query,
+    def read(self, tape: str) -> list[TapeEntry]:
+        with self._session_factory() as session:
+            tape_id = self._tape_id(session, tape)
+            if tape_id is None:
+                return []
+            statement = (
+                select(TapeEntryRecord)
+                .where(TapeEntryRecord.tape_id == tape_id)
+                .order_by(TapeEntryRecord.entry_id)
             )
-            statement = select(TapeEntryRecord).where(TapeEntryRecord.tape_id == tape_id)
-            if lower_bound is not None:
-                statement = statement.where(TapeEntryRecord.entry_id > lower_bound)
-            if upper_bound is not None:
-                statement = statement.where(TapeEntryRecord.entry_id < upper_bound)
-            kinds = self._normalized_kinds(query._kinds)
-            if kinds:
-                statement = statement.where(TapeEntryRecord.kind.in_(kinds))
-            statement = statement.order_by(TapeEntryRecord.entry_id)
             records = session.scalars(statement).all()
-        entries = [self._entry_from_record(record) for record in records]
-        return self._apply_post_filters(entries, query)
+        return [self._entry_from_record(record) for record in records]
 
     @staticmethod
     def entry_from_payload(payload: object) -> TapeEntry | None:
@@ -206,6 +210,28 @@ class SQLAlchemyTapeStore:
     def _key_for(value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+    def _matched_entry_ids(self, tape: str, query_text: str) -> list[int]:
+        normalized_query = query_text.strip().lower()
+        if not normalized_query:
+            return []
+        with self._session_factory() as session:
+            tape_id = self._tape_id(session, tape)
+            if tape_id is None:
+                return []
+            pattern = self._like_pattern(normalized_query)
+            statement = (
+                select(TapeEntryRecord.entry_id)
+                .where(TapeEntryRecord.tape_id == tape_id)
+                .where(func.lower(cast(TapeEntryRecord.payload, Text)).like(pattern, escape="\\"))
+                .order_by(TapeEntryRecord.entry_id.desc())
+            )
+            return list(session.scalars(statement).all())
+
+    @staticmethod
+    def _like_pattern(value: str) -> str:
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
+
     @staticmethod
     def _normalized_kinds(kinds: tuple[object, ...]) -> tuple[str, ...]:
         normalized: list[str] = []
@@ -221,82 +247,6 @@ class SQLAlchemyTapeStore:
                 continue
             raise TypeError("TapeQuery.kinds() entries must be strings.")
         return tuple(normalized)
-
-    @staticmethod
-    def _apply_post_filters(
-        entries: list[TapeEntry],
-        query: TapeQuery[SQLAlchemyTapeStore],
-    ) -> list[TapeEntry]:
-        filtered = entries
-        if query._between_dates is not None:
-            start_dt, end_dt = SQLAlchemyTapeStore._parse_datetime_range(*query._between_dates)
-            filtered = [
-                entry for entry in filtered if SQLAlchemyTapeStore._entry_in_datetime_range(entry, start_dt, end_dt)
-            ]
-        if query._query:
-            filtered = [
-                entry for entry in filtered if SQLAlchemyTapeStore._entry_matches_query(entry, query._query)
-            ]
-        if query._limit is not None:
-            filtered = filtered[: query._limit]
-        return filtered
-
-    @staticmethod
-    def _parse_datetime_boundary(value: str, *, is_end: bool) -> datetime:
-        if "T" not in value and " " not in value:
-            try:
-                parsed_date = date_type.fromisoformat(value)
-            except ValueError:
-                pass
-            else:
-                boundary_time = time.max if is_end else time.min
-                return datetime.combine(parsed_date, boundary_time, tzinfo=UTC)
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            try:
-                parsed_date = date_type.fromisoformat(value)
-            except ValueError as exc:
-                raise RepublicError(
-                    ErrorKind.INVALID_INPUT,
-                    f"Invalid ISO date or datetime: '{value}'.",
-                ) from exc
-            boundary_time = time.max if is_end else time.min
-            parsed = datetime.combine(parsed_date, boundary_time, tzinfo=UTC)
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(UTC)
-
-    @staticmethod
-    def _parse_datetime_range(start_date: str, end_date: str) -> tuple[datetime, datetime]:
-        start_dt = SQLAlchemyTapeStore._parse_datetime_boundary(start_date, is_end=False)
-        end_dt = SQLAlchemyTapeStore._parse_datetime_boundary(end_date, is_end=True)
-        if start_dt > end_dt:
-            raise RepublicError(
-                ErrorKind.INVALID_INPUT,
-                "Start date must be earlier than or equal to end date.",
-            )
-        return start_dt, end_dt
-
-    @staticmethod
-    def _entry_in_datetime_range(entry: TapeEntry, start_dt: datetime, end_dt: datetime) -> bool:
-        entry_dt = SQLAlchemyTapeStore._parse_datetime_boundary(entry.date, is_end=False)
-        return start_dt <= entry_dt <= end_dt
-
-    @staticmethod
-    def _entry_matches_query(entry: TapeEntry, query: str) -> bool:
-        needle = query.casefold()
-        haystack = json.dumps(
-            {
-                "kind": entry.kind,
-                "date": entry.date,
-                "payload": entry.payload,
-                "meta": entry.meta,
-            },
-            sort_keys=True,
-            default=str,
-        ).casefold()
-        return needle in haystack
 
     @classmethod
     def _load_or_create_tape(cls, session: Session, tape: str) -> TapeRecord:
@@ -360,97 +310,3 @@ class SQLAlchemyTapeStore:
             )
             if current_entry_id is None:
                 raise RuntimeError(f"Failed to allocate entry id for tape '{tape_record.name}'.")
-
-    def _resolve_bounds(
-        self,
-        *,
-        session: Session,
-        tape_id: int,
-        query: TapeQuery[SQLAlchemyTapeStore],
-    ) -> tuple[int | None, int | None]:
-        if query._between_anchors is not None:
-            start_name, end_name = query._between_anchors
-            start_id = self._find_anchor_id(
-                session=session,
-                tape_id=tape_id,
-                name=start_name,
-                forward=False,
-            )
-            if start_id is None:
-                raise self._missing_anchor_error(start_name)
-            end_id = self._find_anchor_id(
-                session=session,
-                tape_id=tape_id,
-                name=end_name,
-                forward=True,
-                after_entry_id=start_id,
-            )
-            if end_id is None:
-                raise self._missing_anchor_error(end_name)
-            return start_id, end_id
-
-        if query._after_last:
-            anchor_id = self._find_anchor_id(
-                session=session,
-                tape_id=tape_id,
-                name=None,
-                forward=False,
-            )
-            if anchor_id is None:
-                raise self._no_anchors_error()
-            return anchor_id, None
-
-        if query._after_anchor is not None:
-            anchor_id = self._find_anchor_id(
-                session=session,
-                tape_id=tape_id,
-                name=query._after_anchor,
-                forward=False,
-            )
-            if anchor_id is None:
-                raise self._missing_anchor_error(query._after_anchor)
-            return anchor_id, None
-
-        return None, None
-
-    @staticmethod
-    def _find_anchor_id(
-        *,
-        session: Session,
-        tape_id: int,
-        name: str | None,
-        forward: bool,
-        after_entry_id: int = 0,
-    ) -> int | None:
-        statement = select(TapeEntryRecord.entry_id).where(
-            TapeEntryRecord.tape_id == tape_id,
-            TapeEntryRecord.kind == "anchor",
-        )
-        if name is not None:
-            statement = statement.where(
-                TapeEntryRecord.anchor_name_key == SQLAlchemyTapeStore._key_for(name),
-                TapeEntryRecord.anchor_name == name,
-            )
-        if after_entry_id > 0:
-            statement = statement.where(TapeEntryRecord.entry_id > after_entry_id)
-        order_column = TapeEntryRecord.entry_id.asc() if forward else TapeEntryRecord.entry_id.desc()
-        statement = statement.order_by(order_column).limit(1)
-        return session.scalar(statement)
-
-    @staticmethod
-    def _missing_anchor_error(name: str) -> RepublicError:
-        return RepublicError(ErrorKind.NOT_FOUND, f"Anchor '{name}' was not found.")
-
-    @staticmethod
-    def _no_anchors_error() -> RepublicError:
-        return RepublicError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
-
-    @staticmethod
-    def _raise_missing_for_query(query: TapeQuery[SQLAlchemyTapeStore]) -> None:
-        if query._between_anchors is not None:
-            start_name, _ = query._between_anchors
-            raise SQLAlchemyTapeStore._missing_anchor_error(start_name)
-        if query._after_last:
-            raise SQLAlchemyTapeStore._no_anchors_error()
-        if query._after_anchor is not None:
-            raise SQLAlchemyTapeStore._missing_anchor_error(query._after_anchor)

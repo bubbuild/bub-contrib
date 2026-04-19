@@ -1,8 +1,17 @@
 # bub-contrib
 
-Contrib packages for the `bub` ecosystem.
+Some contrib packages for the `bub` ecosystem.
 
-## Packages
+## Plugin Discovery
+
+You can find a broader plugin catalog at [hub.bub.build](https://hub.bub.build), which includes packages maintained in this repository as well as third-party Bub plugins.
+
+If you have developed a plugin, you can also choose to register it in [`bubbuild/buildscape`](https://github.com/bubbuild/buildscape) instead of submitting all of its source code to this repository.
+
+Below is the list of packages currently included in this repository.
+
+<details>
+<summary>Packages In This Repository</summary>
 
 | Package                                                                              | Bub Plugin Entry Point | Description                                                                                                                               |
 | ------------------------------------------------------------------------------------ | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -22,6 +31,8 @@ Contrib packages for the `bub` ecosystem.
 | [`packages/bub-session-prompt`](./packages/bub-session-prompt/README.md)             | `session-prompt`       | Provides a session-specific system prompt sourced from `~/.bub/sessions/<session_id>/AGENTS.md`.                                          |
 | [`packages/bub-wechat`](./packages/bub-wechat/README.md)                             | `wechat`               | Provides a WeChat channel adapter for Bub message IO.                                                                                     |
 | [`packages/bub-wecom`](./packages/bub-wecom/README.md)                               | `wecom`                | Provides a WeCom channel adapter for Bub message IO.                                                                                     |
+
+</details>
 
 ## Prerequisites
 
@@ -43,7 +54,6 @@ Install all workspace dependencies:
 ```bash
 uv sync
 ```
-
 
 ## Governance Model
 

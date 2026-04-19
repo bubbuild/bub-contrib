@@ -1,0 +1,17 @@
+[project]
+name = "bub-kimi"
+version = "0.1.0"
+description = "Kimi CLI model plugin for bub"
+readme = "README.md"
+authors = [
+    { name = "Mengxin Liu", email = "liumengxinfly@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.entry-points.bub]
+kimi = "bub_kimi.plugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"

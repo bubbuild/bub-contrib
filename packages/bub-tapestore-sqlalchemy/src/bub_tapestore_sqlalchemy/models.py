@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON, DateTime
@@ -17,9 +19,9 @@ class TapeRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    name_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    name_key: Mapped[str] = mapped_column(String(64), nullable=False)
     last_entry_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
@@ -44,7 +46,7 @@ class TapeEntryRecord(Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     meta: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     entry_date: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),

@@ -166,7 +166,7 @@ def test_store_rejects_old_schema_database(tmp_path: Path) -> None:
         SQLAlchemyTapeStore(f"sqlite+pysqlite:///{database_path}")
 
 
-def test_query_missing_anchor_matches_existing_error_shape(tmp_path: Path) -> None:
+def test_query_missing_anchor_matches_builtin_error_shape(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tape = "session__3"
     store.append(tape, TapeEntry.message({"content": "hello"}))
@@ -193,3 +193,47 @@ def test_entry_from_payload_round_trip() -> None:
 
     assert entry is not None
     assert json.loads(json.dumps(entry.payload)) == {"content": "hello"}
+
+
+def test_query_search_matches_builtin_payload_filtering(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    tape = "session__search"
+    store.append(tape, TapeEntry.message({"role": "user", "content": "old timeout"}))
+    store.append(tape, TapeEntry.message({"role": "user", "content": "new timeout"}))
+    store.append(tape, TapeEntry.event("run", {"status": "ok"}))
+
+    entries = list(TapeQuery(tape, store).query("timeout").limit(1).all())
+
+    assert [entry.payload["content"] for entry in entries] == ["new timeout"]
+
+
+def test_query_search_respects_anchor_bounds(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    tape = "session__bounded_search"
+    store.append(tape, TapeEntry.anchor("phase-1"))
+    store.append(tape, TapeEntry.message({"role": "user", "content": "old timeout"}))
+    store.append(tape, TapeEntry.anchor("phase-2"))
+    store.append(tape, TapeEntry.message({"role": "user", "content": "new timeout"}))
+
+    entries = list(TapeQuery(tape, store).after_anchor("phase-2").query("timeout").all())
+
+    assert [entry.payload["content"] for entry in entries] == ["new timeout"]
+
+
+def test_query_search_escapes_sql_like_wildcards(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    tape = "session__wildcards"
+    store.append(tape, TapeEntry.message({"role": "user", "content": "usage is 100%"}))
+    store.append(tape, TapeEntry.message({"role": "user", "content": "metric_name"}))
+
+    percent_entries = list(TapeQuery(tape, store).query("100%").all())
+    underscore_entries = list(TapeQuery(tape, store).query("metric_name").all())
+
+    assert [entry.payload["content"] for entry in percent_entries] == ["usage is 100%"]
+    assert [entry.payload["content"] for entry in underscore_entries] == ["metric_name"]
+
+
+def test_read_missing_tape_matches_builtin_shape(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    assert store.read("missing__tape") == []

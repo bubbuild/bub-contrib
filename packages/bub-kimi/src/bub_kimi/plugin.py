@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -11,17 +12,18 @@ from bub.types import State
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from bub_codex.utils import with_bub_skills
+from bub_kimi.utils import with_bub_skills
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
 
-THREADS_FILE = ".bub-codex-threads.json"
+THREADS_FILE = ".bub-kimi-threads.json"
+RESUME_LINE_PREFIX = "To resume this session:"
 
 
 def _load_thread_id(session_id: str, state: State) -> str | None:
-    workpace = workspace_from_state(state)
-    threads_file = workpace / THREADS_FILE
+    workspace = workspace_from_state(state)
+    threads_file = workspace / THREADS_FILE
     with contextlib.suppress(FileNotFoundError):
         with threads_file.open() as f:
             threads = json.load(f)
@@ -29,8 +31,8 @@ def _load_thread_id(session_id: str, state: State) -> str | None:
 
 
 def _save_thread_id(session_id: str, thread_id: str, state: State) -> None:
-    workpace = workspace_from_state(state)
-    threads_file = workpace / THREADS_FILE
+    workspace = workspace_from_state(state)
+    threads_file = workspace / THREADS_FILE
     if threads_file.exists():
         with threads_file.open() as f:
             threads = json.load(f)
@@ -48,17 +50,18 @@ def workspace_from_state(state: State) -> Path:
     return Path.cwd().resolve()
 
 
-class CodexSettings(BaseSettings):
-    """Configuration for Codex plugin."""
+class KimiSettings(BaseSettings):
+    """Configuration for Kimi plugin."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BUB_CODEX_", env_file=".env", extra="ignore"
+        env_prefix="BUB_KIMI_", env_file=".env", extra="ignore"
     )
-    model: str | None = Field(default=None)
-    yolo_mode: bool = False
+    model_name: str | None = Field(default=None)
+    api_key: str | None = Field(default=None)
+    base_url: str | None = Field(default=None)
 
 
-codex_settings = CodexSettings()
+kimi_settings = KimiSettings()
 
 
 def _runtime_agent_from_state(state: State) -> Agent | None:
@@ -85,30 +88,48 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
 
     workspace = workspace_from_state(state)
     thread_id = _load_thread_id(session_id, state)
-    command = ["codex", "e"]
+    command: list[str] = ["kimi"]
     if thread_id:
-        command.extend(["resume", thread_id])
-    if codex_settings.model:
-        command.extend(["--model", codex_settings.model])
-    if codex_settings.yolo_mode:
-        command.append("--dangerously-bypass-approvals-and-sandbox")
-    command.append(prompt)
+        command.extend(["-r", thread_id])
+    command.append("--quiet")
+    command.extend(["-p", prompt])
+    env = os.environ.copy()
+    if kimi_settings.api_key:
+        env["KIMI_API_KEY"] = kimi_settings.api_key
+    if kimi_settings.base_url:
+        env["KIMI_BASE_URL"] = kimi_settings.base_url
+    if kimi_settings.model_name:
+        env["KIMI_MODEL_NAME"] = kimi_settings.model_name
     with with_bub_skills(workspace):
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(workspace),
+            env=env,
         )
         stdout, stderr = await process.communicate()
-    output_blocks: list[str] = []
-    if stdout:
-        output_blocks.append(stdout.decode())
-    if stderr:
-        stderr_text = stderr.decode()
-        for line in stderr_text.splitlines():
-            if line.startswith("session id:"):
-                thread_id = line.split(":", 1)[1].strip()
-                _save_thread_id(session_id, thread_id, state)
-                break
-    return "\n".join(output_blocks)
+
+    stdout_text = stdout.decode() if stdout else ""
+    stderr_text = stderr.decode() if stderr else ""
+
+    stderr_lines: list[str] = []
+    for line in stderr_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(RESUME_LINE_PREFIX):
+            new_thread_id = stripped.rsplit(" ", 1)[-1]
+            if new_thread_id:
+                _save_thread_id(session_id, new_thread_id, state)
+            continue
+        stderr_lines.append(line)
+
+    if process.returncode != 0:
+        parts = [f"Kimi process exited with code {process.returncode}."]
+        filtered_stderr = "\n".join(stderr_lines).strip()
+        if filtered_stderr:
+            parts.append(filtered_stderr)
+        if stdout_text.strip():
+            parts.append(stdout_text)
+        return "\n\n".join(parts)
+
+    return stdout_text

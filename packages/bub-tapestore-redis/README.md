@@ -15,6 +15,12 @@ Redis-backed async tape store plugin for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-tapestore-redis"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-tapestore-redis@main
+```
+
 ## Configuration
 
 The plugin reads environment variables with prefix `BUB_TAPESTORE_REDIS_`:

@@ -15,6 +15,12 @@ Session-specific system prompt plugin for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-session-prompt"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-session-prompt@main
+```
+
 ## Runtime Behavior
 
 - When `state["session_id"]` is present, the plugin reads:

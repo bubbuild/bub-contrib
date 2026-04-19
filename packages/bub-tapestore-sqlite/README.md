@@ -15,6 +15,12 @@ SQLite-backed tape store plugin for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-tapestore-sqlite"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-tapestore-sqlite@main
+```
+
 > Note:
 > `bub-tapestore-sqlite` currently supports `bub` `0.3.1` and later.
 

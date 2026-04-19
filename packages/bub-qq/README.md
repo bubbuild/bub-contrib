@@ -16,6 +16,12 @@ Install directly from GitHub:
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-qq"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-qq@main
+```
+
 ## Official Documentation
 
 For QQ bot setup, application creation, credential management, and API details, see the official QQ Bot documentation:

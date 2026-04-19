@@ -19,6 +19,12 @@ Install via pip (from the monorepo):
 uv pip install git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-wechat
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-wechat@main
+```
+
 Login to WeChat using the provided CLI tool:
 
 ```bash

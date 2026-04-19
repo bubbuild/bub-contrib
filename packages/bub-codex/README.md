@@ -15,6 +15,12 @@ Codex model plugin for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-codex"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-codex@main
+```
+
 ## Prerequisites
 
 - `codex` CLI must be installed and available in `PATH`.

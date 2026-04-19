@@ -33,6 +33,12 @@ Install directly from GitHub:
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-github-copilot"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-github-copilot@main
+```
+
 ## Login
 
 Authenticate once with GitHub device flow:

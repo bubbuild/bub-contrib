@@ -18,6 +18,12 @@ Scheduling plugin for the `bub` ecosystem.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-schedule"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-schedule@main
+```
+
 ## Runtime Behavior
 
 - Scheduler starts when the plugin channel starts.

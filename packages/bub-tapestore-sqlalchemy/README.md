@@ -15,6 +15,12 @@ SQLAlchemy-backed tape store plugin for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-tapestore-sqlalchemy"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-tapestore-sqlalchemy@main
+```
+
 ## Configuration
 
 The plugin reads environment variables with prefix `BUB_TAPESTORE_SQLALCHEMY_`:

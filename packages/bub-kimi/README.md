@@ -15,6 +15,12 @@ Kimi CLI plugin for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-kimi"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-kimi@main
+```
+
 ## Prerequisites
 
 - `kimi` CLI must be installed and available in `PATH`.

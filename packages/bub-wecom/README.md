@@ -16,6 +16,12 @@ WeCom channel adapter for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-wecom"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-wecom@main
+```
+
 ## Configuration
 
 `WeComChannel` reads settings from environment variables with the `BUB_WECOM_` prefix.

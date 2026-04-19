@@ -14,6 +14,12 @@ Web search tool package for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-web-search"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-web-search@main
+```
+
 ## Required Environment Variables
 
 - `BUB_SEARCH_OLLAMA_API_KEY`: API key used for Ollama web search requests

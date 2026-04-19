@@ -14,6 +14,12 @@ SearXNG-backed web search tool package for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-searxng-search"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-searxng-search@main
+```
+
 ## Required Environment Variables
 
 - `BUB_SEARXNG_SEARCH_BASE_URL`: base URL of your SearXNG instance

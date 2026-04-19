@@ -16,6 +16,12 @@ Feishu channel adapter for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-feishu"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-feishu@main
+```
+
 ## Configuration
 
 `FeishuChannel` reads settings from environment variables with the `BUB_FEISHU_` prefix.

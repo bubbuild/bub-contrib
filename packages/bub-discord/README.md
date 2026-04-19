@@ -16,6 +16,12 @@ Discord channel adapter for `bub`.
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-discord"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-discord@main
+```
+
 ## Configuration
 
 `DiscordChannel` reads settings from environment variables with the `BUB_DISCORD_` prefix.
@@ -64,4 +70,3 @@ Inbound non-command messages are encoded as JSON string content, including field
 - Uses `session_id` to resolve destination channel.
 - Splits long messages into multiple Discord posts.
 - Replies to the latest inbound message in the same session when possible.
-

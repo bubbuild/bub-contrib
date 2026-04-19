@@ -20,6 +20,12 @@ See also: [tg-message-feed] - a companion service that forwards Telegram message
 uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-tg-feed"
 ```
 
+You can also install it with Bub:
+
+```bash
+bub install bub-tg-feed@main
+```
+
 ## Provide Channels
 
 - `AMQPChannel` consuming from exchange `telegram.messages` with routing key `#`

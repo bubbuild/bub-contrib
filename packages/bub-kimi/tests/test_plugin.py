@@ -108,7 +108,7 @@ def test_run_model_forwards_model_name_to_kimi_env(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin.kimi_settings, "model", "kimi-k2")
+    monkeypatch.setattr(plugin.kimi_settings, "model_name", "kimi-k2")
 
     state = {"_runtime_workspace": str(tmp_path)}
     asyncio.run(plugin.run_model("hello", session_id="session-model", state=state))
@@ -164,7 +164,7 @@ def test_run_model_omits_api_key_when_not_configured(
     monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
     monkeypatch.setattr(plugin.kimi_settings, "api_key", None)
     monkeypatch.setattr(plugin.kimi_settings, "base_url", None)
-    monkeypatch.setattr(plugin.kimi_settings, "model", None)
+    monkeypatch.setattr(plugin.kimi_settings, "model_name", None)
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_BASE_URL", raising=False)
     monkeypatch.delenv("KIMI_MODEL_NAME", raising=False)

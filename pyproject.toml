@@ -13,6 +13,7 @@ dependencies = [
     "bub-kimi",
     "bub-qq",
     "bub-schedule",
+    "bub-searxng-search",
     "bub-tapestore-sqlalchemy",
     "bub-tapestore-redis",
     "bub-tapestore-sqlite",
@@ -37,6 +38,7 @@ bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }
 bub-qq = { workspace = true }
 bub-schedule = { workspace = true }
+bub-searxng-search = { workspace = true }
 bub-tapestore-sqlalchemy = { workspace = true }
 bub-tapestore-redis = { workspace = true }
 bub-tapestore-sqlite = { workspace = true }

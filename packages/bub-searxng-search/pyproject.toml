@@ -1,0 +1,25 @@
+[project]
+name = "bub-searxng-search"
+version = "0.1.0"
+description = "SearXNG search tools for Bub"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.3",
+    "pydantic-settings>=2.10.1",
+]
+
+[project.entry-points.bub]
+searxng-search = "bub_searxng_search.tools"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

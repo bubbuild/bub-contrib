@@ -11,6 +11,7 @@ dependencies = [
     "bub-dingtalk",
     "bub-github-copilot",
     "bub-kimi",
+    "bub-mcp",
     "bub-qq",
     "bub-schedule",
     "bub-searxng-search",
@@ -36,6 +37,7 @@ bub-discord = { workspace = true }
 bub-dingtalk = { workspace = true }
 bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }
+bub-mcp = { workspace = true }
 bub-qq = { workspace = true }
 bub-schedule = { workspace = true }
 bub-searxng-search = { workspace = true }

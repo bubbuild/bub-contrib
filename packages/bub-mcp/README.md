@@ -4,33 +4,66 @@ Expose configured MCP servers as Bub tools.
 
 ## Configuration
 
-The plugin reads MCP server definitions from Bub's default config file:
+The plugin reads MCP server definitions from a dedicated JSON file under Bub home:
 
-- `~/.bub/config.yml`
-- or `$BUB_HOME/config.yml` when `BUB_HOME` is set
+- `~/.bub/mcp.json`
+- or `$BUB_HOME/mcp.json` when `BUB_HOME` is set
 
-Add `mcp_servers` to that file:
+The file must contain a top-level `mcpServers` mapping:
 
-```yaml
-mcp_servers:
-  weather:
-    url: https://weather.example.com/mcp
-    transport: http
-  local:
-    command: python
-    args:
-      - ./server.py
+```json
+{
+  "mcpServers": {
+    "weather": {
+      "url": "https://weather.example.com/mcp",
+      "transport": "http"
+    },
+    "local": {
+      "command": "python",
+      "args": ["./server.py"]
+    }
+  }
+}
 ```
 
-## Runtime Behavior
+## CLI Usage
 
-`bub-mcp` uses a dedicated lifecycle channel to schedule FastMCP bootstrap in `Channel.start()`
-and release resources in `Channel.stop()`. Once the background task finishes, discovered remote
-tools are registered into Bub's global tool registry with the
-`mcp.` prefix, for example `mcp.weather_get_forecast`.
+Use the CLI to inspect and manage `mcp.json`:
 
-The lifecycle channel also exposes runtime config management helpers:
+```bash
+bub mcp list
+```
 
-- `list()`: return the current `mcp_servers` mapping from Bub config
-- `add(name, server)`: persist one server config and reload the MCP client
-- `remove(name)`: delete one server config and reload the MCP client
+Add an HTTP server:
+
+```bash
+bub mcp add --transport http weather https://weather.example.com/mcp
+```
+
+Add an SSE server with headers:
+
+```bash
+bub mcp add \
+  --transport sse \
+  --header "Authorization: Bearer token" \
+  events \
+  https://events.example.com/mcp
+```
+
+Add a stdio server with environment variables:
+
+```bash
+bub mcp add \
+  --transport stdio \
+  --env API_KEY=secret \
+  filesystem \
+  -- npx -y @modelcontextprotocol/server-filesystem /tmp
+```
+
+Remove a server:
+
+```bash
+bub mcp remove weather
+```
+
+`bub mcp add` writes the server config into `mcp.json` and performs a connection test before exiting.

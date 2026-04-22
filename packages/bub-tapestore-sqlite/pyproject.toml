@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiosqlite>=0.20.0",
     "any-llm-sdk",
-    "republic>=0.5.4",
+    "republic>=0.5.7",
     "sqlite-vec>=0.1.6",
 ]
 

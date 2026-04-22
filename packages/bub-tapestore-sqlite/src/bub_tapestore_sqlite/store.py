@@ -9,9 +9,8 @@ from typing import Any
 import aiosqlite
 import sqlite_vec
 from any_llm import AnyLLM
-from republic import TapeEntry, TapeQuery
+from republic import RepublicError, TapeContext, TapeEntry, TapeQuery
 from republic.core.errors import ErrorKind
-from republic.core.results import ErrorPayload
 
 ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
 ALLOWED_SYNCHRONOUS_MODES = {"OFF", "NORMAL", "FULL", "EXTRA"}
@@ -52,7 +51,6 @@ class SQLiteTapeStore:
     ) -> None:
         from bub.builtin.agent import _build_llm
         from bub.builtin.settings import AgentSettings
-        from republic.tape.context import TapeContext
 
         self._path = Path(path)
         self._llm = _build_llm(AgentSettings(), self, TapeContext())  # type: ignore[arg-type]
@@ -559,7 +557,7 @@ class SQLiteTapeStore:
                 forward=False,
             )
             if start_id is None:
-                raise ErrorPayload(
+                raise RepublicError(
                     ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
                 )
             end_id = await self._find_anchor_id(
@@ -570,7 +568,7 @@ class SQLiteTapeStore:
                 after_entry_id=start_id,
             )
             if end_id is None:
-                raise ErrorPayload(
+                raise RepublicError(
                     ErrorKind.NOT_FOUND, f"Anchor '{end_name}' was not found."
                 )
             return start_id, end_id
@@ -583,7 +581,7 @@ class SQLiteTapeStore:
                 forward=False,
             )
             if anchor_id is None:
-                raise ErrorPayload(ErrorKind.NOT_FOUND, "No anchors found in tape.")
+                raise RepublicError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
             return anchor_id, None
 
         if query._after_anchor is not None:
@@ -594,7 +592,7 @@ class SQLiteTapeStore:
                 forward=False,
             )
             if anchor_id is None:
-                raise ErrorPayload(
+                raise RepublicError(
                     ErrorKind.NOT_FOUND,
                     f"Anchor '{query._after_anchor}' was not found.",
                 )
@@ -784,12 +782,12 @@ class SQLiteTapeStore:
     def _raise_missing_for_query(query: TapeQuery) -> None:
         if query._between_anchors is not None:
             start_name, _ = query._between_anchors
-            raise ErrorPayload(
+            raise RepublicError(
                 ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
             )
         if query._after_last:
-            raise ErrorPayload(ErrorKind.NOT_FOUND, "No anchors found in tape.")
+            raise RepublicError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
         if query._after_anchor is not None:
-            raise ErrorPayload(
+            raise RepublicError(
                 ErrorKind.NOT_FOUND, f"Anchor '{query._after_anchor}' was not found."
             )

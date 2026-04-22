@@ -6,8 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from republic import TapeEntry, TapeQuery
-from republic.core.results import ErrorPayload
+from republic import RepublicError, TapeEntry, TapeQuery
 
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 
@@ -171,7 +170,7 @@ def test_query_missing_anchor_matches_builtin_error_shape(tmp_path: Path) -> Non
     tape = "session__3"
     store.append(tape, TapeEntry.message({"content": "hello"}))
 
-    with pytest.raises(ErrorPayload, match="Anchor 'missing' was not found."):
+    with pytest.raises(RepublicError, match="Anchor 'missing' was not found."):
         list(TapeQuery(tape, store).after_anchor("missing").all())
 
 

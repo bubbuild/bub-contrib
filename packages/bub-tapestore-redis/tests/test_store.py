@@ -10,12 +10,9 @@ import redis.asyncio as redis
 from bub_tapestore_redis import RedisTapeStore
 from redis.crc import key_slot
 from redis.exceptions import RedisError
+from republic import AsyncTapeManager, RepublicError, TapeContext, TapeEntry, TapeQuery
 from republic.core.errors import ErrorKind
-from republic.core.results import ErrorPayload
-from republic.tape.context import LAST_ANCHOR, TapeContext
-from republic.tape.entries import TapeEntry
-from republic.tape.manager import AsyncTapeManager
-from republic.tape.query import TapeQuery
+from republic.tape.context import LAST_ANCHOR
 
 
 def _redis_url() -> str:
@@ -231,8 +228,8 @@ async def test_query_combines_anchor_date_and_text_filters(store: RedisTapeStore
 
 
 @pytest.mark.asyncio
-async def test_missing_anchor_and_invalid_date_raise_errorpayload(store: RedisTapeStore) -> None:
-    with pytest.raises(ErrorPayload) as missing_anchor:
+async def test_missing_anchor_and_invalid_date_raise_republic_error(store: RedisTapeStore) -> None:
+    with pytest.raises(RepublicError) as missing_anchor:
         list(await TapeQuery(tape="empty", store=store).after_anchor("missing").all())
     assert missing_anchor.value.kind == ErrorKind.NOT_FOUND
 
@@ -240,7 +237,7 @@ async def test_missing_anchor_and_invalid_date_raise_errorpayload(store: RedisTa
         "dated",
         TapeEntry(id=0, kind="message", payload={"role": "user", "content": "entry"}, date="2026-03-03T00:00:00+00:00"),
     )
-    with pytest.raises(ErrorPayload) as invalid_range:
+    with pytest.raises(RepublicError) as invalid_range:
         list(await TapeQuery(tape="dated", store=store).between_dates("2026-03-05", "2026-03-01").all())
     assert invalid_range.value.kind == ErrorKind.INVALID_INPUT
 
@@ -274,7 +271,7 @@ async def test_reset_clears_anchor_indexes(store: RedisTapeStore) -> None:
     await store.reset("session")
     await store.append("session", TapeEntry.message({"role": "user", "content": "fresh"}))
 
-    with pytest.raises(ErrorPayload) as exc_info:
+    with pytest.raises(RepublicError) as exc_info:
         list(await TapeQuery(tape="session", store=store).after_anchor("a1").all())
     assert exc_info.value.kind == ErrorKind.NOT_FOUND
 

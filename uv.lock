@@ -599,7 +599,7 @@ dependencies = [
 requires-dist = [
     { name = "pydantic-settings" },
     { name = "redis", specifier = ">=6.0.0" },
-    { name = "republic", specifier = ">=0.5.4" },
+    { name = "republic", specifier = ">=0.5.7" },
 ]
 
 [[package]]
@@ -628,7 +628,7 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "any-llm-sdk" },
-    { name = "republic", specifier = ">=0.5.4" },
+    { name = "republic", specifier = ">=0.5.7" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
 ]
 

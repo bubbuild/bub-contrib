@@ -24,6 +24,7 @@ dependencies = [
     "bub-session-prompt",
     "bub-wechat",
     "bub-wecom",
+    "tape-dataset-opendal",
 ]
 
 [tool.uv.workspace]
@@ -49,3 +50,4 @@ bub-feishu = { workspace = true }
 bub-session-prompt = { workspace = true }
 bub-wechat = { workspace = true }
 bub-wecom = { workspace = true }
+tape-dataset-opendal = { workspace = true }

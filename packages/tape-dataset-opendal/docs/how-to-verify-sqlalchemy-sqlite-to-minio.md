@@ -28,6 +28,7 @@ The commands below use shell variables so the guide stays independent of any spe
 ## 1. Set up reusable paths
 
 ```bash
+export REPO_ROOT="$PWD"
 export VERIFY_ROOT="$(mktemp -d /tmp/tape-dataset-opendal-verify.XXXXXX)"
 export DB_PATH="$VERIFY_ROOT/tapes.db"
 export STAGING_ROOT="$VERIFY_ROOT/staging"
@@ -48,32 +49,32 @@ mc mb --ignore-existing "$MINIO_ALIAS"/tape-export-test
 ```bash
 BUB_TAPESTORE_SQLALCHEMY_URL="sqlite+pysqlite:///$DB_PATH" \
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub run ",tape.handoff name=triage summary='db incident'" --session-id ops:alpha
 ```
 
 ```bash
 BUB_TAPESTORE_SQLALCHEMY_URL="sqlite+pysqlite:///$DB_PATH" \
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub run ",tape.info" --session-id ops:alpha
 ```
 
 ```bash
 BUB_TAPESTORE_SQLALCHEMY_URL="sqlite+pysqlite:///$DB_PATH" \
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub run ",tape.handoff name=triage summary='api incident'" --session-id ops:beta
 ```
 
 ```bash
 BUB_TAPESTORE_SQLALCHEMY_URL="sqlite+pysqlite:///$DB_PATH" \
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub run ",tape.anchors" --session-id ops:beta
 ```
 
@@ -81,7 +82,7 @@ Verify the SQLite store:
 
 ```bash
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
   python - <<'PY'
 import os
 from collections import Counter
@@ -106,8 +107,8 @@ PY
 
 ```bash
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub --help
 ```
 
@@ -115,8 +116,8 @@ Confirm that `tape-export` appears in the command list, then inspect the active 
 
 ```bash
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub hooks
 ```
 
@@ -130,8 +131,8 @@ Required hook lines:
 ```bash
 BUB_TAPESTORE_SQLALCHEMY_URL="sqlite+pysqlite:///$DB_PATH" \
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub tape-export \
   --scheme s3 \
   --config bucket=tape-export-test \
@@ -206,8 +207,8 @@ mkdir -p "$STAGING_ROOT"
 
 BUB_TAPESTORE_SQLALCHEMY_URL="sqlite+pysqlite:///$DB_PATH" \
 uv run --directory ./bub \
-  --with ./bub-contrib/packages/bub-tapestore-sqlalchemy \
-  --with ./bub-contrib/packages/tape-dataset-opendal \
+  --with "$REPO_ROOT/bub-contrib/packages/bub-tapestore-sqlalchemy" \
+  --with "$REPO_ROOT/bub-contrib/packages/tape-dataset-opendal" \
   bub tape-export \
   --scheme fs \
   --config root="$STAGING_ROOT" \

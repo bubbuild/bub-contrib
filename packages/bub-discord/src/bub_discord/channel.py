@@ -7,13 +7,14 @@ import contextlib
 import json
 from typing import Any, cast
 
+import bub
 import discord
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
 from discord.ext import commands
 from loguru import logger
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 
 def _message_type(message: discord.Message) -> str:
@@ -26,7 +27,8 @@ def _message_type(message: discord.Message) -> str:
     return "unknown"
 
 
-class DiscordConfig(BaseSettings):
+@bub.config(name="discord")
+class DiscordConfig(bub.Settings):
     """Discord adapter config."""
 
     model_config = SettingsConfigDict(
@@ -47,7 +49,7 @@ class DiscordChannel(Channel):
 
     def __init__(self, on_receive: MessageHandler) -> None:
         self._on_receive = on_receive
-        self._config = DiscordConfig()
+        self._config = bub.ensure_config(DiscordConfig)
         self._bot: commands.Bot | None = None
         self._latest_message_by_session: dict[str, discord.Message] = {}
         self._allow_users = (

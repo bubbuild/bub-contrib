@@ -4,9 +4,10 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
+import bub
 from bub import hookimpl
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 from sqlalchemy import URL
 
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
@@ -18,7 +19,8 @@ def _default_url(bub_home: Path) -> str:
     return str(URL.create("sqlite+pysqlite", database=str(database_path)))
 
 
-class SQLAlchemyTapeStoreSettings(BaseSettings):
+@bub.config(name="tapestore-sqlalchemy")
+class SQLAlchemyTapeStoreSettings(bub.Settings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -54,7 +56,9 @@ class SQLAlchemyTapeStoreSettings(BaseSettings):
 
 
 def _build_store(
-    settings_factory: Callable[[], SQLAlchemyTapeStoreSettings] = SQLAlchemyTapeStoreSettings.from_env,
+    settings_factory: Callable[[], SQLAlchemyTapeStoreSettings] = lambda: bub.ensure_config(
+        SQLAlchemyTapeStoreSettings
+    ),
 ) -> SQLAlchemyTapeStore:
     settings = settings_factory()
     return SQLAlchemyTapeStore(url=settings.resolved_url, echo=settings.echo)

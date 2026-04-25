@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import bub
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
@@ -28,7 +29,7 @@ class QQChannel(Channel):
 
     def __init__(self, on_receive: MessageHandler) -> None:
         self._on_receive = on_receive
-        self._config = QQConfig()
+        self._config = bub.ensure_config(QQConfig)
         self._token_provider = QQTokenProvider(self._config)
         self._openapi = QQOpenAPI(self._config, self._token_provider)
         self._webhook = QQWebhookServer(self._config, self._handle_transport_payload)

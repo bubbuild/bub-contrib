@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, replace
 from typing import Any
 
+import bub
 import lark_oapi as lark
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage, MediaItem
@@ -26,7 +27,7 @@ from lark_oapi.api.im.v1 import (
     ReplyMessageRequestBody,
 )
 from loguru import logger
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,8 @@ class FeishuMedia:
     duration: int | None
 
 
-class FeishuConfig(BaseSettings):
+@bub.config(name="feishu")
+class FeishuConfig(bub.Settings):
     """Feishu adapter config."""
 
     model_config = SettingsConfigDict(
@@ -154,7 +156,7 @@ class FeishuChannel(Channel):
 
     def __init__(self, on_receive: MessageHandler) -> None:
         self._on_receive = on_receive
-        self._config = FeishuConfig()
+        self._config = bub.ensure_config(FeishuConfig)
         self._allow_users = _parse_collection(self._config.allow_users)
         self._allow_chats = _parse_collection(self._config.allow_chats)
         self._api_client: Any | None = None

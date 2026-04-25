@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from typing import Any
 
+import bub
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
@@ -18,10 +19,11 @@ from dingtalk_stream import (
 )
 from dingtalk_stream.chatbot import ChatbotMessage
 from loguru import logger
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 
-class DingTalkConfig(BaseSettings):
+@bub.config(name="dingtalk")
+class DingTalkConfig(bub.Settings):
     """DingTalk channel config."""
 
     model_config = SettingsConfigDict(
@@ -108,7 +110,7 @@ class DingTalkChannel(Channel):
 
     def __init__(self, on_receive: MessageHandler) -> None:
         self._on_receive = on_receive
-        self._config = DingTalkConfig()
+        self._config = bub.ensure_config(DingTalkConfig)
         self._allow_users = _parse_allow_users(self._config.allow_users)
         self._client: Any = None
         self._background_tasks: set[asyncio.Task] = set()

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import bub
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 
-class QQConfig(BaseSettings):
+@bub.config(name="qq")
+class QQConfig(bub.Settings):
     """QQ Open Platform adapter config."""
 
     model_config = SettingsConfigDict(

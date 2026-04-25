@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
+import bub
 import sqlite_vec
 from any_llm import AnyLLM
+from republic import RepublicError as ErrorPayload
 from republic import TapeEntry, TapeQuery
 from republic.core.errors import ErrorKind
-from republic.core.results import ErrorPayload
 
 ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
 ALLOWED_SYNCHRONOUS_MODES = {"OFF", "NORMAL", "FULL", "EXTRA"}
@@ -55,7 +56,11 @@ class SQLiteTapeStore:
         from republic.tape.context import TapeContext
 
         self._path = Path(path)
-        self._llm = _build_llm(AgentSettings(), self, TapeContext())  # type: ignore[arg-type]
+        self._llm = _build_llm(  # type: ignore[arg-type]
+            bub.ensure_config(AgentSettings),
+            self,
+            TapeContext(),
+        )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._busy_timeout_ms = busy_timeout_ms
         self._journal_mode = normalize_journal_mode(journal_mode)

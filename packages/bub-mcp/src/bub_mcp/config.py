@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import bub
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 
 def default_config_path() -> Path:
@@ -23,7 +24,8 @@ def read_config(config_file: Path) -> dict[str, Any]:
     return loaded.get("mcpServers", {})
 
 
-class MCPSettings(BaseSettings):
+@bub.config(name="mcp")
+class MCPSettings(bub.Settings):
     model_config = SettingsConfigDict(env_prefix="BUB_MCP_", extra="ignore")
 
     config_path: Path = Field(default_factory=default_config_path)

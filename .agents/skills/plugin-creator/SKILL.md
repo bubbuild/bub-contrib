@@ -215,10 +215,6 @@ Guidelines:
 - Register every plugin configuration object with `@bub.config(name="<entry-point-name>")`.
   A configuration object means any `bub.Settings` subclass owned by the plugin, regardless of
   whether it lives in `plugin.py`, `config.py`, `channel.py`, `tools.py`, or another helper module.
-- If a configuration class lives outside the entry-point module, ensure the entry point imports that
-  module at load time so Bub can discover the registered config. For example, a channel plugin whose
-  `DingTalkConfig` lives in `channel.py` should import `DingTalkChannel` at module scope in
-  `plugin.py`, not only inside `provide_channels`.
 - In plugin runtime code, read registered settings through `bub.ensure_config(ConfigClass)` instead
   of direct construction such as `ConfigClass()` or module-level settings singletons. Direct
   construction is only appropriate for tests, explicit factory injection, or standalone scripts that

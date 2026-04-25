@@ -1,0 +1,28 @@
+[project]
+name = "bub-extism"
+version = "0.1.0"
+description = "Extism WebAssembly bridge plugin for Bub"
+readme = "README.md"
+authors = [
+    { name = "Bub Build contributors" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "extism>=1.1.1,<1.2.0",
+    "extism-sys>=1.12.0,<1.13.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.10.1",
+]
+
+[project.entry-points.bub]
+extism = "bub_extism.plugin:ExtismPlugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+]

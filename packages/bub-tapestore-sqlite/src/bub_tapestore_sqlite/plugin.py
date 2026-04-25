@@ -4,9 +4,10 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
+import bub
 from bub import hookimpl
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from bub_tapestore_sqlite.store import (
     SQLiteTapeStore,
@@ -17,7 +18,8 @@ from bub_tapestore_sqlite.store import (
 DEFAULT_BUB_HOME = Path.home() / ".bub"
 
 
-class SQLiteTapeStoreSettings(BaseSettings):
+@bub.config(name="tapestore-sqlite")
+class SQLiteTapeStoreSettings(bub.Settings):
     model_config = SettingsConfigDict(
         env_prefix="BUB_SQLITE_",
         env_file=".env",
@@ -58,7 +60,9 @@ class SQLiteTapeStoreSettings(BaseSettings):
 
 
 def _build_store(
-    settings_factory: Callable[[], SQLiteTapeStoreSettings] = SQLiteTapeStoreSettings,
+    settings_factory: Callable[[], SQLiteTapeStoreSettings] = lambda: bub.ensure_config(
+        SQLiteTapeStoreSettings
+    ),
 ) -> SQLiteTapeStore:
     settings = settings_factory()
     path = settings.path or settings.bub_home / "tapes.sqlite3"

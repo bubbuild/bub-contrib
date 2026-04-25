@@ -81,7 +81,11 @@ def test_run_model_forwards_api_key_to_kimi_env(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin.kimi_settings, "api_key", "sk-test-123")
+    monkeypatch.setattr(
+        plugin,
+        "_settings",
+        lambda: plugin.KimiSettings(api_key="sk-test-123"),
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     asyncio.run(plugin.run_model("hello", session_id="session-api", state=state))
@@ -108,7 +112,11 @@ def test_run_model_forwards_model_name_to_kimi_env(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin.kimi_settings, "model_name", "kimi-k2")
+    monkeypatch.setattr(
+        plugin,
+        "_settings",
+        lambda: plugin.KimiSettings(model_name="kimi-k2"),
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     asyncio.run(plugin.run_model("hello", session_id="session-model", state=state))
@@ -135,7 +143,11 @@ def test_run_model_forwards_base_url_to_kimi_env(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin.kimi_settings, "base_url", "https://kimi.example.com/v1")
+    monkeypatch.setattr(
+        plugin,
+        "_settings",
+        lambda: plugin.KimiSettings(base_url="https://kimi.example.com/v1"),
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     asyncio.run(plugin.run_model("hello", session_id="session-base-url", state=state))
@@ -162,9 +174,7 @@ def test_run_model_omits_api_key_when_not_configured(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin.kimi_settings, "api_key", None)
-    monkeypatch.setattr(plugin.kimi_settings, "base_url", None)
-    monkeypatch.setattr(plugin.kimi_settings, "model_name", None)
+    monkeypatch.setattr(plugin, "_settings", lambda: plugin.KimiSettings())
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_BASE_URL", raising=False)
     monkeypatch.delenv("KIMI_MODEL_NAME", raising=False)

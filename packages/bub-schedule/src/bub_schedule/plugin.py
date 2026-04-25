@@ -1,5 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import BaseScheduler
+import bub
 from bub import hookimpl
 from bub.builtin.settings import AgentSettings
 from bub.channels import Channel
@@ -9,7 +10,7 @@ from bub_schedule.jobstore import JSONJobStore
 
 
 def default_scheduler() -> BaseScheduler:
-    job_file = AgentSettings().home / "jobs.json"
+    job_file = bub.ensure_config(AgentSettings).home / "jobs.json"
     job_store = JSONJobStore(job_file)
     return AsyncIOScheduler(jobstores={"default": job_store})
 

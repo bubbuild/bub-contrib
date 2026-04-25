@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import bub
 from bub import hookimpl
 from bub.types import State
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from bub_kimi.utils import with_bub_skills
 
@@ -50,7 +51,8 @@ def workspace_from_state(state: State) -> Path:
     return Path.cwd().resolve()
 
 
-class KimiSettings(BaseSettings):
+@bub.config(name="kimi")
+class KimiSettings(bub.Settings):
     """Configuration for Kimi plugin."""
 
     model_config = SettingsConfigDict(
@@ -61,7 +63,8 @@ class KimiSettings(BaseSettings):
     base_url: str | None = Field(default=None)
 
 
-kimi_settings = KimiSettings()
+def _settings() -> KimiSettings:
+    return bub.ensure_config(KimiSettings)
 
 
 def _runtime_agent_from_state(state: State) -> Agent | None:
@@ -94,12 +97,13 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
     command.append("--quiet")
     command.extend(["-p", prompt])
     env = os.environ.copy()
-    if kimi_settings.api_key:
-        env["KIMI_API_KEY"] = kimi_settings.api_key
-    if kimi_settings.base_url:
-        env["KIMI_BASE_URL"] = kimi_settings.base_url
-    if kimi_settings.model_name:
-        env["KIMI_MODEL_NAME"] = kimi_settings.model_name
+    settings = _settings()
+    if settings.api_key:
+        env["KIMI_API_KEY"] = settings.api_key
+    if settings.base_url:
+        env["KIMI_BASE_URL"] = settings.base_url
+    if settings.model_name:
+        env["KIMI_MODEL_NAME"] = settings.model_name
     with with_bub_skills(workspace):
         process = await asyncio.create_subprocess_exec(
             *command,

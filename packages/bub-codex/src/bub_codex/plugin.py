@@ -6,10 +6,11 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import bub
 from bub import hookimpl
 from bub.types import State
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from bub_codex.utils import with_bub_skills
 
@@ -48,7 +49,8 @@ def workspace_from_state(state: State) -> Path:
     return Path.cwd().resolve()
 
 
-class CodexSettings(BaseSettings):
+@bub.config(name="codex")
+class CodexSettings(bub.Settings):
     """Configuration for Codex plugin."""
 
     model_config = SettingsConfigDict(
@@ -58,7 +60,8 @@ class CodexSettings(BaseSettings):
     yolo_mode: bool = False
 
 
-codex_settings = CodexSettings()
+def _settings() -> CodexSettings:
+    return bub.ensure_config(CodexSettings)
 
 
 def _runtime_agent_from_state(state: State) -> Agent | None:
@@ -88,9 +91,10 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
     command = ["codex", "e"]
     if thread_id:
         command.extend(["resume", thread_id])
-    if codex_settings.model:
-        command.extend(["--model", codex_settings.model])
-    if codex_settings.yolo_mode:
+    settings = _settings()
+    if settings.model:
+        command.extend(["--model", settings.model])
+    if settings.yolo_mode:
         command.append("--dangerously-bypass-approvals-and-sandbox")
     command.append(prompt)
     with with_bub_skills(workspace):

@@ -85,8 +85,8 @@ def test_run_model_uses_copilot_sdk_with_prompt_and_attachments(
     )
     monkeypatch.setattr(
         plugin,
-        "github_copilot_settings",
-        plugin.GitHubCopilotSettings(
+        "_settings",
+        lambda: plugin.GitHubCopilotSettings(
             model="gpt-5",
             reasoning_effort="high",
             timeout_seconds=12.0,

@@ -4,9 +4,9 @@ from bub import hookimpl
 from bub.channels import Channel
 from bub.types import MessageHandler
 
+from .channel import DingTalkChannel
+
 
 @hookimpl
 def provide_channels(message_handler: MessageHandler) -> list[Channel]:
-    from .channel import DingTalkChannel
-
     return [DingTalkChannel(message_handler)]

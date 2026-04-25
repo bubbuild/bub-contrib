@@ -9,15 +9,17 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
+import bub
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
 from loguru import logger
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 
-class WeComSettings(BaseSettings):
+@bub.config(name="wecom")
+class WeComSettings(bub.Settings):
     model_config = SettingsConfigDict(
         env_prefix="BUB_WECOM_", env_file=".env", extra="ignore"
     )
@@ -237,7 +239,7 @@ class WeComChannel(Channel):
         client_factory: Callable[[WeComSettings], _SdkClient] | None = None,
     ) -> None:
         self._on_receive = on_receive
-        self._settings = WeComSettings()
+        self._settings = bub.ensure_config(WeComSettings)
         self._allow_users = _parse_collection(self._settings.allow_from)
         self._allow_groups = _parse_collection(self._settings.group_allow_from)
         self._client_factory = client_factory or _build_sdk_client

@@ -3,17 +3,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import lru_cache
 
+import bub
 import redis.asyncio as redis
 from bub import hookimpl
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from bub_tapestore_redis.store import DEFAULT_KEY_PREFIX, RedisTapeStore
 
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 
-class RedisTapeStoreSettings(BaseSettings):
+@bub.config(name="tapestore-redis")
+class RedisTapeStoreSettings(bub.Settings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -45,7 +47,9 @@ class RedisTapeStoreSettings(BaseSettings):
 
 
 def _build_store(
-    settings_factory: Callable[[], RedisTapeStoreSettings] = RedisTapeStoreSettings.from_env,
+    settings_factory: Callable[[], RedisTapeStoreSettings] = lambda: bub.ensure_config(
+        RedisTapeStoreSettings
+    ),
 ) -> RedisTapeStore:
     settings = settings_factory()
     client = redis.Redis.from_url(settings.resolved_url)

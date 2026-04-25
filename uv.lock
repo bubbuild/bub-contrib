@@ -13,6 +13,7 @@ members = [
     "bub-contrib",
     "bub-dingtalk",
     "bub-discord",
+    "bub-extism",
     "bub-feishu",
     "bub-github-copilot",
     "bub-kimi",
@@ -387,6 +388,7 @@ dependencies = [
     { name = "bub-codex" },
     { name = "bub-dingtalk" },
     { name = "bub-discord" },
+    { name = "bub-extism" },
     { name = "bub-feishu" },
     { name = "bub-github-copilot" },
     { name = "bub-kimi" },
@@ -411,6 +413,7 @@ requires-dist = [
     { name = "bub-codex", editable = "packages/bub-codex" },
     { name = "bub-dingtalk", editable = "packages/bub-dingtalk" },
     { name = "bub-discord", editable = "packages/bub-discord" },
+    { name = "bub-extism", editable = "packages/bub-extism" },
     { name = "bub-feishu", editable = "packages/bub-feishu" },
     { name = "bub-github-copilot", editable = "packages/bub-github-copilot" },
     { name = "bub-kimi", editable = "packages/bub-kimi" },
@@ -454,6 +457,37 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "discord-py", specifier = ">=2.7.1" }]
+
+[[package]]
+name = "bub-extism"
+version = "0.1.0"
+source = { editable = "packages/bub-extism" }
+dependencies = [
+    { name = "extism" },
+    { name = "extism-sys" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "extism", specifier = ">=1.1.1,<1.2.0" },
+    { name = "extism-sys", specifier = ">=1.12.0,<1.13.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pydantic-settings", specifier = ">=2.10.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+]
 
 [[package]]
 name = "bub-feishu"
@@ -1033,6 +1067,35 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/0e/97c33bf5009bdbac74fd2beace167cab3f978feb69cc36f1ef79360d6c4e/exceptiongroup-1.3.1-py3-none-any.whl", hash = "sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598", size = 16740, upload-time = "2025-11-21T23:01:53.443Z" },
+]
+
+[[package]]
+name = "extism"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "extism-sys" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/c6/573488066680ef80ba6a46ab5e0df42aa4beafac51d2c3cc140a062531af/extism-1.1.1.tar.gz", hash = "sha256:067bf4ebd89ba85681508a77eb7f213ab13d2dbd6e71dabdac5d9622c61ee1d1", size = 11589, upload-time = "2026-03-26T22:03:42.955Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/ac/f730be96df64fd3c85b0c24f16993181f72b72dfba3099ad86d49a55e7c0/extism-1.1.1-py3-none-any.whl", hash = "sha256:157692d7dc79cde6b1c9759eaf765f04b34b28e1f3a4a84507294c06081c8e5b", size = 11210, upload-time = "2026-03-26T22:03:42.092Z" },
+]
+
+[[package]]
+name = "extism-sys"
+version = "1.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/30/06f1cbe28c3eb486dffc87b9d4e3d5522a8656fac86c9c05cc102f74732b/extism_sys-1.12.0-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:f0225b2b2969bda66b0acab5ad13489e80b1b03b2fa7ad7be06dab57a381968d", size = 7597910, upload-time = "2025-07-14T18:53:50.102Z" },
+    { url = "https://files.pythonhosted.org/packages/04/1e/37a0c9422105909dd3932eac955c15122b9797ae305d6da3046b7036a9e3/extism_sys-1.12.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:242f021d12feee10bf67cc9a08c078d9b5e1da5c7a74f1f2eef61c10da36fccd", size = 7120898, upload-time = "2025-07-14T18:53:51.489Z" },
+    { url = "https://files.pythonhosted.org/packages/42/1f/50d6a4d22e8be5e50d379aee27cde1564c726ca42f3194d1b970a079f239/extism_sys-1.12.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:db850dc58081b48d0d50a8c7395806cbe764b82c50a971c0be00519bf336200b", size = 8355066, upload-time = "2025-07-14T18:53:52.825Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/7a/88fad64e8ae9bce4d2d26495e14600100145ecc3e3218fe9766b5e70d31f/extism_sys-1.12.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:687a1b1f1c009383aa466fe12b35ddda54d84c1775fc583e256a946e2bd17561", size = 7912809, upload-time = "2025-07-14T18:53:54.733Z" },
+    { url = "https://files.pythonhosted.org/packages/79/f6/50ff821a6ff825f89cc4ccccfcff46ac3755b474edfb1651fcd767196586/extism_sys-1.12.0-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:24f15d958db96bd17cd8a98dee9c172d0bd71094ff71cf9de193645a80d30269", size = 8087657, upload-time = "2025-07-14T18:53:56.065Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/81/d32e279cd464292f5a51ee68d47f643012d937664259f03d5639630867ca/extism_sys-1.12.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:9be0c414e08414d4ce5356a185b4f05cff780352feb6755b75a75455e84c3d0f", size = 8523720, upload-time = "2025-07-14T18:53:57.356Z" },
+    { url = "https://files.pythonhosted.org/packages/54/4c/aeaeb544f667693690bf48101f6a11d1c87784c7622af6f7aa5427602fe5/extism_sys-1.12.0-py3-none-win_amd64.whl", hash = "sha256:be2ddf0120117ac495e8686f5bc80ab64a5ffe0b55b8fa2b77ee23b5ea0b3836", size = 6588019, upload-time = "2025-07-14T18:53:59.149Z" },
 ]
 
 [[package]]
@@ -2240,6 +2303,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
+]
+
+[[package]]
+name = "pytest-asyncio"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/2c/8af215c0f776415f3590cac4f9086ccefd6fd463befeae41cd4d3f193e5a/pytest_asyncio-1.3.0.tar.gz", hash = "sha256:d7f52f36d231b80ee124cd216ffb19369aa168fc10095013c6b014a34d3ee9e5", size = 50087, upload-time = "2025-11-10T16:07:47.256Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/35/f8b19922b6a25bc0880171a2f1a003eaeb93657475193ab516fd87cac9da/pytest_asyncio-1.3.0-py3-none-any.whl", hash = "sha256:611e26147c7f77640e6d0a92a38ed17c3e9848063698d5c93d5aa7aa11cebff5", size = 15075, upload-time = "2025-11-10T16:07:45.537Z" },
 ]
 
 [[package]]

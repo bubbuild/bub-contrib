@@ -38,6 +38,8 @@ def test_run_model_uses_codex_for_normal_prompt(
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class FakeProcess:
+        returncode = 0
+
         async def communicate(self) -> tuple[bytes, bytes]:
             return (b"codex-output\n", b"")
 
@@ -65,6 +67,8 @@ def test_run_model_saves_session_id_from_stderr(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     class FakeProcess:
+        returncode = 0
+
         async def communicate(self) -> tuple[bytes, bytes]:
             return (
                 b"codex-output\n",
@@ -82,4 +86,6 @@ def test_run_model_saves_session_id_from_stderr(
 
     assert result == "codex-output\n"
     threads_file = tmp_path / plugin.THREADS_FILE
-    assert json.loads(threads_file.read_text()) == {"session-3": "thread-123"}
+    data = json.loads(threads_file.read_text())
+    assert data["session-3"]["thread_id"] == "thread-123"
+    assert data["session-3"]["anchor_count"] == 0

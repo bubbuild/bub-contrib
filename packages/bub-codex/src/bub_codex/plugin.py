@@ -118,7 +118,7 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
         info = await agent.tapes.info(tape_name)
 
         session_data = _load_session_data(session_id, state)
-        stored_anchor_count = (session_data or {}).get("anchor_count", 0)
+        stored_anchor_count = (session_data or {}).get("anchor_count") or 0
 
         if info.anchors > stored_anchor_count:
             thread_id = None
@@ -226,4 +226,4 @@ async def save_state(session_id: str, state: State, message: Any, model_output: 
     handoff_name = signal.get("name", "codex-handoff")
     handoff_state = {k: v for k, v in signal.items() if k != "name" and v}
     await agent.tapes.handoff(tape.name, name=handoff_name, state=handoff_state)
-    _save_session_data(session_id, {"thread_id": None, "anchor_count": None}, state)
+    _save_session_data(session_id, {"thread_id": None, "anchor_count": 0}, state)

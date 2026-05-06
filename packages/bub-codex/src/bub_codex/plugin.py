@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import json
+import os
 import re
 import time
 from pathlib import Path
@@ -18,41 +17,10 @@ from bub_codex.utils import with_bub_skills
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
 
-THREADS_FILE = ".bub-codex-threads.json"
-HANDOFF_SIGNAL_FILE = ".bub-codex-handoff.json"
-
 _CONTEXT_LENGTH_PATTERNS = re.compile(
     r"context.{0,20}(?:length|window)|maximum.{0,20}context|token.{0,10}limit|prompt.{0,10}too long",
     re.IGNORECASE,
 )
-
-
-def _load_session_data(session_id: str, state: State) -> dict[str, Any] | None:
-    workspace = workspace_from_state(state)
-    threads_file = workspace / THREADS_FILE
-    with contextlib.suppress(FileNotFoundError):
-        with threads_file.open() as f:
-            threads = json.load(f)
-        value = threads.get(session_id)
-        if value is None:
-            return None
-        if isinstance(value, str):
-            return {"thread_id": value, "anchor_count": 0}
-        return value
-    return None
-
-
-def _save_session_data(session_id: str, data: dict[str, Any], state: State) -> None:
-    workspace = workspace_from_state(state)
-    threads_file = workspace / THREADS_FILE
-    if threads_file.exists():
-        with threads_file.open() as f:
-            threads = json.load(f)
-    else:
-        threads = {}
-    threads[session_id] = data
-    with threads_file.open("w") as f:
-        json.dump(threads, f, indent=2)
 
 
 def workspace_from_state(state: State) -> Path:
@@ -91,6 +59,21 @@ def _format_continuation(anchor_state: dict[str, Any]) -> str:
     return "\n".join(parts) if len(parts) > 1 else ""
 
 
+async def _get_thread_id_from_tape(agent: Agent, tape_name: str) -> str | None:
+    """Get the thread_id from the most recent codex.thread event that belongs to the current anchor."""
+    anchors = await agent.tapes.anchors(tape_name)
+    current_anchor = anchors[-1].name if anchors else None
+
+    tape = agent.tapes._llm.tape(tape_name)
+    entries = list(await tape.query_async.last_anchor().all())
+    for entry in reversed(entries):
+        if entry.kind == "event" and entry.payload.get("name") == "codex.thread":
+            data = entry.payload.get("data", {})
+            if data.get("anchor") == current_anchor:
+                return data.get("thread_id")
+    return None
+
+
 async def _run_internal_command(prompt: str, session_id: str, state: State) -> str | None:
     if not prompt.strip().startswith(","):
         return None
@@ -115,30 +98,17 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
         tape = agent.tapes.session_tape(session_id, workspace)
         tape_name = tape.name
         await agent.tapes.ensure_bootstrap_anchor(tape_name)
-        info = await agent.tapes.info(tape_name)
 
-        session_data = _load_session_data(session_id, state)
-        stored_anchor_count = (session_data or {}).get("anchor_count") or 0
+        # Get thread_id from the latest anchor's subsequent events
+        thread_id = await _get_thread_id_from_tape(agent, tape_name)
 
-        if info.anchors > stored_anchor_count:
-            thread_id = None
-        else:
-            thread_id = (session_data or {}).get("thread_id")
-
-        # Inject continuation context on fresh session after handoff
+        # Inject continuation context when starting a fresh thread after handoff
         if thread_id is None:
             anchors = await agent.tapes.anchors(tape_name)
             if anchors and anchors[-1].name != "session/start":
                 continuation = _format_continuation(anchors[-1].state)
                 if continuation:
                     prompt = f"{continuation}\n\n---\n\n{prompt}"
-
-        await agent.tapes.append_event(tape_name, "codex.run.start", {
-            "thread_id": thread_id,
-        })
-    else:
-        session_data = _load_session_data(session_id, state)
-        thread_id = (session_data or {}).get("thread_id") if session_data else None
 
     command = ["codex", "e"]
     if thread_id:
@@ -150,80 +120,71 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
     command.append(prompt)
 
     start = time.monotonic()
-    with with_bub_skills(workspace):
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(workspace),
-        )
-        stdout, stderr = await process.communicate()
-    elapsed_ms = int((time.monotonic() - start) * 1000)
+    env = {
+        **os.environ,
+        "BUB_SESSION_ID": session_id,
+        "BUB_BRIDGE_URL": "http://127.0.0.1:9800",
+    }
 
-    output_blocks: list[str] = []
-    new_thread_id: str | None = None
-    if stdout:
-        output_blocks.append(stdout.decode())
-    if stderr:
-        stderr_text = stderr.decode()
-        for line in stderr_text.splitlines():
-            if line.startswith("session id:"):
-                new_thread_id = line.split(":", 1)[1].strip()
-                break
+    async with agent.tapes.fork_tape(tape_name, merge_back=True) if agent and tape_name else _noop_context():
+        if agent and tape_name:
+            await agent.tapes.append_event(tape_name, "codex.run.start", {
+                "thread_id": thread_id,
+            })
 
-    # Context-length error detection
-    if process.returncode != 0 and stderr:
-        stderr_text = stderr.decode()
-        if _CONTEXT_LENGTH_PATTERNS.search(stderr_text):
-            new_thread_id = None
-            if agent is not None and tape_name:
-                await agent.tapes.append_event(tape_name, "codex.run.context_overflow", {
-                    "stderr": stderr_text[:500],
-                })
+        with with_bub_skills(workspace):
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(workspace),
+                env=env,
+            )
+            stdout, stderr = await process.communicate()
+        elapsed_ms = int((time.monotonic() - start) * 1000)
 
-    if agent is not None and tape_name:
-        info = await agent.tapes.info(tape_name)
-        _save_session_data(session_id, {
-            "thread_id": new_thread_id,
-            "anchor_count": info.anchors,
-        }, state)
-        await agent.tapes.append_event(tape_name, "codex.run.finish", {
-            "thread_id": new_thread_id,
-            "exit_code": process.returncode,
-            "elapsed_ms": elapsed_ms,
-        })
-    elif new_thread_id:
-        _save_session_data(session_id, {
-            "thread_id": new_thread_id,
-            "anchor_count": 0,
-        }, state)
+        output_blocks: list[str] = []
+        new_thread_id: str | None = None
+        if stdout:
+            output_blocks.append(stdout.decode())
+        if stderr:
+            stderr_text = stderr.decode()
+            for line in stderr_text.splitlines():
+                if line.startswith("session id:"):
+                    new_thread_id = line.split(":", 1)[1].strip()
+                    break
+
+        # Context-length error detection
+        if process.returncode != 0 and stderr:
+            stderr_text = stderr.decode()
+            if _CONTEXT_LENGTH_PATTERNS.search(stderr_text):
+                new_thread_id = None
+                if agent and tape_name:
+                    await agent.tapes.append_event(tape_name, "codex.run.context_overflow", {
+                        "stderr": stderr_text[:500],
+                    })
+
+        # Save thread_id as event in tape (within fork, will be merged back)
+        if agent and tape_name:
+            anchors = await agent.tapes.anchors(tape_name)
+            current_anchor = anchors[-1].name if anchors else None
+            await agent.tapes.append_event(tape_name, "codex.thread", {
+                "thread_id": new_thread_id,
+                "anchor": current_anchor,
+            })
+            await agent.tapes.append_event(tape_name, "codex.run.finish", {
+                "thread_id": new_thread_id,
+                "exit_code": process.returncode,
+                "elapsed_ms": elapsed_ms,
+            })
 
     return "\n".join(output_blocks)
 
 
-@hookimpl
-async def save_state(session_id: str, state: State, message: Any, model_output: str) -> None:
-    workspace = workspace_from_state(state)
-    signal_path = workspace / HANDOFF_SIGNAL_FILE
-    if not signal_path.exists():
-        return
+import contextlib
+from collections.abc import AsyncGenerator
 
-    agent = _runtime_agent_from_state(state)
-    if agent is None:
-        signal_path.unlink(missing_ok=True)
-        return
 
-    try:
-        with signal_path.open() as f:
-            signal = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        signal_path.unlink(missing_ok=True)
-        return
-
-    signal_path.unlink(missing_ok=True)
-
-    tape = agent.tapes.session_tape(session_id, workspace)
-    handoff_name = signal.get("name", "codex-handoff")
-    handoff_state = {k: v for k, v in signal.items() if k != "name" and v}
-    await agent.tapes.handoff(tape.name, name=handoff_name, state=handoff_state)
-    _save_session_data(session_id, {"thread_id": None, "anchor_count": 0}, state)
+@contextlib.asynccontextmanager
+async def _noop_context() -> AsyncGenerator[None, None]:
+    yield

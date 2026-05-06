@@ -97,27 +97,12 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
     if agent is not None:
         tape = agent.tapes.session_tape(session_id, workspace)
         tape_name = tape.name
-        await agent.tapes.ensure_bootstrap_anchor(tape_name)
-
-        # Get thread_id from the latest anchor's subsequent events
-        thread_id = await _get_thread_id_from_tape(agent, tape_name)
-
-        # Inject continuation context when starting a fresh thread after handoff
-        if thread_id is None:
-            anchors = await agent.tapes.anchors(tape_name)
-            if anchors and anchors[-1].name != "session/start":
-                continuation = _format_continuation(anchors[-1].state)
-                if continuation:
-                    prompt = f"{continuation}\n\n---\n\n{prompt}"
 
     command = ["codex", "e"]
-    if thread_id:
-        command.extend(["resume", thread_id])
     if codex_settings.model:
         command.extend(["--model", codex_settings.model])
     if codex_settings.yolo_mode:
         command.append("--dangerously-bypass-approvals-and-sandbox")
-    command.append(prompt)
 
     start = time.monotonic()
     env = {
@@ -127,6 +112,25 @@ async def run_model(prompt: str, session_id: str, state: State) -> str:
     }
 
     async with agent.tapes.fork_tape(tape_name, merge_back=True) if agent and tape_name else _noop_context():
+        if agent and tape_name:
+            await agent.tapes.ensure_bootstrap_anchor(tape_name)
+
+            # Get thread_id from the latest anchor's subsequent events
+            thread_id = await _get_thread_id_from_tape(agent, tape_name)
+
+            # Inject continuation context when starting a fresh thread after handoff
+            if thread_id is None:
+                anchors = await agent.tapes.anchors(tape_name)
+                if anchors and anchors[-1].name != "session/start":
+                    continuation = _format_continuation(anchors[-1].state)
+                    if continuation:
+                        prompt = f"{continuation}\n\n---\n\n{prompt}"
+
+            if thread_id:
+                command.extend(["resume", thread_id])
+
+        command.append(prompt)
+
         if agent and tape_name:
             await agent.tapes.append_event(tape_name, "codex.run.start", {
                 "thread_id": thread_id,

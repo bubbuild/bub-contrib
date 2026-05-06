@@ -1,0 +1,1 @@
+"""HTTP Bridge skill package."""

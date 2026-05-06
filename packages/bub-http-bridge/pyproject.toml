@@ -18,6 +18,10 @@ http-bridge = "bub_http_bridge.plugin:main"
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+module-name = ["bub_http_bridge", "skills.http_bridge"]
+source-include = ["src/skills/http_bridge/SKILL.md"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

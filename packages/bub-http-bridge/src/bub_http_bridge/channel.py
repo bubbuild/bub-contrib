@@ -58,6 +58,7 @@ class HttpBridgeChannel(Channel):
             channel="http-bridge",
             chat_id=chat_id,
             content=content,
+            is_active=True,
             output_channel=output_channel,
             context={"source": source},
         )

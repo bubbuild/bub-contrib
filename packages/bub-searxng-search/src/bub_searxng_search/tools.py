@@ -6,10 +6,11 @@ from collections.abc import Callable, Iterable
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any, Literal
 
+import bub
 from bub import tool
 from bub.tools import REGISTRY
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 if TYPE_CHECKING:
     from republic import Tool
@@ -48,7 +49,8 @@ class SearXNGSearchInput(BaseModel):
         return query
 
 
-class SearXNGSearchSettings(BaseSettings):
+@bub.config(name="searxng-search")
+class SearXNGSearchSettings(bub.Settings):
     model_config = SettingsConfigDict(
         env_prefix="BUB_SEARXNG_SEARCH_",
         env_file=".env",
@@ -106,7 +108,9 @@ class SearXNGSearchSettings(BaseSettings):
 
 
 def register_tools(
-    settings_factory: Callable[[], SearXNGSearchSettings] = SearXNGSearchSettings.from_env,
+    settings_factory: Callable[[], SearXNGSearchSettings] = lambda: bub.ensure_config(
+        SearXNGSearchSettings
+    ),
 ) -> Tool | None:
     REGISTRY.pop(TOOL_NAME, None)
     settings = settings_factory()

@@ -9,6 +9,7 @@ from typing import Any
 import fastmcp
 import mcp.types
 import typer
+import bub
 from bub import hookimpl, tool
 from bub.channels import Channel
 from bub.tools import REGISTRY
@@ -103,7 +104,7 @@ class MCPChannel(Channel):
     name = LIFECYCLE_CHANNEL_NAME
 
     def __init__(self) -> None:
-        self.settings = MCPSettings()
+        self.settings = bub.ensure_config(MCPSettings)
         self._lock = asyncio.Lock()
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}

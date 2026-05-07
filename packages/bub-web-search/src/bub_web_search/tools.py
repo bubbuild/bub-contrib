@@ -1,13 +1,15 @@
 import json
 
+import bub
 from bub import tool
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 DEFAULT_OLLAMA_WEB_API_BASE = "https://ollama.com/api"
 WEB_USER_AGENT = "bub-web-tools/1.0"
 
 
-class WebSearchSettings(BaseSettings):
+@bub.config(name="web-search")
+class WebSearchSettings(bub.Settings):
     model_config = SettingsConfigDict(
         env_prefix="BUB_SEARCH_", extra="ignore", env_file=".env"
     )
@@ -16,7 +18,7 @@ class WebSearchSettings(BaseSettings):
     ollama_api_base: str = DEFAULT_OLLAMA_WEB_API_BASE
 
 
-settings = WebSearchSettings()
+settings = bub.ensure_config(WebSearchSettings)
 if settings.ollama_api_key:
 
     @tool(name="web.search")

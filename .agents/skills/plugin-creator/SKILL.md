@@ -212,6 +212,16 @@ Guidelines:
 - Keep the exported entry module thin when possible.
 - Move protocol or platform code into helper modules such as `channel.py`, `store.py`, or `tools.py`.
 - Use `pydantic-settings` or the host project's config approach when environment variables exist.
+- Register every plugin configuration object with `@bub.config(name="<entry-point-name>")`.
+  A configuration object means any `bub.Settings` subclass owned by the plugin, regardless of
+  whether it lives in `plugin.py`, `config.py`, `channel.py`, `tools.py`, or another helper module.
+- In plugin runtime code, read registered settings through `bub.ensure_config(ConfigClass)` instead
+  of direct construction such as `ConfigClass()` or module-level settings singletons. Direct
+  construction is only appropriate for tests, explicit factory injection, or standalone scripts that
+  intentionally read environment variables without a Bub framework context.
+- Use the Bub entry point name as the config section name, such as `qq`, `mcp`,
+  `github-copilot`, or `tapestore-sqlite`. Keep environment variable prefixes specific, such as
+  `BUB_QQ_` or `BUB_TAPESTORE_SQLITE_`.
 - Cache singleton resources only when reuse is intentional and testable.
 - Avoid framework-wide abstractions unless at least two packages actually need them.
 
@@ -286,6 +296,10 @@ Use the host project's test style. In `bub-contrib`, that usually means:
 
 - Prefer repository consistency over abstract elegance.
 - Prefer one package per plugin, even if the implementation is small.
+- Prefer `import bub` plus `@bub.config(name="<entry-point-name>")` for config registration so the
+  decorator stays visually tied to the framework API.
+- Prefer `bub.ensure_config(ConfigClass)` at the point of runtime use instead of module-level
+  settings objects, so Bub-loaded config data and caching semantics are respected.
 - Prefer explicit configuration names with a `BUB_<FEATURE>_` prefix when introducing new env vars.
 - Prefer the minimum public surface area required by Bub hooks.
 - Prefer persistent dependency wiring over ephemeral shell-only setup when the user asks to enable
@@ -301,9 +315,13 @@ Before finishing, verify:
 4. The activation path is complete:
    either the host project depends on the package, or the package was installed into the runtime
    environment.
-5. Tests cover the main hook or configuration path.
-6. README describes the behavior and enablement path that the implementation actually provides.
-7. If packaged skills were added, the build config includes `SKILL.md` and scripts.
+5. Every plugin-owned `bub.Settings` subclass has `@bub.config(name="<entry-point-name>")`, and
+   importing the Bub entry-point target registers that config.
+6. Runtime code uses `bub.ensure_config(ConfigClass)` for registered settings instead of direct
+   `ConfigClass()` construction or module-level settings singletons.
+7. Tests cover the main hook or configuration path.
+8. README describes the behavior and enablement path that the implementation actually provides.
+9. If packaged skills were added, the build config includes `SKILL.md` and scripts.
 
 Recommended commands to suggest, adjusted to the host project:
 

@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import typer
+import bub
 from bub import BubFramework, hookimpl
 from bub.builtin.auth import app as auth_app
 from bub.types import State
 from copilot import CopilotClient, SubprocessConfig
 from copilot.session import PermissionHandler
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from bub_github_copilot.auth import (
     GitHubCopilotOAuthLoginError,
@@ -48,7 +49,8 @@ TimeoutOption = Annotated[
 ]
 
 
-class GitHubCopilotSettings(BaseSettings):
+@bub.config(name="github-copilot")
+class GitHubCopilotSettings(bub.Settings):
     """Configuration for the GitHub Copilot Bub plugin."""
 
     model_config = SettingsConfigDict(
@@ -64,7 +66,8 @@ class GitHubCopilotSettings(BaseSettings):
     cli_path: str | None = None
 
 
-github_copilot_settings = GitHubCopilotSettings()
+def _settings() -> GitHubCopilotSettings:
+    return bub.ensure_config(GitHubCopilotSettings)
 
 
 def workspace_from_state(state: State) -> Path:
@@ -139,10 +142,11 @@ def _skill_directories(workspace: Path) -> list[str] | None:
 
 
 def _subprocess_config(token: str, workspace: Path) -> SubprocessConfig:
+    settings = _settings()
     return SubprocessConfig(
-        cli_path=github_copilot_settings.cli_path,
+        cli_path=settings.cli_path,
         cwd=str(workspace),
-        log_level=github_copilot_settings.log_level,
+        log_level=settings.log_level,
         github_token=token,
     )
 
@@ -154,10 +158,11 @@ def _copilot_session_kwargs(workspace: Path) -> dict[str, object]:
         "config_dir": str(_sdk_config_dir(workspace)),
         "skill_directories": _skill_directories(workspace),
     }
-    if github_copilot_settings.model:
-        kwargs["model"] = github_copilot_settings.model
-    if github_copilot_settings.reasoning_effort:
-        kwargs["reasoning_effort"] = github_copilot_settings.reasoning_effort
+    settings = _settings()
+    if settings.model:
+        kwargs["model"] = settings.model
+    if settings.reasoning_effort:
+        kwargs["reasoning_effort"] = settings.reasoning_effort
     return kwargs
 
 
@@ -220,7 +225,7 @@ async def _run_with_copilot_sdk(
                 result = await session.send_and_wait(
                     prompt_text,
                     attachments=attachments or None,
-                    timeout=github_copilot_settings.timeout_seconds,
+                    timeout=_settings().timeout_seconds,
                 )
                 if result is not None and (
                     content := _assistant_message_from_result(result)
@@ -335,6 +340,5 @@ class GitHubCopilotPlugin:
 __all__ = [
     "GitHubCopilotPlugin",
     "GitHubCopilotSettings",
-    "github_copilot_settings",
     "run_model",
 ]

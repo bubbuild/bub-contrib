@@ -37,7 +37,11 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
     allow_users = bub_inquirer.ask_text("Feishu allowed users (optional)")
     allow_chats = bub_inquirer.ask_text("Feishu allowed chats (optional)")
     bot_open_id = bub_inquirer.ask_text("Feishu bot open ID (optional)")
-    log_level = bub_inquirer.ask_text("Feishu log level", default="INFO")
+    log_level = bub_inquirer.ask_select(
+        "Feishu log level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+    )
 
     return {
         CHANNEL_NAME: {

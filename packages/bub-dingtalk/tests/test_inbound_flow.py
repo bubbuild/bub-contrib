@@ -11,6 +11,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from bub import configure
 from bub.channels.message import ChannelMessage
 from bub.framework import BubFramework
 
@@ -75,7 +76,7 @@ def test_dingtalk_inbound_reaches_agent(tmp_path: Path, monkeypatch) -> None:
         outbounds_captured: list = []
 
         class CaptureRouter:
-            async def dispatch(self, message) -> bool:
+            async def dispatch_output(self, message) -> bool:
                 outbounds_captured.append(message)
                 return True
 
@@ -120,7 +121,7 @@ def _run_simulation() -> None:
     outbounds: list = []
 
     class CaptureRouter:
-        async def dispatch(self, message) -> bool:
+        async def dispatch_output(self, message) -> bool:
             outbounds.append(message)
             print(
                 f"[2] Dispatch: channel={message.channel} chat_id={message.chat_id} content_len={len(message.content or '')}"
@@ -144,11 +145,15 @@ def test_channel_manager_on_receive_to_process_inbound() -> None:
 
     async def _run() -> None:
         from bub.channels.manager import ChannelManager
+        from bub_dingtalk import plugin as dingtalk_plugin
 
         framework = BubFramework()
         framework.workspace = Path.cwd()
-        framework.load_hooks()
+        framework._load_builtin_hooks()
+        framework._plugin_manager.register(dingtalk_plugin, name="dingtalk")
         _stub_run_model(framework)
+        configure.merge(configure._config_data, {"qq": {"receive_mode": "webhook"}})
+        configure._global_config.clear()
 
         manager = ChannelManager(framework, enabled_channels=["dingtalk"])
         dingtalk_ch = manager.get_channel("dingtalk")
@@ -158,7 +163,7 @@ def test_channel_manager_on_receive_to_process_inbound() -> None:
         outbounds: list = []
 
         class CaptureRouter:
-            async def dispatch(self, message) -> bool:
+            async def dispatch_output(self, message) -> bool:
                 outbounds.append(message)
                 return True
 

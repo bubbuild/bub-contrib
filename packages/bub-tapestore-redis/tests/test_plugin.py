@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from bub import configure
 import bub_tapestore_redis.plugin as plugin
 from bub_tapestore_redis.plugin import RedisTapeStoreSettings
 from bub_tapestore_redis.store import DEFAULT_KEY_PREFIX, RedisTapeStore
@@ -54,6 +55,7 @@ def test_tape_store_from_env_returns_fresh_store(monkeypatch) -> None:
 
 def test_plugin_provides_singleton_store(monkeypatch) -> None:
     plugin._store.cache_clear()
+    configure._global_config.clear()
     monkeypatch.setenv("BUB_TAPESTORE_REDIS_URL", "redis://cached.example:6379/4")
     monkeypatch.setenv("BUB_TAPESTORE_REDIS_KEY_PREFIX", "cached:tapes")
 
@@ -67,4 +69,28 @@ def test_plugin_provides_singleton_store(monkeypatch) -> None:
         assert first._client.connection_pool.connection_kwargs["db"] == 4
     finally:
         plugin._store.cache_clear()
+        configure._global_config.clear()
         asyncio.run(first._client.aclose())
+
+
+def test_onboard_config_collects_redis_settings(monkeypatch) -> None:
+    text_answers = iter(["redis://cache.example:6379/5", "custom:tapes"])
+    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        plugin.bub_inquirer,
+        "ask_text",
+        lambda *args, **kwargs: next(text_answers),
+    )
+
+    assert plugin.onboard_config({}) == {
+        "tapestore-redis": {
+            "url": "redis://cache.example:6379/5",
+            "key_prefix": "custom:tapes",
+        }
+    }
+
+
+def test_onboard_config_skips_redis_when_declined(monkeypatch) -> None:
+    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False)
+
+    assert plugin.onboard_config({}) is None

@@ -27,17 +27,30 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 class SearXNGSearchInput(BaseModel):
     query: str = Field(..., description="The search query string.")
-    max_results: int = Field(5, ge=1, le=MAX_RESULTS_LIMIT, description="Maximum number of search results to return.")
-    categories: list[str] | None = Field(
-        None, description="Optional list of SearXNG categories, such as general, news, or science."
+    max_results: int = Field(
+        5,
+        ge=1,
+        le=MAX_RESULTS_LIMIT,
+        description="Maximum number of search results to return.",
     )
-    engines: list[str] | None = Field(None, description="Optional list of SearXNG engine names to limit the search.")
-    language: str | None = Field(None, description="Optional language code, such as en-US or zh-CN.")
+    categories: list[str] | None = Field(
+        None,
+        description="Optional list of SearXNG categories, such as general, news, or science.",
+    )
+    engines: list[str] | None = Field(
+        None, description="Optional list of SearXNG engine names to limit the search."
+    )
+    language: str | None = Field(
+        None, description="Optional language code, such as en-US or zh-CN."
+    )
     time_range: Literal["day", "month", "year"] | None = Field(
         None, description="Optional SearXNG time filter."
     )
     safe_search: int | None = Field(
-        None, ge=0, le=2, description="Optional safe search level: 0 off, 1 moderate, 2 strict."
+        None,
+        ge=0,
+        le=2,
+        description="Optional safe search level: 0 off, 1 moderate, 2 strict.",
     )
 
     @field_validator("query")
@@ -65,10 +78,6 @@ class SearXNGSearchSettings(bub.Settings):
     user_agent: str = DEFAULT_USER_AGENT
     auth_header: str | None = None
     auth_value: str | None = None
-
-    @classmethod
-    def from_env(cls) -> SearXNGSearchSettings:
-        return cls()
 
     @property
     def resolved_base_url(self) -> str | None:
@@ -153,7 +162,9 @@ async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings)
         ):
             body = await response.text()
             if response.status >= 400:
-                detail = _compact_text(body, limit=MAX_SNIPPET_CHARS) or "request failed"
+                detail = (
+                    _compact_text(body, limit=MAX_SNIPPET_CHARS) or "request failed"
+                )
                 return f"HTTP {response.status}: {detail}"
     except aiohttp.ClientError as exc:
         return f"HTTP error: {exc!s}"
@@ -169,15 +180,21 @@ async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings)
     return _format_search_response(payload, max_results=param.max_results)
 
 
-def _build_request_params(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings) -> dict[str, str | int]:
+def _build_request_params(
+    *, param: SearXNGSearchInput, settings: SearXNGSearchSettings
+) -> dict[str, str | int]:
     request_params: dict[str, str | int] = {
         "q": param.query,
         "format": "json",
         "safesearch": (
-            param.safe_search if param.safe_search is not None else settings.resolved_default_safe_search
+            param.safe_search
+            if param.safe_search is not None
+            else settings.resolved_default_safe_search
         ),
     }
-    if language := _clean_value(param.language) or _clean_value(settings.default_language):
+    if language := _clean_value(param.language) or _clean_value(
+        settings.default_language
+    ):
         request_params["language"] = language
     if categories := _join_csv(param.categories):
         request_params["categories"] = categories
@@ -207,7 +224,9 @@ def _format_search_response(payload: dict[str, Any], *, max_results: int) -> str
             lines.append("")
         lines.extend(["Infoboxes:", *infobox_lines])
 
-    result_blocks = _format_result_blocks(payload.get("results"), max_results=max_results)
+    result_blocks = _format_result_blocks(
+        payload.get("results"), max_results=max_results
+    )
     if result_blocks:
         if lines:
             lines.append("")
@@ -261,11 +280,16 @@ def _format_infobox_lines(raw_infoboxes: object) -> list[str]:
         if not isinstance(item, dict):
             continue
         title = _compact_text(
-            _first_non_empty(item.get("infobox"), item.get("id"), item.get("title"), "(untitled)"),
+            _first_non_empty(
+                item.get("infobox"), item.get("id"), item.get("title"), "(untitled)"
+            ),
             limit=MAX_TITLE_CHARS,
         )
         content = _compact_text(
-            _first_non_empty(item.get("content"), item.get("description"), item.get("title")), limit=MAX_SNIPPET_CHARS
+            _first_non_empty(
+                item.get("content"), item.get("description"), item.get("title")
+            ),
+            limit=MAX_SNIPPET_CHARS,
         )
         lines.append(f"- {title}")
         if url := _extract_url(item):
@@ -285,14 +309,18 @@ def _format_result_blocks(raw_results: object, *, max_results: int) -> list[str]
         if not isinstance(item, dict):
             continue
         title = _compact_text(
-            _first_non_empty(item.get("title"), item.get("content"), item.get("url"), "(untitled)"),
+            _first_non_empty(
+                item.get("title"), item.get("content"), item.get("url"), "(untitled)"
+            ),
             limit=MAX_TITLE_CHARS,
         )
         lines.append(f"{rendered + 1}. {title}")
         if url := _extract_url(item):
             lines.append(f"   {url}")
         snippet = _compact_text(
-            _first_non_empty(item.get("content"), item.get("snippet"), item.get("description")),
+            _first_non_empty(
+                item.get("content"), item.get("snippet"), item.get("description")
+            ),
             limit=MAX_SNIPPET_CHARS,
         )
         if snippet and snippet != title:

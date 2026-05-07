@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from bub_qq.signature import _seed_from_secret
 from bub_qq.signature import sign_validation_payload
 from bub_qq.signature import verify_request_signature
 
@@ -17,10 +20,16 @@ def test_validation_signature_matches_official_example() -> None:
     )
 
 
-def test_request_signature_matches_official_example() -> None:
+def test_request_signature_accepts_valid_signature() -> None:
+    secret = "naOC0ocQE3shWLAfffVLB1rhYPG7"
+    timestamp = "1725442341"
+    body = b'{ "op": 0,"d": {}, "t": "GATEWAY_EVENT_NAME"}'
+    private_key = Ed25519PrivateKey.from_private_bytes(_seed_from_secret(secret))
+    signature = private_key.sign(timestamp.encode("utf-8") + body).hex()
+
     assert verify_request_signature(
-        secret="naOC0ocQE3shWLAfffVLB1rhYPG7",
-        timestamp="1725442341",
-        body=b'{ "op": 0,"d": {}, "t": "GATEWAY_EVENT_NAME"}',
-        signature_hex="865ad13a61752ca65e26bde6676459cd36cf1be609375b37bd62af366e1dc25a8dc789ba7f14e017ada3d554c671a911bfdf075ba54835b23391d509579ed002",
+        secret=secret,
+        timestamp=timestamp,
+        body=body,
+        signature_hex=signature,
     )

@@ -18,7 +18,7 @@ def test_schedule_payload_runs_callback_on_loop() -> None:
 
         payload = {"op": 0, "t": "C2C_MESSAGE_CREATE", "d": {"id": "event-1"}}
         server._schedule_payload(payload)
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
         assert received == [payload]
 

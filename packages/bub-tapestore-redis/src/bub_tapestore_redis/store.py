@@ -11,6 +11,7 @@ from datetime import date as date_type
 from typing import Any
 
 import redis.asyncio as redis
+from redis.exceptions import ResponseError
 from republic import RepublicError, TapeEntry, TapeQuery
 from republic.core.errors import ErrorKind
 
@@ -64,20 +65,39 @@ class RedisTapeStore:
     async def append(self, tape: str, entry: TapeEntry) -> None:
         # Lua keeps id allocation and anchor zset maintenance atomic so concurrent
         # writers cannot assign duplicate ids or leave the anchor index behind.
-        await self._client.eval(
-            self._append_entry_script(),
-            3,
-            self._keys.next_id(tape),
-            self._keys.entries(tape),
-            self._keys.anchors(tape),
-            _serialize_entry(entry),
-            # The script insert the anchor index member if the entry is an anchor.
-            _anchor_index_member_prefix(entry),
-        )
+        try:
+            await self._client.eval(
+                self._append_entry_script(),
+                3,
+                self._keys.next_id(tape),
+                self._keys.entries(tape),
+                self._keys.anchors(tape),
+                _serialize_entry(entry),
+                # The script insert the anchor index member if the entry is an anchor.
+                _anchor_index_member_prefix(entry),
+            )
+        except ResponseError as exc:
+            if not _is_eval_unsupported_error(exc):
+                raise
+            await self._append_without_eval(tape, entry)
         # Tape registry is best-effort. The tape data itself is already durable if
         # this update fails, so append should not raise after commit.
         with suppress(Exception):
             await self._client.sadd(self._keys.tapes, tape)
+
+    async def _append_without_eval(self, tape: str, entry: TapeEntry) -> None:
+        next_id = int(await self._client.incr(self._keys.next_id(tape)))
+        encoded = _serialize_entry_with_id(entry, next_id)
+        anchor_prefix = _anchor_index_member_prefix(entry)
+
+        async with self._client.pipeline(transaction=True) as pipeline:
+            pipeline.rpush(self._keys.entries(tape), encoded)
+            if anchor_prefix:
+                pipeline.zadd(
+                    self._keys.anchors(tape),
+                    {f"{anchor_prefix}{next_id:0{_ANCHOR_ID_WIDTH}d}": next_id},
+                )
+            await pipeline.execute()
 
     @staticmethod
     def _append_entry_script() -> str:
@@ -165,6 +185,19 @@ def _serialize_entry(entry: TapeEntry) -> str:
     )
 
 
+def _serialize_entry_with_id(entry: TapeEntry, entry_id: int) -> str:
+    return json.dumps(
+        {
+            "id": entry_id,
+            "kind": entry.kind,
+            "payload": entry.payload,
+            "meta": entry.meta,
+            "date": entry.date,
+        },
+        sort_keys=True,
+    )
+
+
 def _deserialize_entry(value: Any) -> TapeEntry:
     raw = json.loads(_decode_text(value))
     return TapeEntry(
@@ -198,6 +231,10 @@ def _anchor_index_member_prefix(entry: TapeEntry) -> str:
     if name is None:
         return ""
     return f"{_encode_anchor_index_name(str(name))}{_ANCHOR_SEPARATOR}"
+
+
+def _is_eval_unsupported_error(error: ResponseError) -> bool:
+    return "unknown command 'eval'" in str(error).lower()
 
 
 async def _resolve_slice_bounds(
@@ -245,7 +282,9 @@ async def _resolve_between_anchor_bounds(
     )
     start_id = max(start_ids, default=-1)
     if start_id < 0:
-        raise RepublicError(ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found.")
+        raise RepublicError(
+            ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
+        )
 
     end_ids = await _scan_anchor_ids(
         client, anchor_key, _anchor_index_member_pattern(end_name)

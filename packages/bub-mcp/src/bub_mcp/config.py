@@ -10,9 +10,7 @@ from pydantic_settings import SettingsConfigDict
 
 
 def default_config_path() -> Path:
-    from bub.builtin.settings import load_settings
-
-    return load_settings().home / "mcp.json"
+    return bub.home / "mcp.json"
 
 
 def read_config(config_file: Path) -> dict[str, Any]:

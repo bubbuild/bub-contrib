@@ -51,3 +51,13 @@ bub-session-prompt = { workspace = true }
 bub-wechat = { workspace = true }
 bub-wecom = { workspace = true }
 tape-dataset-opendal = { workspace = true }
+
+[dependency-groups]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.21.0",
+    "fakeredis>=2.20.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --import-mode=importlib"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from bub import configure
 from bub.channels.message import ChannelMessage
 
 from bub_qq.channel import QQChannel
@@ -70,6 +71,8 @@ def _install_send_service(channel: QQChannel, openapi: object) -> None:
 
 def test_channel_send_uses_latest_c2c_message_context() -> None:
     async def _run() -> None:
+        configure.merge(configure._config_data, {"qq": {"receive_mode": "webhook"}})
+        configure._global_config.clear()
         channel = QQChannel(lambda message: None)
         openapi = OpenAPIStub()
         _install_send_service(channel, openapi)
@@ -95,10 +98,14 @@ def test_channel_send_uses_latest_c2c_message_context() -> None:
         ]
 
     asyncio.run(_run())
+    configure._global_config.clear()
+    configure._config_data.clear()
 
 
 def test_channel_send_handles_reply_expired_error() -> None:
     async def _run() -> None:
+        configure.merge(configure._config_data, {"qq": {"receive_mode": "webhook"}})
+        configure._global_config.clear()
         channel = QQChannel(lambda message: None)
         openapi = FailingOpenAPIStub(
             QQOpenAPIError(
@@ -125,10 +132,14 @@ def test_channel_send_handles_reply_expired_error() -> None:
         assert openapi.calls == 1
 
     asyncio.run(_run())
+    configure._global_config.clear()
+    configure._config_data.clear()
 
 
 def test_channel_send_handles_rate_limit_error() -> None:
     async def _run() -> None:
+        configure.merge(configure._config_data, {"qq": {"receive_mode": "webhook"}})
+        configure._global_config.clear()
         channel = QQChannel(lambda message: None)
         openapi = FailingOpenAPIStub(
             QQOpenAPIError(
@@ -155,6 +166,8 @@ def test_channel_send_handles_rate_limit_error() -> None:
         assert openapi.calls == 1
 
     asyncio.run(_run())
+    configure._global_config.clear()
+    configure._config_data.clear()
 
 
 def test_c2c_inbound_defaults_outbound_to_qq_channel() -> None:

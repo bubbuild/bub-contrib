@@ -3,6 +3,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import BaseScheduler
 from bub import hookimpl
 from bub.channels import Channel
+from bub.framework import BubFramework
 from bub.types import Envelope, MessageHandler, State
 
 from bub_schedule.jobstore import JSONJobStore
@@ -15,9 +16,10 @@ def default_scheduler() -> BaseScheduler:
 
 
 class ScheduleImpl:
-    def __init__(self) -> None:
+    def __init__(self, framework: BubFramework | None = None) -> None:
         from bub_schedule import tools  # noqa: F401
 
+        self.framework = framework
         self.scheduler = default_scheduler()
 
     @hookimpl
@@ -28,7 +30,4 @@ class ScheduleImpl:
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
         from bub_schedule.channel import ScheduleChannel
 
-        return [ScheduleChannel(self.scheduler)]
-
-
-main = ScheduleImpl()
+        return [ScheduleChannel(self.scheduler, framework=self.framework)]

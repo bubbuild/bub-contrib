@@ -4,7 +4,7 @@ from bub_feishu import plugin
 
 
 def test_onboard_config_collects_feishu_settings(monkeypatch) -> None:
-    text_answers = iter(["app-id", "user-1", "chat-1", "bot-open-id", "INFO"])
+    text_answers = iter(["app-id", "user-1", "chat-1", "bot-open-id"])
     secret_answers = iter(["app-secret", "verification-token", "encrypt-key"])
     monkeypatch.setattr(
         plugin.bub_inquirer,
@@ -15,6 +15,11 @@ def test_onboard_config_collects_feishu_settings(monkeypatch) -> None:
         plugin.bub_inquirer,
         "ask_secret",
         lambda *args, **kwargs: next(secret_answers),
+    )
+    monkeypatch.setattr(
+        plugin.bub_inquirer,
+        "ask_select",
+        lambda *args, **kwargs: "INFO",
     )
 
     assert plugin.onboard_config({"enabled_channels": "feishu"}) == {

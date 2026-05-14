@@ -22,4 +22,5 @@ async def run_scheduled_reminder(
         channel=channel,
         chat_id=chat_id,
     )
-    await ScheduleChannel.enqueue_current(payload)
+    framework = ScheduleChannel.current_framework()
+    await framework.process_inbound(payload)

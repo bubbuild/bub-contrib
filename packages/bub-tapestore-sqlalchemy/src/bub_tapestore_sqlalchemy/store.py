@@ -16,7 +16,13 @@ from bub_tapestore_sqlalchemy.models import Base, TapeEntryRecord, TapeRecord
 
 
 class SQLAlchemyTapeStore(InMemoryQueryMixin):
-    def __init__(self, url: str, *, echo: bool = False) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        echo: bool = False,
+        connect_args: dict[str, object] | None = None,
+    ) -> None:
         self._url = self._normalize_url(url)
         self._echo = echo
         self._write_lock = threading.RLock()
@@ -25,7 +31,7 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
             echo=echo,
             future=True,
             pool_pre_ping=True,
-            connect_args=self._connect_args(self._url),
+            connect_args=self._build_connect_args(self._url, connect_args or {}),
         )
         self._configure_engine(self._engine)
         self._session_factory = sessionmaker(
@@ -43,30 +49,28 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
             )
 
     def reset(self, tape: str) -> None:
-        with self._write_lock:
-            with self._session_factory.begin() as session:
-                tape_record = self._find_tape_record(session, tape)
-                if tape_record is not None:
-                    session.delete(tape_record)
+        with self._write_lock, self._session_factory.begin() as session:
+            tape_record = self._find_tape_record(session, tape)
+            if tape_record is not None:
+                session.delete(tape_record)
 
     def append(self, tape: str, entry: TapeEntry) -> None:
-        with self._write_lock:
-            with self._session_factory.begin() as session:
-                tape_record = self._load_or_create_tape(session, tape)
-                next_entry_id = self._next_entry_id(session, tape_record)
-                anchor_name = self._anchor_name_of(entry)
-                session.add(
-                    TapeEntryRecord(
-                        tape_id=tape_record.id,
-                        entry_id=next_entry_id,
-                        kind=entry.kind,
-                        anchor_name=anchor_name,
-                        anchor_name_key=self._key_for(anchor_name) if anchor_name else None,
-                        payload=dict(entry.payload),
-                        meta=dict(entry.meta),
-                        entry_date=entry.date,
-                    )
+        with self._write_lock, self._session_factory.begin() as session:
+            tape_record = self._load_or_create_tape(session, tape)
+            next_entry_id = self._next_entry_id(session, tape_record)
+            anchor_name = self._anchor_name_of(entry)
+            session.add(
+                TapeEntryRecord(
+                    tape_id=tape_record.id,
+                    entry_id=next_entry_id,
+                    kind=entry.kind,
+                    anchor_name=anchor_name,
+                    anchor_name_key=self._key_for(anchor_name) if anchor_name else None,
+                    payload=dict(entry.payload),
+                    meta=dict(entry.meta),
+                    entry_date=entry.date,
                 )
+            )
 
     def fetch_all(self, query: TapeQuery) -> Iterable[TapeEntry]:
         normalized_query = replace(query, _kinds=self._normalized_kinds(query._kinds))
@@ -134,17 +138,22 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
             raise ValueError(f"Invalid SQLAlchemy URL: {url}") from exc
 
     @staticmethod
-    def _connect_args(url: URL) -> dict[str, object]:
+    def _build_connect_args(url: URL, overrides: dict[str, object]) -> dict[str, object]:
+        defaults: dict[str, object] = {}
         if url.get_backend_name() == "sqlite":
-            return {
-                "check_same_thread": False,
-                "timeout": 30,
-            }
-        return {}
+            defaults["check_same_thread"] = False
+            # ``timeout`` is a pysqlite-only kwarg; libSQL drivers reject it.
+            if url.get_driver_name() == "pysqlite":
+                defaults["timeout"] = 30
+        return {**defaults, **overrides}
 
     @staticmethod
     def _configure_engine(engine: Engine) -> None:
-        if engine.url.get_backend_name() != "sqlite":
+        # PRAGMAs are only safe to issue against the local pysqlite driver.
+        # Remote libSQL endpoints (Hrana over HTTP/WebSocket) reject PRAGMA
+        # statements, and embedded replicas pick the same defaults from
+        # ``libsql_experimental`` automatically.
+        if engine.url.get_driver_name() != "pysqlite":
             return
 
         @event.listens_for(engine, "connect")

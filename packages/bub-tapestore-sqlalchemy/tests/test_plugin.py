@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import bub_tapestore_sqlalchemy.plugin as plugin
+import pytest
 from bub_tapestore_sqlalchemy.plugin import SQLAlchemyTapeStoreSettings
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 
@@ -80,3 +81,36 @@ def test_onboard_config_skips_sqlalchemy_when_declined(monkeypatch) -> None:
     monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False)
 
     assert plugin.onboard_config({}) is None
+
+
+def test_connect_args_default_empty(monkeypatch) -> None:
+    monkeypatch.delenv("BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS", raising=False)
+
+    settings = SQLAlchemyTapeStoreSettings.from_env()
+
+    assert settings.connect_args == {}
+
+
+def test_connect_args_decoded_from_env_json(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS",
+        '{"auth_token": "abc", "sync_interval": 5}',
+    )
+
+    settings = SQLAlchemyTapeStoreSettings.from_env()
+
+    assert settings.connect_args == {"auth_token": "abc", "sync_interval": 5}
+
+
+def test_connect_args_invalid_json_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS", "not-json")
+
+    with pytest.raises(Exception, match="JSON object"):
+        SQLAlchemyTapeStoreSettings.from_env()
+
+
+def test_connect_args_must_be_object(monkeypatch) -> None:
+    monkeypatch.setenv("BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS", "[1, 2, 3]")
+
+    with pytest.raises(Exception, match="JSON object"):
+        SQLAlchemyTapeStoreSettings.from_env()

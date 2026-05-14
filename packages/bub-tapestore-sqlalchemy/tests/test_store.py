@@ -6,9 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from republic import RepublicError, TapeEntry, TapeQuery
-
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
+from republic import RepublicError, TapeEntry, TapeQuery
 
 
 def _store(tmp_path: Path) -> SQLAlchemyTapeStore:
@@ -236,3 +235,65 @@ def test_read_missing_tape_matches_builtin_shape(tmp_path: Path) -> None:
     store = _store(tmp_path)
 
     assert store.read("missing__tape") == []
+
+
+def test_build_connect_args_defaults_for_local_sqlite() -> None:
+    from sqlalchemy.engine import make_url
+
+    args = SQLAlchemyTapeStore._build_connect_args(
+        make_url("sqlite+pysqlite:///tapes.db"),
+        {},
+    )
+
+    assert args == {"check_same_thread": False, "timeout": 30}
+
+
+def test_build_connect_args_skips_pysqlite_only_kwargs_for_libsql() -> None:
+    from sqlalchemy.engine import make_url
+
+    args = SQLAlchemyTapeStore._build_connect_args(
+        make_url("sqlite+libsql://example.turso.io/?secure=true"),
+        {},
+    )
+
+    assert "timeout" not in args
+    assert args["check_same_thread"] is False
+
+
+def test_build_connect_args_lets_overrides_win() -> None:
+    from sqlalchemy.engine import make_url
+
+    args = SQLAlchemyTapeStore._build_connect_args(
+        make_url("sqlite+pysqlite:///tapes.db"),
+        {"timeout": 99, "extra": "value"},
+    )
+
+    assert args["timeout"] == 99
+    assert args["extra"] == "value"
+    assert args["check_same_thread"] is False
+
+
+def test_store_init_forwards_connect_args(tmp_path: Path) -> None:
+    """connect_args reach create_engine and override the built-in defaults."""
+    captured: dict[str, object] = {}
+
+    real_create_engine = SQLAlchemyTapeStore.__init__.__globals__["create_engine"]
+
+    def spy(url, **kwargs):
+        captured.update(kwargs.get("connect_args", {}))
+        return real_create_engine(url, **kwargs)
+
+    SQLAlchemyTapeStore.__init__.__globals__["create_engine"] = spy
+    try:
+        SQLAlchemyTapeStore(
+            f"sqlite+pysqlite:///{tmp_path / 'tapes.db'}",
+            # ``cached_statements`` is a real pysqlite kwarg, so the engine still
+            # connects; ``timeout`` override proves user values beat the defaults.
+            connect_args={"timeout": 12, "cached_statements": 50},
+        )
+    finally:
+        SQLAlchemyTapeStore.__init__.__globals__["create_engine"] = real_create_engine
+
+    assert captured["timeout"] == 12
+    assert captured["cached_statements"] == 50
+    assert captured["check_same_thread"] is False

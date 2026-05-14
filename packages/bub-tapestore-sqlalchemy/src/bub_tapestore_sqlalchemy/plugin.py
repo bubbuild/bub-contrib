@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import bub
-from bub import hookimpl
-from bub import inquirer as bub_inquirer
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 from sqlalchemy import URL
 
+import bub
+from bub import hookimpl
+from bub import inquirer as bub_inquirer
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 
 CONFIG_NAME = "tapestore-sqlalchemy"
@@ -38,6 +39,38 @@ class SQLAlchemyTapeStoreSettings(bub.Settings):
         default=False,
         validation_alias="BUB_TAPESTORE_SQLALCHEMY_ECHO",
     )
+    connect_args: Any = Field(
+        default_factory=dict,
+        validation_alias="BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS",
+        description=(
+            "Extra keyword arguments forwarded to ``sqlalchemy.create_engine(connect_args=...)``. "
+            "Provide a JSON object via the env var, for example "
+            '\'{"auth_token": "..."}\' for Turso/libSQL.'
+        ),
+    )
+
+    @field_validator("connect_args", mode="before")
+    @classmethod
+    def _decode_connect_args(cls, value: object) -> dict[str, Any]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS must be a JSON object"
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise TypeError(
+                    "BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS must decode to a JSON object"
+                )
+            return parsed
+        raise TypeError(
+            "BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS must be a JSON object string or a mapping"
+        )
 
     @classmethod
     def from_env(cls) -> SQLAlchemyTapeStoreSettings:
@@ -56,7 +89,11 @@ def _build_store(
     ),
 ) -> SQLAlchemyTapeStore:
     settings = settings_factory()
-    return SQLAlchemyTapeStore(url=settings.resolved_url, echo=settings.echo)
+    return SQLAlchemyTapeStore(
+        url=settings.resolved_url,
+        echo=settings.echo,
+        connect_args=settings.connect_args or None,
+    )
 
 
 @lru_cache(maxsize=1)

@@ -28,6 +28,15 @@ The plugin reads environment variables with prefix `BUB_TAPESTORE_SQLALCHEMY_`:
 - `BUB_TAPESTORE_SQLALCHEMY_URL` (optional): SQLAlchemy database URL
   - Default: `sqlite+pysqlite:///<BUB_HOME>/tapes.db`
 - `BUB_TAPESTORE_SQLALCHEMY_ECHO` (optional, default: `false`)
+- `BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS` (optional): JSON object forwarded to
+  `sqlalchemy.create_engine(connect_args=...)`. User-supplied keys override the
+  built-in defaults. Useful for backends that need keyword-only arguments which
+  cannot be expressed in the URL — for example Turso/libSQL auth tokens:
+
+  ```bash
+  export BUB_TAPESTORE_SQLALCHEMY_URL='sqlite+libsql://your-db.turso.io/?secure=true'
+  export BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS='{"auth_token": "<TURSO_AUTH_TOKEN>"}'
+  ```
 
 ## Runtime Behavior
 

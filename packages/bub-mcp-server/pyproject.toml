@@ -1,0 +1,26 @@
+[project]
+name = "bub-mcp-server"
+version = "0.1.0"
+description = "Expose Bub as an SSE MCP server"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub",
+    "fastmcp>=3.2.0,<4",
+    "pydantic-settings>=2.10.1",
+]
+
+[project.entry-points.bub]
+mcp-server = "bub_mcp_server.plugin:MCPServerPlugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

@@ -63,3 +63,4 @@ test = [
 
 [tool.pytest.ini_options]
 addopts = "-ra --import-mode=importlib"
+asyncio_mode = "auto"

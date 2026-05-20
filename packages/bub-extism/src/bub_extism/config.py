@@ -4,8 +4,27 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PLUGIN_HOOK_NAMES = (
+    "resolve_session",
+    "build_prompt",
+    "run_model",
+    "run_model_stream",
+    "load_state",
+    "save_state",
+    "render_outbound",
+    "dispatch_outbound",
+    "onboard_config",
+    "on_error",
+    "system_prompt",
+    "provide_tape_store",
+    "provide_channels",
+    "build_tape_context",
+)
+CLI_HOOK_NAME = "register_cli_commands"
+ALLOWED_HOOK_NAMES = frozenset((*PLUGIN_HOOK_NAMES, CLI_HOOK_NAME))
 
 
 def default_config_path() -> Path:
@@ -14,61 +33,33 @@ def default_config_path() -> Path:
     return load_settings().home / "extism.json"
 
 
-class ExtismHookMap(BaseModel):
-    resolve_session: str | None = None
-    build_prompt: str | None = None
-    run_model: str | None = None
-    run_model_stream: str | None = None
-    load_state: str | None = None
-    save_state: str | None = None
-    render_outbound: str | None = None
-    dispatch_outbound: str | None = None
-    register_cli_commands: str | None = None
-    onboard_config: str | None = None
-    on_error: str | None = None
-    system_prompt: str | None = None
-    provide_tape_store: str | None = None
-    provide_channels: str | None = None
-    build_tape_context: str | None = None
+def normalize_hook_bindings(hooks: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for hook_name, export_name in hooks.items():
+        hook_text = str(hook_name).strip()
+        export_text = str(export_name).strip()
+        if hook_text not in ALLOWED_HOOK_NAMES:
+            supported = ", ".join(sorted(ALLOWED_HOOK_NAMES))
+            raise ValueError(f"unsupported hook '{hook_text}'; expected one of: {supported}")
+        if not export_text:
+            raise ValueError(f"hook '{hook_text}' requires a non-empty export name")
+        normalized[hook_text] = export_text
+    return normalized
 
 
 class ExtismPluginConfig(BaseModel):
-    manifest: dict[str, Any] | None = None
-    wasm_path: Path | None = Field(default=None, alias="wasmPath")
-    wasm_url: str | None = Field(default=None, alias="wasmUrl")
-    hooks: ExtismHookMap = Field(default_factory=ExtismHookMap)
-    config: dict[str, str] = Field(default_factory=dict)
+    manifest: dict[str, Any]
+    hooks: dict[str, str] = Field(default_factory=dict)
     wasi: bool = False
 
-    @model_validator(mode="after")
-    def validate_wasm_source(self) -> ExtismPluginConfig:
-        sources = [
-            self.manifest is not None,
-            self.wasm_path is not None,
-            self.wasm_url is not None,
-        ]
-        if sum(sources) != 1:
-            raise ValueError("exactly one of manifest, wasmPath, or wasmUrl is required")
-        return self
-
-    def plugin_input(self) -> dict[str, Any] | bytes:
-        if self.manifest is not None:
-            return self.manifest
-        if self.wasm_url is not None:
-            return {"wasm": [{"url": self.wasm_url}]}
-        if self.wasm_path is None:
-            raise RuntimeError("wasmPath is required")
-        return self.wasm_path.expanduser().read_bytes()
+    @field_validator("hooks")
+    @classmethod
+    def validate_hooks(cls, hooks: dict[str, str]) -> dict[str, str]:
+        return normalize_hook_bindings(hooks)
 
 
 class ExtismConfig(BaseModel):
-    default_plugin: str | None = Field(default=None, alias="defaultPlugin")
     plugins: dict[str, ExtismPluginConfig] = Field(default_factory=dict)
-
-    def selected_plugin(self) -> ExtismPluginConfig | None:
-        if self.default_plugin is None:
-            return None
-        return self.plugins.get(self.default_plugin)
 
 
 class ExtismSettings(BaseSettings):
@@ -83,3 +74,11 @@ class ExtismSettings(BaseSettings):
         if not isinstance(raw, dict):
             raise RuntimeError("Extism config file must contain a top-level mapping")
         return ExtismConfig.model_validate(raw)
+
+    def write_config(self, config: ExtismConfig) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = config.model_dump(mode="json")
+        self.config_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )

@@ -7,13 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
 import pluggy
+import pytest
 from republic import TapeEntry, TapeQuery
 
 from bub.hook_runtime import HookRuntime
 from bub.hookspecs import BUB_HOOK_NAMESPACE, BubHookSpecs
-from bub_extism.bridge import ExtismBridge
 from bub_extism.config import ExtismSettings
 from bub_extism.plugin import ExtismPlugin
 
@@ -60,7 +59,7 @@ class FakePlugin:
 
 
 @pytest.fixture(autouse=True)
-def fake_extism(monkeypatch):
+def fake_extism(monkeypatch: pytest.MonkeyPatch) -> None:
     FakePlugin.calls = []
     FakePlugin.exports = {}
     monkeypatch.setitem(sys.modules, "extism", SimpleNamespace(Plugin=FakePlugin))
@@ -72,98 +71,61 @@ def _write_config(tmp_path: Path, body: dict[str, Any]) -> Path:
     return config_path
 
 
-def _bridge(config_path: Path) -> ExtismBridge:
-    return ExtismBridge(ExtismSettings(config_path=config_path))
-
-
-def _plugin(config_path: Path) -> ExtismPlugin:
-    plugin = ExtismPlugin(SimpleNamespace())
-    plugin.bridge = _bridge(config_path)
-    return plugin
-
-
-def _runtime(config_path: Path, monkeypatch: pytest.MonkeyPatch) -> HookRuntime:
-    monkeypatch.setenv("BUB_EXTISM_CONFIG_PATH", str(config_path))
+def _runtime(config_path: Path) -> HookRuntime:
+    settings = ExtismSettings(config_path=config_path)
     plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
     plugin_manager.add_hookspecs(BubHookSpecs)
     framework = SimpleNamespace(_plugin_manager=plugin_manager)
-    plugin = ExtismPlugin(framework)
+    plugin = ExtismPlugin(framework, settings=settings)
     plugin_manager.register(plugin, name="extism")
     return HookRuntime(plugin_manager)
 
 
-def test_plugin_exposes_all_non_model_standard_bub_hooks() -> None:
-    expected_hooks = {
-        "resolve_session",
-        "build_prompt",
-        "load_state",
-        "save_state",
-        "render_outbound",
-        "dispatch_outbound",
-        "register_cli_commands",
-        "onboard_config",
-        "on_error",
-        "system_prompt",
-        "provide_tape_store",
-        "provide_channels",
-        "build_tape_context",
-    }
-
-    assert expected_hooks <= set(dir(ExtismPlugin))
+def _flatten_channel_results(results: list[list[Any]]) -> list[Any]:
+    channels: list[Any] = []
+    for batch in results:
+        channels.extend(batch)
+    return channels
 
 
-def test_model_hook_adapter_registers_only_one_model_surface(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_runtime_registers_configured_hook_adapters(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "model",
             "plugins": {
+                "prompt": {
+                    "manifest": {"wasm": [{"path": "./prompt.wasm"}]},
+                    "hooks": {"build_prompt": "build_prompt"},
+                },
                 "model": {
-                    "wasmUrl": "https://example.com/model.wasm",
-                    "hooks": {
-                        "run_model": "run_model",
-                        "run_model_stream": "run_model_stream",
-                    },
-                }
-            },
+                    "manifest": {"wasm": [{"path": "./model.wasm"}]},
+                    "hooks": {"run_model": "run_model"},
+                },
+            }
         },
     )
 
-    runtime = _runtime(config_path, monkeypatch)
+    report = _runtime(config_path).hook_report()
 
-    report = runtime.hook_report()
-    assert report["run_model_stream"] == ["extism-run-model-stream"]
-    assert "run_model" not in report
-
-
-def test_call_hook_returns_none_without_selected_plugin(tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path, {"plugins": {}})
-
-    result = _bridge(config_path).call_hook_sync("run_model", {"prompt": "hello"})
-
-    assert result is None
-    assert FakePlugin.calls == []
-
+    assert report["build_prompt"] == ["extism:prompt"]
+    assert report["run_model"] == ["extism:model"]
 
 def test_run_model_calls_configured_export_with_unified_request(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    wasm_path = tmp_path / "plugin.wasm"
-    wasm_path.write_bytes(b"\0asm")
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "echo",
             "plugins": {
                 "echo": {
-                    "wasmPath": str(wasm_path),
+                    "manifest": {
+                        "wasm": [{"path": "./plugin.wasm", "hash": "demo"}],
+                        "config": {"model": "demo"},
+                    },
                     "wasi": True,
-                    "config": {"model": "demo"},
                     "hooks": {"run_model": "bub_run_model"},
                 }
-            },
+            }
         },
     )
     FakePlugin.exports = {
@@ -179,7 +141,7 @@ def test_run_model_calls_configured_export_with_unified_request(
     }
 
     result = asyncio.run(
-        _runtime(config_path, monkeypatch).run_model(
+        _runtime(config_path).run_model(
             prompt="hello",
             session_id="s1",
             state={
@@ -203,9 +165,12 @@ def test_run_model_calls_configured_export_with_unified_request(
                     "state": {"visible": {"ok": True}},
                 },
             },
-            "plugin_input": b"\0asm",
+            "plugin_input": {
+                "wasm": [{"path": "./plugin.wasm", "hash": "demo"}],
+                "config": {"model": "demo"},
+            },
             "wasi": True,
-            "config": {"model": "demo"},
+            "config": None,
         }
     ]
 
@@ -214,18 +179,21 @@ def test_system_prompt_accepts_plain_text_result(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "prompt",
             "plugins": {
                 "prompt": {
-                    "wasmUrl": "https://example.com/prompt.wasm",
+                    "manifest": {"wasm": [{"url": "https://example.com/prompt.wasm"}]},
                     "hooks": {"system_prompt": "system_prompt"},
                 }
-            },
+            }
         },
     )
     FakePlugin.exports = {"system_prompt": b"from wasm"}
 
-    result = _plugin(config_path).system_prompt("hello", {"session_id": "s1"})
+    result = _runtime(config_path).call_first_sync(
+        "system_prompt",
+        prompt="hello",
+        state={"session_id": "s1"},
+    )
 
     assert result == "from wasm"
     assert FakePlugin.calls[0]["plugin_input"] == {
@@ -233,22 +201,21 @@ def test_system_prompt_accepts_plain_text_result(tmp_path: Path) -> None:
     }
 
 
-def test_missing_export_skips_hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_export_skips_hook(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "missing",
             "plugins": {
                 "missing": {
                     "manifest": {"wasm": [{"url": "https://example.com/plugin.wasm"}]},
                     "hooks": {"run_model": "missing_run_model"},
                 }
-            },
+            }
         },
     )
 
     result = asyncio.run(
-        _runtime(config_path, monkeypatch).run_model(
+        _runtime(config_path).run_model(
             prompt="hello",
             session_id="s1",
             state={},
@@ -259,19 +226,16 @@ def test_missing_export_skips_hook(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert FakePlugin.calls == []
 
 
-def test_run_model_stream_wraps_returned_events(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_model_stream_wraps_returned_events(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "stream",
             "plugins": {
                 "stream": {
-                    "wasmUrl": "https://example.com/stream.wasm",
+                    "manifest": {"wasm": [{"url": "https://example.com/stream.wasm"}]},
                     "hooks": {"run_model_stream": "run_model_stream"},
                 }
-            },
+            }
         },
     )
     FakePlugin.exports = {
@@ -289,7 +253,7 @@ def test_run_model_stream_wraps_returned_events(
     }
 
     stream = asyncio.run(
-        _runtime(config_path, monkeypatch).run_model_stream(
+        _runtime(config_path).run_model_stream(
             prompt="hello",
             session_id="s1",
             state={},
@@ -304,6 +268,99 @@ def test_run_model_stream_wraps_returned_events(
     assert stream.usage == {"output_tokens": 1}
 
 
+def test_run_model_stream_rejects_invalid_usage_shape(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "stream": {
+                    "manifest": {"wasm": [{"url": "https://example.com/stream.wasm"}]},
+                    "hooks": {"run_model_stream": "run_model_stream"},
+                }
+            }
+        },
+    )
+    FakePlugin.exports = {
+        "run_model_stream": json.dumps(
+            {
+                "value": {
+                    "events": [],
+                    "usage": "invalid",
+                }
+            }
+        )
+    }
+
+    with pytest.raises(RuntimeError, match="usage must be a JSON object"):
+        asyncio.run(
+            _runtime(config_path).run_model_stream(
+                prompt="hello",
+                session_id="s1",
+                state={},
+            )
+        )
+
+
+def test_build_prompt_and_run_model_can_be_split_across_plugins(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "prompt": {
+                    "manifest": {"wasm": [{"path": "./prompt.wasm"}]},
+                    "hooks": {"build_prompt": "build_prompt"},
+                },
+                "model": {
+                    "manifest": {"wasm": [{"path": "./model.wasm"}]},
+                    "hooks": {"run_model": "run_model"},
+                },
+            }
+        },
+    )
+    FakePlugin.exports = {
+        "build_prompt": lambda request: json.dumps(
+            {
+                "value": (
+                    f"[prompt:{request['args']['session_id']}] "
+                    f"{request['args']['message']['content']}"
+                )
+            }
+        ),
+        "run_model": lambda request: json.dumps(
+            {
+                "value": (
+                    f"[model:{request['args']['session_id']}] "
+                    f"{request['args']['prompt']}"
+                )
+            }
+        ),
+    }
+
+    runtime = _runtime(config_path)
+    prompt = asyncio.run(
+        runtime.call_first(
+            "build_prompt",
+            message={"content": "hello from bub"},
+            session_id="example",
+            state={},
+        )
+    )
+    output = asyncio.run(
+        runtime.run_model(
+            prompt=prompt,
+            session_id="example",
+            state={},
+        )
+    )
+
+    assert prompt == "[prompt:example] hello from bub"
+    assert output == "[model:example] [prompt:example] hello from bub"
+    assert [call["function_name"] for call in FakePlugin.calls] == [
+        "build_prompt",
+        "run_model",
+    ]
+
+
 async def _collect_stream(stream):
     return [event async for event in stream]
 
@@ -312,13 +369,12 @@ def test_tape_store_proxy_forwards_operations(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "tape",
             "plugins": {
                 "tape": {
-                    "wasmUrl": "https://example.com/tape.wasm",
+                    "manifest": {"wasm": [{"url": "https://example.com/tape.wasm"}]},
                     "hooks": {"provide_tape_store": "provide_tape_store"},
                 }
-            },
+            }
         },
     )
     FakePlugin.exports = {
@@ -352,7 +408,7 @@ def test_tape_store_proxy_forwards_operations(tmp_path: Path) -> None:
         "reset": json.dumps({"skip": True}),
     }
 
-    store = _plugin(config_path).provide_tape_store()
+    store = _runtime(config_path).call_first_sync("provide_tape_store")
 
     assert store is not None
     assert store.list_tapes() == ["main"]
@@ -370,17 +426,94 @@ def test_tape_store_proxy_forwards_operations(tmp_path: Path) -> None:
     store.reset("main")
 
 
+def test_tape_store_rejects_invalid_entry_shape(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "tape": {
+                    "manifest": {"wasm": [{"url": "https://example.com/tape.wasm"}]},
+                    "hooks": {"provide_tape_store": "provide_tape_store"},
+                }
+            }
+        },
+    )
+    FakePlugin.exports = {
+        "provide_tape_store": json.dumps(
+            {
+                "value": {
+                    "functions": {
+                        "fetch_all": "fetch_all",
+                    }
+                }
+            }
+        ),
+        "fetch_all": json.dumps({"value": ["bad-entry"]}),
+    }
+
+    store = _runtime(config_path).call_first_sync("provide_tape_store")
+
+    assert store is not None
+    with pytest.raises(RuntimeError, match="tape entry must be an object"):
+        list(store.fetch_all(TapeQuery("main", store)))
+
+
+def test_tape_store_rejects_invalid_functions_shape(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "tape": {
+                    "manifest": {"wasm": [{"url": "https://example.com/tape.wasm"}]},
+                    "hooks": {"provide_tape_store": "provide_tape_store"},
+                }
+            }
+        },
+    )
+    FakePlugin.exports = {
+        "provide_tape_store": json.dumps(
+            {
+                "value": {
+                    "functions": ["fetch_all"],
+                }
+            }
+        )
+    }
+
+    with pytest.raises(RuntimeError, match="functions object"):
+        _runtime(config_path).call_first_sync("provide_tape_store")
+
+
+def test_tape_store_requires_functions_object(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "tape": {
+                    "manifest": {"wasm": [{"url": "https://example.com/tape.wasm"}]},
+                    "hooks": {"provide_tape_store": "provide_tape_store"},
+                }
+            }
+        },
+    )
+    FakePlugin.exports = {
+        "provide_tape_store": json.dumps({"value": {}}),
+    }
+
+    with pytest.raises(RuntimeError, match="functions object"):
+        _runtime(config_path).call_first_sync("provide_tape_store")
+
+
 def test_channel_proxy_forwards_send(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {
-            "defaultPlugin": "channel",
             "plugins": {
                 "channel": {
-                    "wasmUrl": "https://example.com/channel.wasm",
+                    "manifest": {"wasm": [{"url": "https://example.com/channel.wasm"}]},
                     "hooks": {"provide_channels": "provide_channels"},
                 }
-            },
+            }
         },
     )
     FakePlugin.exports = {
@@ -402,9 +535,36 @@ def test_channel_proxy_forwards_send(tmp_path: Path) -> None:
     async def handler(message: dict[str, Any]) -> None:
         del message
 
-    channels = _plugin(config_path).provide_channels(handler)
+    channel_batches = _runtime(config_path).call_many_sync(
+        "provide_channels",
+        message_handler=handler,
+    )
+    channels = _flatten_channel_results(channel_batches)
 
     assert [channel.name for channel in channels] == ["wasm"]
     asyncio.run(channels[0].send({"content": "hello"}))
     assert FakePlugin.calls[-1]["function_name"] == "channel_send"
     assert FakePlugin.calls[-1]["payload"]["hook"] == "channel.send"
+
+
+def test_channel_proxy_rejects_invalid_wrapper_shape(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "channel": {
+                    "manifest": {"wasm": [{"url": "https://example.com/channel.wasm"}]},
+                    "hooks": {"provide_channels": "provide_channels"},
+                }
+            }
+        },
+    )
+    FakePlugin.exports = {
+        "provide_channels": json.dumps({"value": {"channels": "bad"}}),
+    }
+
+    async def handler(message: dict[str, Any]) -> None:
+        del message
+
+    with pytest.raises(RuntimeError, match="list of channel descriptors"):
+        _runtime(config_path).call_many_sync("provide_channels", message_handler=handler)

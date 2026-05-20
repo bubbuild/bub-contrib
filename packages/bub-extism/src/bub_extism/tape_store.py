@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any
 from republic import TapeEntry
 
 from bub_extism.bridge import ExtismBridge
-from bub_extism.codec import tape_entry_from_dict, tape_entry_to_dict, to_json_value
+from bub_extism.codec import tape_entry_from_dict, tape_entry_to_dict
 from bub_extism.config import ExtismPluginConfig
+from bub_extism.descriptors import normalize_function_bindings, require_mapping
 
 if TYPE_CHECKING:
     from republic import TapeQuery
@@ -18,12 +19,25 @@ class ExtismTapeStore:
         self,
         bridge: ExtismBridge,
         config: ExtismPluginConfig,
-        descriptor: dict[str, Any],
+        *,
+        functions: dict[str, str],
     ) -> None:
         self.bridge = bridge
         self.config = config
-        self.descriptor = descriptor
-        self.functions = dict(descriptor.get("functions") or {})
+        self.functions = functions
+
+    @classmethod
+    def from_descriptor(
+        cls,
+        bridge: ExtismBridge,
+        config: ExtismPluginConfig,
+        descriptor: Any,
+    ) -> ExtismTapeStore:
+        data = require_mapping(
+            descriptor,
+            message="Extism provide_tape_store must return a descriptor object",
+        )
+        return cls(bridge, config, functions=_functions_from_descriptor(data))
 
     def list_tapes(self) -> list[str]:
         value = self._call("list_tapes", {})
@@ -42,7 +56,7 @@ class ExtismTapeStore:
             return []
         if not isinstance(value, list):
             raise RuntimeError("Extism tape fetch_all must return a list")
-        return [tape_entry_from_dict(item) for item in value if isinstance(item, dict)]
+        return [tape_entry_from_dict(require_mapping(item, message="Extism tape entry must be an object")) for item in value]
 
     def append(self, tape: str, entry: TapeEntry) -> None:
         self._call("append", {"tape": tape, "entry": tape_entry_to_dict(entry)})
@@ -59,16 +73,22 @@ class ExtismTapeStore:
         )
 
 
-def tape_store_from_descriptor(
+def tape_store_from_value(
     bridge: ExtismBridge,
     config: ExtismPluginConfig,
-    descriptor: Any,
+    value: Any,
 ) -> ExtismTapeStore | None:
-    if descriptor is None:
+    if value is None:
         return None
-    if not isinstance(descriptor, dict):
-        raise RuntimeError("Extism provide_tape_store must return a descriptor object")
-    return ExtismTapeStore(bridge, config, descriptor)
+    return ExtismTapeStore.from_descriptor(bridge, config, value)
+
+
+def _functions_from_descriptor(descriptor: dict[str, Any]) -> dict[str, str]:
+    return normalize_function_bindings(
+        descriptor.get("functions"),
+        message="Extism tape store descriptor must include a functions object",
+        missing_ok=False,
+    )
 
 
 def _query_to_dict(query: TapeQuery) -> dict[str, Any]:
@@ -77,8 +97,8 @@ def _query_to_dict(query: TapeQuery) -> dict[str, Any]:
         "query": query._query,
         "after_anchor": query._after_anchor,
         "after_last": query._after_last,
-        "between_anchors": to_json_value(query._between_anchors),
-        "between_dates": to_json_value(query._between_dates),
+        "between_anchors": list(query._between_anchors) if query._between_anchors is not None else None,
+        "between_dates": list(query._between_dates) if query._between_dates is not None else None,
         "kinds": list(query._kinds),
         "limit": query._limit,
     }

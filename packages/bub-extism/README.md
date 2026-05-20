@@ -1,20 +1,117 @@
 # bub-extism
 
-`bub-extism` lets a Bub workspace run selected Bub hooks through an
-[Extism](https://extism.org/) WebAssembly plug-in.
+Extism WebAssembly bridge plugin for `bub`.
 
-The package is intentionally a bridge, not a replacement for Bub's pluggy
-extension model. Bub still discovers `bub-extism` as a normal Python plugin,
-then `bub-extism` delegates configured hook calls to a `.wasm` module written
-with any Extism PDK language.
+## What It Provides
 
-The Extism Python runtime is installed with this package. The dependency is
-kept on the verified `extism` `1.1.x` and `extism-sys` `1.12.x` lines because
-the Python package includes native runtime wheels.
+- Bub plugin entry point: `extism`
+- One Bub hook adapter per configured Extism plug-in
+- Standard Extism manifest support
+- `bub extism` management commands:
+  - `list`
+  - `show`
+  - `add`
+  - `remove`
+- Python-side proxies for hook surfaces that need Bub runtime objects:
+  - `run_model_stream`
+  - `provide_channels`
+  - `provide_tape_store`
+  - `register_cli_commands`
+
+`bub-extism` does not replace Bub's pluggy model. It loads as a normal Bub
+plugin, then registers one hook adapter for each configured wasm plug-in.
+
+## Installation
+
+```bash
+uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-extism"
+```
+
+You can also install it with Bub:
+
+```bash
+bub install bub-extism@main
+```
+
+## Prerequisites
+
+- Python 3.12+
+- The `extism` Python runtime package is installed with this package
+- WASI-enabled modules must set `"wasi": true` in Bub config
+
+For example builds:
+
+- Rust example:
+  - `cargo`
+  - `rustup`
+  - `wasm32-unknown-unknown` target
+- Go example:
+  - Go with `GOOS=wasip1 GOARCH=wasm` support
+
+## Configuration
+
+By default, `bub-extism` reads `~/.bub/extism.json`.
+
+Use `BUB_EXTISM_CONFIG_PATH=/path/to/extism.json` to override the config path.
+
+Example:
+
+```json
+{
+  "plugins": {
+    "prompt": {
+      "manifest": {
+        "wasm": [
+          {
+            "path": "/absolute/path/to/prompt.wasm"
+          }
+        ]
+      },
+      "hooks": {
+        "build_prompt": "build_prompt"
+      }
+    },
+    "model": {
+      "manifest": {
+        "wasm": [
+          {
+            "path": "/absolute/path/to/model.wasm"
+          }
+        ],
+        "allowed_hosts": ["api.example.com"],
+        "config": {
+          "provider": "demo"
+        }
+      },
+      "wasi": true,
+      "hooks": {
+        "run_model": "run_model"
+      }
+    }
+  }
+}
+```
+
+Configuration rules:
+
+- Each entry under `plugins` is one Bub hook adapter backed by one Extism plug-in.
+- `manifest` is a standard Extism manifest object.
+- `wasi` stays on the Bub side because WASI enablement is a host/runtime decision.
+- `hooks` maps Bub hook names to exported wasm functions.
+
+## Runtime Model
+
+- Bub still owns hook dispatch and precedence.
+- `bub-extism` registers one Python adapter per configured entry.
+- You can split hooks across multiple plug-ins or keep them in one module.
+
+Typical layouts:
+
+- one plug-in for `build_prompt`
+- one plug-in for `run_model`
+- one combined plug-in exporting both
 
 ## Supported Hooks
-
-The bridge exposes the current Bub standard hook surface:
 
 - `resolve_session`
 - `build_prompt`
@@ -32,98 +129,30 @@ The bridge exposes the current Bub standard hook surface:
 - `provide_channels`
 - `build_tape_context`
 
-Pure value hooks map directly to WebAssembly calls. Hooks that return Python
-runtime objects use Python-side proxies:
+## CLI
 
-- `run_model_stream` accepts a returned list of stream events and wraps it as
-  `AsyncStreamEvents`.
-- `provide_channels` accepts channel descriptors and creates `ExtismChannel`
-  proxies.
-- `provide_tape_store` accepts a tape store descriptor and creates an
-  `ExtismTapeStore` proxy.
-- `register_cli_commands` accepts command descriptors and registers them under
-  `bub extism`.
-- `build_tape_context` accepts a declarative context object; arbitrary Python
-  selector callbacks are not part of the WASM ABI.
+`bub-extism` adds a management group similar to `bub mcp`:
 
-## Configuration
-
-Create `~/.bub/extism.json`:
-
-```json
-{
-  "defaultPlugin": "echo",
-  "plugins": {
-    "echo": {
-      "wasmPath": "/absolute/path/to/plugin.wasm",
-      "wasi": false,
-      "config": {
-        "model": "demo"
-      },
-      "hooks": {
-        "resolve_session": "resolve_session",
-        "build_prompt": "build_prompt",
-        "run_model": "run_model",
-        "run_model_stream": "run_model_stream",
-        "load_state": "load_state",
-        "save_state": "save_state",
-        "render_outbound": "render_outbound",
-        "dispatch_outbound": "dispatch_outbound",
-        "register_cli_commands": "register_cli_commands",
-        "onboard_config": "onboard_config",
-        "on_error": "on_error",
-        "system_prompt": "system_prompt"
-      }
-    }
-  }
-}
+```bash
+bub extism list
+bub extism show prompt
+bub extism add prompt ./prompt.manifest.json --hook build_prompt=build_prompt
+bub extism remove prompt
 ```
 
-You can also load a URL or a full Extism manifest:
+`bub extism add` expects:
 
-```json
-{
-  "defaultPlugin": "remote",
-  "plugins": {
-    "remote": {
-      "wasmUrl": "https://example.com/plugin.wasm",
-      "hooks": {
-        "run_model": "run_model"
-      }
-    }
-  }
-}
-```
+- one standard Extism manifest JSON file
+- one or more `--hook HOOK=EXPORT` bindings
 
-```json
-{
-  "defaultPlugin": "manifest",
-  "plugins": {
-    "manifest": {
-      "manifest": {
-        "wasm": [
-          {
-            "url": "https://example.com/plugin.wasm",
-            "hash": "sha256..."
-          }
-        ],
-        "allowed_hosts": ["api.example.com"]
-      },
-      "hooks": {
-        "run_model": "run_model"
-      }
-    }
-  }
-}
-```
+If a wasm plug-in exposes `register_cli_commands`, its commands are registered
+into the same `bub extism` group.
 
-Use `BUB_EXTISM_CONFIG_PATH=/path/to/extism.json` to override the config path.
-
-## Hook ABI
+## Hook ABI Reference
 
 Each exported hook function receives one UTF-8 JSON object.
 
-For `run_model`:
+`run_model` request:
 
 ```json
 {
@@ -137,29 +166,36 @@ For `run_model`:
 }
 ```
 
-For `system_prompt`:
+`build_prompt` request:
 
 ```json
 {
   "abi_version": "bub.extism.v1",
-  "hook": "system_prompt",
+  "hook": "build_prompt",
   "args": {
-    "prompt": "hello",
+    "message": {
+      "content": "hello"
+    },
+    "session_id": "cli:local",
     "state": {}
   }
 }
 ```
 
-The bridge removes Bub runtime internals such as `_runtime_agent` and
-non-JSON-serializable values from `state` before calling WebAssembly.
+Bridge behavior:
 
-The wasm function may return plain text:
+- Bub runtime internals such as `_runtime_*` fields are removed from `state`
+- Non-JSON-serializable values are skipped before the wasm call
+
+Valid return shapes:
+
+Plain text:
 
 ```text
 hello from wasm
 ```
 
-Or a JSON object:
+Wrapped value:
 
 ```json
 {
@@ -167,7 +203,7 @@ Or a JSON object:
 }
 ```
 
-It can skip the hook:
+Skip current hook:
 
 ```json
 {
@@ -175,7 +211,7 @@ It can skip the hook:
 }
 ```
 
-Or return an error:
+Return an error:
 
 ```json
 {
@@ -185,10 +221,7 @@ Or return an error:
 }
 ```
 
-For compatibility with early demos, `{"run_model": "..."}` and
-`{"system_prompt": "..."}` are still accepted.
-
-## Proxy Descriptors
+## Descriptor Reference
 
 `provide_channels` returns channel descriptors:
 
@@ -238,15 +271,40 @@ For compatibility with early demos, `{"run_model": "..."}` and
 }
 ```
 
-The command is exposed as `bub extism hello '{"name":"Bub"}'`.
+That command is exposed as:
 
-## Development
+```bash
+bub extism hello '{"name":"Bub"}'
+```
+
+## Examples
+
+See [examples/README.md](./examples/README.md) for three verified paths:
+
+- Rust `run_model` on its own
+- Go `build_prompt` on its own
+- Go `build_prompt` plus Rust `run_model` together
+
+## Verification
 
 From the repository root:
 
 ```bash
-uv run --directory packages/bub-extism --with ../bub --with pytest --with pytest-asyncio pytest
+uv run --python 3.12 --no-project \
+  --with-editable ./bub \
+  --with-editable ./bub-contrib/packages/bub-extism \
+  --with pytest \
+  --with pytest-asyncio \
+  -m pytest bub-contrib/packages/bub-extism/tests -q
 ```
 
-These tests use a fake Extism module and do not require a local WebAssembly
-runtime.
+To verify example builds and composition only:
+
+```bash
+uv run --python 3.12 --no-project \
+  --with-editable ./bub \
+  --with-editable ./bub-contrib/packages/bub-extism \
+  --with pytest \
+  --with pytest-asyncio \
+  -m pytest bub-contrib/packages/bub-extism/tests/test_examples.py -q
+```

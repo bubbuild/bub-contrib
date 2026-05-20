@@ -10,24 +10,29 @@ def stream_events_from_value(value: Any) -> AsyncStreamEvents | None:
     if value is None:
         return None
 
-    events_value = value
-    state = StreamState()
-    if isinstance(value, dict):
-        events_value = value.get("events", [])
-        usage = value.get("usage")
-        if isinstance(usage, dict):
-            state.usage = usage
-
-    if not isinstance(events_value, list):
-        raise RuntimeError("Extism run_model_stream must return a list of stream events")
-
-    events = [_stream_event_from_dict(item) for item in events_value]
+    events, state = _stream_payload(value)
 
     async def iterator() -> AsyncIterator[StreamEvent]:
         for event in events:
             yield event
 
     return AsyncStreamEvents(iterator(), state=state)
+
+
+def _stream_payload(value: Any) -> tuple[list[StreamEvent], StreamState]:
+    state = StreamState()
+    events_value = value
+    if isinstance(value, dict):
+        events_value = value.get("events", [])
+        usage = value.get("usage")
+        if usage is not None:
+            if not isinstance(usage, dict):
+                raise RuntimeError("Extism run_model_stream usage must be a JSON object")
+            state.usage = usage
+
+    if not isinstance(events_value, list):
+        raise RuntimeError("Extism run_model_stream must return a list of stream events")
+    return ([_stream_event_from_dict(item) for item in events_value], state)
 
 
 def _stream_event_from_dict(value: Any) -> StreamEvent:

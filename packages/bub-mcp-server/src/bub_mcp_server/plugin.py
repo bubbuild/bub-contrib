@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import bub
 from bub import hookimpl
-from bub.channels import Channel
+from bub.channels import Channel, Lifecycle
 from bub.channels.message import ChannelMessage
 from bub.types import MessageHandler
 from fastmcp import FastMCP
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from bub.framework import BubFramework
 
 
-class MCPServerChannel(Channel):
+class MCPServerChannel(Lifecycle):
     name = "mcp-server"
 
     def __init__(self, framework: BubFramework) -> None:

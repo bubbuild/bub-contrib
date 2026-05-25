@@ -11,7 +11,7 @@ import mcp.types
 import typer
 import bub
 from bub import hookimpl, tool
-from bub.channels import Channel
+from bub.channels import Channel, Lifecycle
 from bub.tools import REGISTRY
 from bub.types import Envelope, MessageHandler, State
 from loguru import logger
@@ -100,7 +100,7 @@ class MCPServerState:
     error: str | None = None
 
 
-class MCPChannel(Channel):
+class MCPChannel(Lifecycle):
     name = LIFECYCLE_CHANNEL_NAME
 
     def __init__(self) -> None:

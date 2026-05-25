@@ -4,12 +4,12 @@ import asyncio
 from asyncio import Event
 
 from apscheduler.schedulers.base import BaseScheduler
-from bub.channels import Channel
+from bub.channels import Lifecycle
 from bub.framework import BubFramework
 from loguru import logger
 
 
-class ScheduleChannel(Channel):
+class ScheduleChannel(Lifecycle):
     name = "schedule"
 
     # Class-level runtime state (singleton per process)

@@ -10,6 +10,7 @@ dependencies = [
     "bub-cursor",
     "bub-discord",
     "bub-dingtalk",
+    "bub-dynamic-workflows",
     "bub-extism",
     "bub-github-copilot",
     "bub-kimi",
@@ -40,6 +41,7 @@ bub-codex = { workspace = true }
 bub-cursor = { workspace = true }
 bub-discord = { workspace = true }
 bub-dingtalk = { workspace = true }
+bub-dynamic-workflows = { workspace = true }
 bub-extism = { workspace = true }
 bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }

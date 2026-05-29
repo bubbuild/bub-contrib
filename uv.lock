@@ -389,6 +389,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "bub" },
     { name = "bub-codex" },
+    { name = "bub-cursor" },
     { name = "bub-dingtalk" },
     { name = "bub-discord" },
     { name = "bub-extism" },
@@ -422,6 +423,7 @@ test = [
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "bub-codex", editable = "packages/bub-codex" },
+    { name = "bub-cursor", editable = "packages/bub-cursor" },
     { name = "bub-dingtalk", editable = "packages/bub-dingtalk" },
     { name = "bub-discord", editable = "packages/bub-discord" },
     { name = "bub-extism", editable = "packages/bub-extism" },

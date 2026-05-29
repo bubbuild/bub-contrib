@@ -1,0 +1,19 @@
+[project]
+name = "bub-cursor"
+version = "0.1.0"
+description = "Cursor-backed run_model plugin for Bub"
+readme = "README.md"
+authors = [
+    { name = "tssujt" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-settings>=2.13.1",
+]
+
+[project.entry-points.bub]
+cursor = "bub_cursor.plugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"

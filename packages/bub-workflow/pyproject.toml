@@ -1,31 +1,36 @@
 [project]
-name = "bub-dynamic-workflows"
+name = "bub-workflow"
 version = "0.1.0"
-description = "Bee-on-tape dynamic workflow plugin for Bub"
+description = "APScheduler-backed workflow tools for Bub"
 readme = "README.md"
 authors = [
     { name = "Bub Build contributors" }
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "apscheduler>=3.11.2",
     "bub",
     "jsonschema>=4.20.0",
     "pydantic>=2.10.0",
+    "pydantic-settings>=2.10.1",
     "pyyaml>=6.0.0",
-    "redun>=0.44.0",
     "republic>=0.5.7",
 ]
 
 [project.entry-points.bub]
-dynamic-workflows = "bub_dynamic_workflows.plugin:DynamicWorkflowsPlugin"
+workflow = "bub_workflow.plugin:WorkflowImpl"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["bub_dynamic_workflows", "skills.workflow"]
-source-include = ["src/skills/workflow/SKILL.md"]
+module-name = ["bub_workflow", "skills.workflow"]
+source-include = [
+    "examples/**/*.yaml",
+    "examples/README.md",
+    "src/skills/workflow/SKILL.md",
+]
 
 [dependency-groups]
 dev = [

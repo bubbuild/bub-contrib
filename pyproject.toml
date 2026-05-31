@@ -10,7 +10,6 @@ dependencies = [
     "bub-cursor",
     "bub-discord",
     "bub-dingtalk",
-    "bub-dynamic-workflows",
     "bub-extism",
     "bub-github-copilot",
     "bub-kimi",
@@ -24,6 +23,7 @@ dependencies = [
     "bub-tapestore-sqlite",
     "bub-tg-feed",
     "bub-web-search",
+    "bub-workflow",
     "bub-feishu",
     "bub-session-prompt",
     "bub-wechat",
@@ -41,7 +41,6 @@ bub-codex = { workspace = true }
 bub-cursor = { workspace = true }
 bub-discord = { workspace = true }
 bub-dingtalk = { workspace = true }
-bub-dynamic-workflows = { workspace = true }
 bub-extism = { workspace = true }
 bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }
@@ -54,6 +53,7 @@ bub-tapestore-sqlalchemy = { workspace = true }
 bub-tapestore-redis = { workspace = true }
 bub-tapestore-sqlite = { workspace = true }
 bub-web-search = { workspace = true }
+bub-workflow = { workspace = true }
 bub-feishu = { workspace = true }
 bub-session-prompt = { workspace = true }
 bub-wechat = { workspace = true }

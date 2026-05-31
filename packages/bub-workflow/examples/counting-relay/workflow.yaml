@@ -1,0 +1,154 @@
+name: counting_chat
+description: Count from 1 to 20 as an open group-chat transcript with five reusable participants.
+skill: Model the public chat transcript. Participants are not assigned numbers in advance, and no moderator chooses messages.
+input_schema:
+  target:
+    type: integer
+    default: 20
+  participants:
+    type: array
+    items:
+      type: string
+    minItems: 5
+    maxItems: 5
+    default:
+      - participant_01
+      - participant_02
+      - participant_03
+      - participant_04
+      - participant_05
+nodes:
+  - id: participant_01
+    title: Participant 01 Behavior
+    executor: subagent
+    prompt: &participant_prompt |-
+      You are one participant in an open group chat that is trying to count aloud from 1 to {inputs.target}.
+      Participants:
+      {inputs.participants}
+
+      You do not know the future transcript. Nobody assigned you a number. Describe how you would behave in the chat:
+      - watch only the public transcript
+      - speak promptly when you believe the next number is available
+      - say at most one number in each public message
+      - avoid duplicates when you see someone already sent the next number
+
+      Return only JSON with participant, behavior, timing, and constraints.
+  - id: participant_02
+    title: Participant 02 Behavior
+    executor: subagent
+    prompt: *participant_prompt
+  - id: participant_03
+    title: Participant 03 Behavior
+    executor: subagent
+    prompt: *participant_prompt
+  - id: participant_04
+    title: Participant 04 Behavior
+    executor: subagent
+    prompt: *participant_prompt
+  - id: participant_05
+    title: Participant 05 Behavior
+    executor: subagent
+    prompt: *participant_prompt
+  - id: public_transcript
+    title: Public Chat Transcript
+    executor: subagent
+    depends_on:
+      - participant_01
+      - participant_02
+      - participant_03
+      - participant_04
+      - participant_05
+    prompt: |-
+      Build the public transcript for an open group chat counting from 1 to {inputs.target}.
+
+      This is not a moderated selection process. No person chooses the "best" message.
+      Treat the chat as an arrival-ordered public channel:
+      - participants observe the same public transcript
+      - participants may speak when they think the next number is available
+      - the channel appends public messages in arrival order
+      - stale, duplicate, or out-of-order messages may be rejected by the channel state gate
+      - the final appended transcript must be exactly 1 through {inputs.target}
+
+      Participant behavior contracts:
+      - participant_01: {nodes.participant_01}
+      - participant_02: {nodes.participant_02}
+      - participant_03: {nodes.participant_03}
+      - participant_04: {nodes.participant_04}
+      - participant_05: {nodes.participant_05}
+
+      Return only JSON with participants, transcript, rejected_messages, complete, and summary.
+      Each transcript item must contain sequence, speaker, number, observed_numbers, and message.
+    output_schema:
+      type: object
+      properties:
+        participants:
+          type: array
+          items:
+            type: string
+          minItems: 5
+          maxItems: 5
+        transcript:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          minItems: 20
+          maxItems: 20
+        rejected_messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        complete:
+          type: boolean
+        summary:
+          anyOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+      required:
+        - participants
+        - transcript
+        - rejected_messages
+        - complete
+        - summary
+  - id: transcript_auditor
+    title: Transcript Auditor
+    executor: subagent
+    depends_on:
+      - public_transcript
+    prompt: |-
+      Audit the open group chat counting transcript.
+      Transcript:
+      {nodes.public_transcript.transcript}
+
+      Extract the number from each transcript message's number field.
+      Confirm that the sequence is exactly 1 through {inputs.target}, with no duplicates and no gaps.
+      Return only JSON with sequence, missing, duplicates, valid, and summary.
+    output_schema:
+      type: object
+      properties:
+        sequence:
+          type: array
+          items:
+            type: integer
+          minItems: 20
+          maxItems: 20
+        missing:
+          type: array
+          items:
+            type: integer
+        duplicates:
+          type: array
+          items:
+            type: integer
+        valid:
+          type: boolean
+        summary:
+          type: string
+      required:
+        - sequence
+        - missing
+        - duplicates
+        - valid
+        - summary

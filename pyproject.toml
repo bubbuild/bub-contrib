@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "bub",
+    "bub-acp-server",
     "bub-codex",
     "bub-cursor",
     "bub-discord",
@@ -35,6 +36,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 bub = { git = "https://github.com/bubbuild/bub.git" }
+bub-acp-server = { workspace = true }
 bub-tg-feed = { workspace = true }
 bub-codex = { workspace = true }
 bub-cursor = { workspace = true }

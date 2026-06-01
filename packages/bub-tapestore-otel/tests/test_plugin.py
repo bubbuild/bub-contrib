@@ -32,7 +32,7 @@ def test_plugin_wraps_parent_tape_store(monkeypatch) -> None:
     monkeypatch.setattr(
         plugin.bub,
         "ensure_config",
-        lambda _: OTelTapeStoreSettings(enabled=True, force_flush=False),
+        lambda _: OTelTapeStoreSettings(enabled=True),
     )
 
     store = framework._plugin_manager.hook.provide_tape_store()

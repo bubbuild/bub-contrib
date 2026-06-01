@@ -26,9 +26,6 @@ class OTelTapeStoreSettings(bub.Settings):
 
     enabled: bool = Field(default=True, validation_alias="BUB_TAPESTORE_OTEL_ENABLED")
     service_name: str = Field(default="bub", validation_alias="BUB_TAPESTORE_OTEL_SERVICE_NAME")
-    send_to_logfire: bool = Field(default=False, validation_alias="BUB_TAPESTORE_OTEL_SEND_TO_LOGFIRE")
-    force_flush: bool = Field(default=True, validation_alias="BUB_TAPESTORE_OTEL_FORCE_FLUSH")
-    shutdown_after_flush: bool = Field(default=True, validation_alias="BUB_TAPESTORE_OTEL_SHUTDOWN_AFTER_FLUSH")
 
 
 class OTelTapeStorePlugin:
@@ -48,9 +45,6 @@ class OTelTapeStorePlugin:
         exporter = LogfireTapeExporter(
             LogfireTapeExporterSettings(
                 service_name=settings.service_name,
-                send_to_logfire=settings.send_to_logfire,
-                force_flush=settings.force_flush,
-                shutdown_after_flush=settings.shutdown_after_flush,
             )
         )
         return _wrap_store_result(store, exporter)

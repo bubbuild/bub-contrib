@@ -17,12 +17,12 @@ failures are swallowed so telemetry cannot break tape persistence.
 
 ## Configuration
 
-For local Jaeger:
+For local Phoenix:
 
 ```bash
-LOGFIRE_SEND_TO_LOGFIRE=false \
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces \
-uv run bub run ",tape.info"
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:6006/v1/traces \
+OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf \
+uv run bub run "hello"
 ```
 
 Plugin settings:
@@ -31,14 +31,17 @@ Plugin settings:
 | --- | --- | --- |
 | `BUB_TAPESTORE_OTEL_ENABLED` | `true` | Wrap the active tape store. |
 | `BUB_TAPESTORE_OTEL_SERVICE_NAME` | `bub` | Service name used by Logfire. |
-| `BUB_TAPESTORE_OTEL_SEND_TO_LOGFIRE` | `false` | Send to hosted Logfire in addition to OTLP env exporters. |
-| `BUB_TAPESTORE_OTEL_FORCE_FLUSH` | `true` | Flush after each completed tape batch for streamable local observation. |
-| `BUB_TAPESTORE_OTEL_SHUTDOWN_AFTER_FLUSH` | `true` | Shut down Logfire after each flush so short-lived `bub run` processes exit cleanly. |
 
-The projection is tape-first: spans carry `bub.tape.name`,
-`bub.tape.entry.kind`, and `bub.tape.entry.name`. Prompt and message content are
-not exported by default.
+OTLP exporter configuration stays on the standard OpenTelemetry environment
+variables such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`.
 
-For long-running `bub chat` or `bub gateway` processes, set
-`BUB_TAPESTORE_OTEL_SHUTDOWN_AFTER_FLUSH=false` so later tape batches can keep
-using the same Logfire runtime.
+The projection is tape-first but emits Phoenix-friendly GenAI spans:
+
+- `bub.invoke_agent` root span with `openinference.span.kind=AGENT`
+- `bub.llm.chat` child span with `openinference.span.kind=LLM`
+- `bub.tool.<name>` child spans with `openinference.span.kind=TOOL`
+
+Message content, system prompt, token usage, model/provider metadata, and tool
+calls are derived from committed tape entries and exported using OTel GenAI and
+OpenInference attribute names.

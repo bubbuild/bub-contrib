@@ -1,0 +1,22 @@
+[project]
+name = "bub-tapestore-otel"
+version = "0.1.0"
+description = "OpenTelemetry projection layer for Bub tape stores"
+readme = "README.md"
+authors = [
+    { name = "Chojan Shang", email = "psiace@apache.org" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "republic>=0.5.7",
+]
+
+[project.entry-points.bub]
+tapestore-otel = "bub_tapestore_otel.plugin:OTelTapeStorePlugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"

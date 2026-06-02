@@ -21,6 +21,7 @@ members = [
     "bub-kimi",
     "bub-mcp",
     "bub-mcp-server",
+    "bub-pages",
     "bub-qq",
     "bub-schedule",
     "bub-searxng-search",
@@ -440,6 +441,7 @@ dependencies = [
     { name = "bub-kimi" },
     { name = "bub-mcp" },
     { name = "bub-mcp-server" },
+    { name = "bub-pages" },
     { name = "bub-qq" },
     { name = "bub-schedule" },
     { name = "bub-searxng-search" },
@@ -476,6 +478,7 @@ requires-dist = [
     { name = "bub-kimi", editable = "packages/bub-kimi" },
     { name = "bub-mcp", editable = "packages/bub-mcp" },
     { name = "bub-mcp-server", editable = "packages/bub-mcp-server" },
+    { name = "bub-pages", editable = "packages/bub-pages" },
     { name = "bub-qq", editable = "packages/bub-qq" },
     { name = "bub-schedule", editable = "packages/bub-schedule" },
     { name = "bub-searxng-search", editable = "packages/bub-searxng-search" },
@@ -649,6 +652,25 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.2.0,<4" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
+
+[[package]]
+name = "bub-pages"
+version = "0.1.0"
+source = { editable = "packages/bub-pages" }
+dependencies = [
+    { name = "bub" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bub", git = "https://github.com/bubbuild/bub.git" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.3" }]

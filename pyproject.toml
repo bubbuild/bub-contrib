@@ -16,6 +16,7 @@ dependencies = [
     "bub-kimi",
     "bub-mcp",
     "bub-mcp-server",
+    "bub-pages",
     "bub-qq",
     "bub-schedule",
     "bub-searxng-search",
@@ -48,6 +49,7 @@ bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }
 bub-mcp = { workspace = true }
 bub-mcp-server = { workspace = true }
+bub-pages = { workspace = true }
 bub-qq = { workspace = true }
 bub-schedule = { workspace = true }
 bub-searxng-search = { workspace = true }

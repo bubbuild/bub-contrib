@@ -1,0 +1,24 @@
+[project]
+name = "bub-pages"
+version = "0.1.0"
+description = "Language-agnostic multi-site static pages plugin for Bub"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub",
+]
+
+[project.entry-points.bub]
+pages = "bub_pages.plugin:PagesPlugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

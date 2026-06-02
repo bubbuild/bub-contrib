@@ -1,0 +1,1 @@
+"""Bub Pages skill package."""

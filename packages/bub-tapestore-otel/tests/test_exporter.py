@@ -1,11 +1,9 @@
 from __future__ import annotations
-
-import json
 from contextlib import contextmanager
 from types import SimpleNamespace
 
 import bub_tapestore_otel.exporter as exporter
-from bub_tapestore_otel.exporter import LogfireTapeExporter, _instrument_trace, _should_flush_batch, build_tape_trace
+from bub_tapestore_otel.exporter import OTelTapeExporter, _instrument_trace, _should_flush_batch, build_tape_trace
 from republic import TapeEntry
 
 
@@ -29,13 +27,16 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
 
     assert trace.agent_attributes["openinference.span.kind"] == "AGENT"
     assert trace.agent_attributes["gen_ai.operation.name"] == "invoke_agent"
+    assert trace.agent_attributes["gen_ai.provider.name"] == "openai"
+    assert trace.agent_attributes["gen_ai.request.model"] == "gpt-5-mini"
+    assert trace.agent_attributes["gen_ai.conversation.id"] == "chat__1"
+    assert trace.agent_attributes["input.value"] == "system: system rules\nuser: say hello"
     assert trace.agent_attributes["output.value"] == "hello"
 
     assert trace.llm_attributes["openinference.span.kind"] == "LLM"
     assert trace.llm_attributes["gen_ai.operation.name"] == "chat"
     assert trace.llm_attributes["gen_ai.provider.name"] == "openai"
     assert trace.llm_attributes["gen_ai.request.model"] == "gpt-5-mini"
-    assert trace.llm_attributes["gen_ai.output"] == "hello"
     assert trace.llm_attributes["gen_ai.usage.input_tokens"] == 11
     assert trace.llm_attributes["gen_ai.usage.output_tokens"] == 3
     assert trace.llm_attributes["llm.token_count.total"] == 14
@@ -45,16 +46,8 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
     assert trace.llm_attributes["llm.input_messages.1.message.content"] == "say hello"
     assert trace.llm_attributes["llm.output_messages.0.message.role"] == "assistant"
     assert trace.llm_attributes["llm.output_messages.0.message.content"] == "hello"
-
-    input_messages = json.loads(trace.llm_attributes["gen_ai.input.messages"])
-    output_messages = json.loads(trace.llm_attributes["gen_ai.output.messages"])
-    assert input_messages == [
-        {"role": "system", "parts": [{"type": "text", "content": "system rules"}], "content": "system rules"},
-        {"role": "user", "parts": [{"type": "text", "content": "say hello"}], "content": "say hello"},
-    ]
-    assert output_messages == [
-        {"role": "assistant", "parts": [{"type": "text", "content": "hello"}], "content": "hello"}
-    ]
+    assert "gen_ai.input.messages" not in trace.llm_attributes
+    assert "gen_ai.output.messages" not in trace.llm_attributes
 
 
 def test_build_tape_trace_exports_tool_calls_and_results() -> None:
@@ -77,12 +70,8 @@ def test_build_tape_trace_exports_tool_calls_and_results() -> None:
         trace.llm_attributes["llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"]
         == '{"query":"otel genai"}'
     )
-    assert json.loads(trace.llm_attributes["llm.tools.0.tool.json_schema"]) == {
-        "type": "function",
-        "function": {"name": "search", "parameters": {"type": "object"}},
-    }
     assert trace.steps[0].tool_calls[0].name == "search"
-    assert trace.steps[0].llm_attributes["llm.tools.0.tool.json_schema"]
+    assert "llm.tools.0.tool.json_schema" not in trace.steps[0].llm_attributes
 
 
 def test_build_tape_trace_groups_a_turn_into_steps() -> None:
@@ -148,13 +137,13 @@ def test_batch_flushes_on_completed_tape_turn_markers() -> None:
 
 
 def test_instrument_trace_nests_steps_and_tools_under_agent(monkeypatch) -> None:
-    spans: list[tuple[str, str | None]] = []
+    spans: list[tuple[str, str | None, dict]] = []
     stack: list[str] = []
 
     class FakeTracer:
         @contextmanager
-        def start_as_current_span(self, name, **_kwargs):
-            spans.append((name, stack[-1] if stack else None))
+        def start_as_current_span(self, name, **kwargs):
+            spans.append((name, stack[-1] if stack else None, kwargs["attributes"]))
             stack.append(name)
             try:
                 yield SimpleNamespace(get_span_context=lambda: object())
@@ -175,11 +164,21 @@ def test_instrument_trace_nests_steps_and_tools_under_agent(monkeypatch) -> None
     _instrument_trace(trace, tracer=FakeTracer())
 
     assert spans == [
-        ("bub.invoke_agent", None),
-        ("bub.agent.step", "bub.invoke_agent"),
-        ("bub.llm.chat", "bub.agent.step"),
-        ("bub.tool.search", "bub.agent.step"),
+        ("invoke_agent", None, trace.agent_attributes),
+        ("bub.agent.step", "invoke_agent", exporter._step_span_attributes(trace.steps[0])),
+        ("chat gpt-5-mini", "bub.agent.step", trace.steps[0].llm_attributes),
+        (
+            "execute_tool search",
+            "bub.agent.step",
+            exporter._tool_span_attributes(trace.steps[0], trace.steps[0].tool_calls[0]),
+        ),
     ]
+    assert spans[1][2]["bub.agent.step"] == 1
+    assert spans[1][2]["gen_ai.conversation.id"] == "agent__nested"
+    assert spans[2][2]["bub.agent.step"] == 1
+    assert spans[3][2]["gen_ai.tool.call.arguments"] == '{"query":"otel"}'
+    assert spans[3][2]["gen_ai.tool.call.result"] == "result"
+    assert spans[3][2]["bub.tool.name"] == "search"
 
 
 def test_exporter_uses_span_processor_without_shutdown(monkeypatch) -> None:
@@ -191,7 +190,6 @@ def test_exporter_uses_span_processor_without_shutdown(monkeypatch) -> None:
 
     fake_runtime = exporter.OTelExporterRuntime(provider=FakeProvider(), tracer=object())
 
-    monkeypatch.setattr(exporter, "_EXPORTER_RUNTIMES", {})
     monkeypatch.setattr(exporter, "_build_otel_exporter_runtime", lambda _service_name: calls.append("build_runtime") or fake_runtime)
     monkeypatch.setattr(
         exporter,
@@ -199,12 +197,15 @@ def test_exporter_uses_span_processor_without_shutdown(monkeypatch) -> None:
         lambda _trace, *, tracer: calls.append(f"instrument_trace:{tracer is fake_runtime.tracer}"),
     )
 
-    tape_exporter = LogfireTapeExporter()
+    tape_exporter = OTelTapeExporter()
     tape_exporter.append("tape-1", TapeEntry.message({"role": "user", "content": "hello"}))
     tape_exporter.append("tape-1", TapeEntry.event("loop.step", data={"status": "ok"}))
+    tape_exporter.append("tape-2", TapeEntry.event("command", data={}))
 
     assert calls == [
         "build_runtime",
+        "instrument_trace:True",
+        "force_flush:3000",
         "instrument_trace:True",
         "force_flush:3000",
     ]

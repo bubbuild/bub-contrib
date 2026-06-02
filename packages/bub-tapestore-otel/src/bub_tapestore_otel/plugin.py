@@ -9,7 +9,7 @@ from bub import BubFramework, hookimpl
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
-from bub_tapestore_otel.exporter import LogfireTapeExporter, LogfireTapeExporterSettings
+from bub_tapestore_otel.exporter import OTelTapeExporter, OTelTapeExporterSettings
 from bub_tapestore_otel.store import OTelTapeStore
 
 CONFIG_NAME = "tapestore-otel"
@@ -42,15 +42,15 @@ class OTelTapeStorePlugin:
         settings = bub.ensure_config(OTelTapeStoreSettings)
         if not settings.enabled:
             return store
-        exporter = LogfireTapeExporter(
-            LogfireTapeExporterSettings(
+        exporter = OTelTapeExporter(
+            OTelTapeExporterSettings(
                 service_name=settings.service_name,
             )
         )
         return _wrap_store_result(store, exporter)
 
 
-def _wrap_store_result(store: Any, exporter: LogfireTapeExporter) -> Any:
+def _wrap_store_result(store: Any, exporter: OTelTapeExporter) -> Any:
     if isinstance(store, AsyncIterator):
 
         @contextlib.asynccontextmanager

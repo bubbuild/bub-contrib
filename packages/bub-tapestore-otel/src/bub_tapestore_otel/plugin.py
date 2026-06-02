@@ -4,11 +4,11 @@ import contextlib
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
+import bub
+from bub import BubFramework, hookimpl
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
-import bub
-from bub import BubFramework, hookimpl
 from bub_tapestore_otel.exporter import LogfireTapeExporter, LogfireTapeExporterSettings
 from bub_tapestore_otel.store import OTelTapeStore
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from types import SimpleNamespace
 
+import bub_tapestore_otel.exporter as exporter
+from bub_tapestore_otel.exporter import LogfireTapeExporter, _instrument_trace, _should_flush_batch, build_tape_trace
 from republic import TapeEntry
-
-from bub_tapestore_otel.exporter import _should_flush_batch, build_tape_trace
 
 
 def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> None:
@@ -79,6 +81,48 @@ def test_build_tape_trace_exports_tool_calls_and_results() -> None:
         "type": "function",
         "function": {"name": "search", "parameters": {"type": "object"}},
     }
+    assert trace.steps[0].tool_calls[0].name == "search"
+    assert trace.steps[0].llm_attributes["llm.tools.0.tool.json_schema"]
+
+
+def test_build_tape_trace_groups_a_turn_into_steps() -> None:
+    entries = [
+        TapeEntry.event("loop.step.start", data={"step": 1, "prompt": "first"}),
+        TapeEntry.message({"role": "user", "content": "first"}),
+        TapeEntry.tool_call([{"id": "call_1", "name": "search", "arguments": {"query": "otel"}}]),
+        TapeEntry.tool_result(["result"]),
+        TapeEntry.event(
+            "run",
+            data={
+                "provider": "openai",
+                "model": "gpt-5-mini",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            },
+        ),
+        TapeEntry.event("loop.step", data={"step": 1, "status": "continue", "elapsed_ms": 100}),
+        TapeEntry.event("loop.step.start", data={"step": 2, "prompt": "second"}),
+        TapeEntry.message({"role": "assistant", "content": "done"}),
+        TapeEntry.event(
+            "run",
+            data={
+                "provider": "openai",
+                "model": "gpt-5-mini",
+                "usage": {"prompt_tokens": 20, "completion_tokens": 4, "total_tokens": 24},
+            },
+        ),
+        TapeEntry.event("loop.step", data={"step": 2, "status": "ok", "elapsed_ms": 200}),
+    ]
+
+    trace = build_tape_trace("agent__steps", entries)
+
+    assert trace.usage_input_tokens == 30
+    assert trace.usage_output_tokens == 6
+    assert trace.usage_total_tokens == 36
+    assert trace.duration_ms == 300
+    assert [step.step for step in trace.steps] == [1, 2]
+    assert [step.status for step in trace.steps] == ["continue", "ok"]
+    assert trace.steps[0].tool_calls[0].name == "search"
+    assert trace.steps[1].output == "done"
 
 
 def test_build_tape_trace_falls_back_to_prompt_when_messages_are_missing() -> None:
@@ -97,5 +141,70 @@ def test_build_tape_trace_falls_back_to_prompt_when_messages_are_missing() -> No
 
 def test_batch_flushes_on_completed_tape_turn_markers() -> None:
     assert _should_flush_batch(TapeEntry.event("loop.step", data={"status": "ok"}))
+    assert _should_flush_batch(TapeEntry.event("loop.step", data={"status": "error"}))
     assert _should_flush_batch(TapeEntry.event("command", data={}))
+    assert not _should_flush_batch(TapeEntry.event("loop.step", data={"status": "continue"}))
     assert not _should_flush_batch(TapeEntry.event("loop.step.start", data={}))
+
+
+def test_instrument_trace_nests_steps_and_tools_under_agent(monkeypatch) -> None:
+    spans: list[tuple[str, str | None]] = []
+    stack: list[str] = []
+
+    class FakeTracer:
+        @contextmanager
+        def start_as_current_span(self, name, **_kwargs):
+            spans.append((name, stack[-1] if stack else None))
+            stack.append(name)
+            try:
+                yield SimpleNamespace(get_span_context=lambda: object())
+            finally:
+                stack.pop()
+
+    trace = build_tape_trace(
+        "agent__nested",
+        [
+            TapeEntry.message({"role": "user", "content": "search docs"}),
+            TapeEntry.tool_call([{"id": "call_1", "name": "search", "arguments": {"query": "otel"}}]),
+            TapeEntry.tool_result(["result"]),
+            TapeEntry.event("run", data={"provider": "openai", "model": "gpt-5-mini"}),
+            TapeEntry.event("loop.step", data={"step": 1, "status": "ok"}),
+        ],
+    )
+
+    _instrument_trace(trace, tracer=FakeTracer())
+
+    assert spans == [
+        ("bub.invoke_agent", None),
+        ("bub.agent.step", "bub.invoke_agent"),
+        ("bub.llm.chat", "bub.agent.step"),
+        ("bub.tool.search", "bub.agent.step"),
+    ]
+
+
+def test_exporter_uses_span_processor_without_shutdown(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeProvider:
+        def force_flush(self, *, timeout_millis: int) -> None:
+            calls.append(f"force_flush:{timeout_millis}")
+
+    fake_runtime = exporter.OTelExporterRuntime(provider=FakeProvider(), tracer=object())
+
+    monkeypatch.setattr(exporter, "_EXPORTER_RUNTIMES", {})
+    monkeypatch.setattr(exporter, "_build_otel_exporter_runtime", lambda _service_name: calls.append("build_runtime") or fake_runtime)
+    monkeypatch.setattr(
+        exporter,
+        "_instrument_trace",
+        lambda _trace, *, tracer: calls.append(f"instrument_trace:{tracer is fake_runtime.tracer}"),
+    )
+
+    tape_exporter = LogfireTapeExporter()
+    tape_exporter.append("tape-1", TapeEntry.message({"role": "user", "content": "hello"}))
+    tape_exporter.append("tape-1", TapeEntry.event("loop.step", data={"status": "ok"}))
+
+    assert calls == [
+        "build_runtime",
+        "instrument_trace:True",
+        "force_flush:3000",
+    ]

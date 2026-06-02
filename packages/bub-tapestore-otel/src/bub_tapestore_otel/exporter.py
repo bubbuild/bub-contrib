@@ -4,49 +4,56 @@ import hashlib
 import json
 import re
 import threading
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 from republic import TapeEntry
 
 SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
-SEND_TO_LOGFIRE = False
 FORCE_FLUSH_TIMEOUT_MS = 3_000
-SHUTDOWN_TIMEOUT_MS = 1_000
+TERMINAL_STEP_STATUSES = frozenset({"ok", "error", "failed", "cancelled"})
+TRACER_NAME = "bub_tapestore_otel"
+_SPAN_PROCESSOR_LOCK = threading.Lock()
+_EXPORTER_RUNTIMES: dict[str, OTelExporterRuntime] = {}
 
 
-@dataclass(frozen=True)
-class LogfireTapeExporterSettings:
+class TapeProjectionModel(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+
+class LogfireTapeExporterSettings(TapeProjectionModel):
     service_name: str = "bub"
 
 
-@dataclass(frozen=True)
-class TraceMessage:
-    role: str
-    content: str = ""
-    name: str | None = None
-    tool_call_id: str | None = None
-    tool_calls: tuple["ToolCall", ...] = ()
+class OTelExporterRuntime(TapeProjectionModel):
+    provider: Any
+    tracer: Any
 
 
-@dataclass(frozen=True)
-class ToolCall:
+class ToolCall(TapeProjectionModel):
     id: str
     name: str
     arguments: str
     result: str | None = None
 
 
-@dataclass(frozen=True)
-class TapeTrace:
+class TraceMessage(TapeProjectionModel):
+    role: str
+    content: str = ""
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
+
+
+class TraceProjection(TapeProjectionModel):
     tape: str
     entries: list[TapeEntry]
     input_messages: list[TraceMessage]
     output_messages: list[TraceMessage]
     tool_calls: list[ToolCall]
-    system_prompt: str | None = None
-    prompt: str | None = None
     output: str | None = None
     provider: str | None = None
     model: str | None = None
@@ -55,14 +62,25 @@ class TapeTrace:
     usage_output_tokens: int | None = None
     usage_total_tokens: int | None = None
     duration_ms: int | float | None = None
-    agent_attributes: dict[str, Any] = field(default_factory=dict)
-    llm_attributes: dict[str, Any] = field(default_factory=dict)
+
+
+class StepTrace(TraceProjection):
+    step: int
+    step_attributes: dict[str, Any] = Field(default_factory=dict)
+    llm_attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class TapeTrace(TraceProjection):
+    system_prompt: str | None = None
+    prompt: str | None = None
+    steps: list[StepTrace] = Field(default_factory=list)
+    agent_attributes: dict[str, Any] = Field(default_factory=dict)
+    llm_attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class LogfireTapeExporter:
     def __init__(self, settings: LogfireTapeExporterSettings | None = None) -> None:
         self._settings = settings or LogfireTapeExporterSettings()
-        self._configured = False
         self._lock = threading.Lock()
         self._pending: dict[str, list[TapeEntry]] = {}
 
@@ -78,41 +96,27 @@ class LogfireTapeExporter:
         except Exception:
             logger.opt(exception=True).warning("tapestore.otel.export_failed action=reset tape={}", tape)
 
-    def _configure(self) -> None:
-        if self._configured:
-            return
-        import logfire
+    def _ensure_exporter(self) -> OTelExporterRuntime:
+        return _ensure_otel_exporter_runtime(self._settings.service_name)
 
-        logfire.configure(
-            send_to_logfire=SEND_TO_LOGFIRE,
-            service_name=self._settings.service_name,
-            console=False,
-            scrubbing=False,
-        )
-        self._configured = True
-
-    def _flush(self) -> None:
-        import logfire
-
-        logfire.force_flush(timeout_millis=FORCE_FLUSH_TIMEOUT_MS)
-        logfire.shutdown(timeout_millis=SHUTDOWN_TIMEOUT_MS, flush=False)
-        self._configured = False
+    def _flush(self, runtime: OTelExporterRuntime) -> None:
+        runtime.provider.force_flush(timeout_millis=FORCE_FLUSH_TIMEOUT_MS)
 
     def _append(self, tape: str, entry: TapeEntry) -> None:
-        self._configure()
+        runtime = self._ensure_exporter()
         batch = self._record_entry(tape, entry)
         if batch is None:
             return
-        _instrument_trace(build_tape_trace(tape, batch))
-        self._flush()
+        _instrument_trace(build_tape_trace(tape, batch), tracer=runtime.tracer)
+        self._flush(runtime)
 
     def _reset(self, tape: str) -> None:
-        self._configure()
+        runtime = self._ensure_exporter()
         batch = self._pop_pending(tape)
         if batch:
-            _instrument_trace(build_tape_trace(tape, batch))
-        _instrument_reset(tape)
-        self._flush()
+            _instrument_trace(build_tape_trace(tape, batch), tracer=runtime.tracer)
+        _instrument_reset(tape, tracer=runtime.tracer)
+        self._flush(runtime)
 
     def _record_entry(self, tape: str, entry: TapeEntry) -> list[TapeEntry] | None:
         with self._lock:
@@ -127,42 +131,86 @@ class LogfireTapeExporter:
             return self._pending.pop(tape, [])
 
 
-def build_tape_trace(tape: str, entries: list[TapeEntry]) -> TapeTrace:
-    run_data = _last_event_data(entries, "run")
-    step_data = _last_event_data(entries, "loop.step")
-    prompt = _first_prompt(entries)
-    messages, tool_calls = _extract_messages_and_tools(entries)
-    input_messages, output_messages = _split_input_output(messages, prompt, tool_calls)
-    system_prompt = _first_message_content(input_messages, "system")
-    output = _output_value(output_messages, tool_calls)
-    provider = _as_text(run_data.get("provider"))
-    model = _as_text(run_data.get("model"))
-    prompt_tokens, completion_tokens, total_tokens = _usage(run_data)
-    status = _as_text(step_data.get("status") or run_data.get("status"))
-    duration_ms = step_data.get("elapsed_ms") or run_data.get("elapsed_ms")
+def _ensure_otel_exporter_runtime(service_name: str) -> OTelExporterRuntime:
+    with _SPAN_PROCESSOR_LOCK:
+        runtime = _EXPORTER_RUNTIMES.get(service_name)
+        if runtime is not None:
+            return runtime
 
-    trace = TapeTrace(
-        tape=tape,
-        entries=entries,
-        input_messages=input_messages,
-        output_messages=output_messages,
-        tool_calls=tool_calls,
-        system_prompt=system_prompt,
-        prompt=prompt,
-        output=output,
-        provider=provider,
-        model=model,
-        status=status,
-        usage_input_tokens=prompt_tokens,
-        usage_output_tokens=completion_tokens,
-        usage_total_tokens=total_tokens,
-        duration_ms=duration_ms if isinstance(duration_ms, (int, float)) and not isinstance(duration_ms, bool) else None,
-    )
+        runtime = _build_otel_exporter_runtime(service_name)
+        _EXPORTER_RUNTIMES[service_name] = runtime
+        return runtime
+
+
+def _build_otel_exporter_runtime(service_name: str) -> OTelExporterRuntime:
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    provider.add_span_processor(_build_otel_span_processor())
+    return OTelExporterRuntime(provider=provider, tracer=provider.get_tracer(TRACER_NAME))
+
+
+def _build_otel_span_processor() -> object:
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    return BatchSpanProcessor(OTLPSpanExporter())
+
+
+def build_tape_trace(tape: str, entries: list[TapeEntry]) -> TapeTrace:
+    steps = [_build_step_trace(tape, step, index) for index, step in enumerate(_split_step_entries(entries), start=1)]
+    prompt_tokens, completion_tokens, total_tokens = _combined_usage(entries)
+    fields = _trace_projection_fields(tape, entries)
+    fields.update({
+        "system_prompt": _first_message_content(fields["input_messages"], "system"),
+        "prompt": _first_prompt(entries),
+        "usage_input_tokens": prompt_tokens,
+        "usage_output_tokens": completion_tokens,
+        "usage_total_tokens": total_tokens,
+        "duration_ms": _valid_duration_ms(_combined_duration_ms(entries)),
+        "steps": steps,
+    })
+    trace = TapeTrace(**fields)
     return _with_trace_attributes(trace)
 
 
+def _build_step_trace(tape: str, entries: list[TapeEntry], index: int) -> StepTrace:
+    step_data = _last_event_data(entries, "loop.step")
+    step = StepTrace(
+        **_trace_projection_fields(tape, entries),
+        step=_step_number(step_data, index),
+    )
+    return _with_step_attributes(step)
+
+
+def _trace_projection_fields(tape: str, entries: list[TapeEntry]) -> dict[str, Any]:
+    run_data = _last_event_data(entries, "run")
+    step_data = _last_event_data(entries, "loop.step")
+    messages, tool_calls = _extract_messages_and_tools(entries)
+    input_messages, output_messages = _split_input_output(messages, _first_prompt(entries), tool_calls)
+    output = _output_value(output_messages, tool_calls)
+    prompt_tokens, completion_tokens, total_tokens = _usage(run_data)
+    duration_ms = step_data.get("elapsed_ms") or run_data.get("elapsed_ms")
+    return {
+        "tape": tape,
+        "entries": entries,
+        "input_messages": input_messages,
+        "output_messages": output_messages,
+        "tool_calls": tool_calls,
+        "output": output,
+        "provider": _as_text(run_data.get("provider")),
+        "model": _as_text(run_data.get("model")),
+        "status": _as_text(step_data.get("status") or run_data.get("status")),
+        "usage_input_tokens": prompt_tokens,
+        "usage_output_tokens": completion_tokens,
+        "usage_total_tokens": total_tokens,
+        "duration_ms": _valid_duration_ms(duration_ms),
+    }
+
+
 def _with_trace_attributes(trace: TapeTrace) -> TapeTrace:
-    agent_attributes = _common_attributes(trace) | {
+    agent_attributes = _common_attributes(trace.tape, trace.entries) | {
         "openinference.span.kind": "AGENT",
         "gen_ai.operation.name": "invoke_agent",
         "input.mime_type": "application/json",
@@ -174,39 +222,78 @@ def _with_trace_attributes(trace: TapeTrace) -> TapeTrace:
     if trace.status:
         agent_attributes["bub.tape.status"] = trace.status
 
-    llm_attributes = _common_attributes(trace) | {
+    return trace.model_copy(update={"agent_attributes": agent_attributes, "llm_attributes": _llm_attributes(trace)})
+
+
+def _with_step_attributes(step: StepTrace) -> StepTrace:
+    step_attributes = _common_attributes(step.tape, step.entries) | {
+        "bub.agent.step": step.step,
+        "bub.tape.batch.entries": len(step.entries),
+    }
+    if step.status:
+        step_attributes["bub.tape.status"] = step.status
+    if step.duration_ms is not None:
+        step_attributes["bub.agent.step.duration_ms"] = step.duration_ms
+
+    return step.model_copy(update={"step_attributes": step_attributes, "llm_attributes": _llm_attributes(step)})
+
+
+def _llm_attributes(projection: TraceProjection) -> dict[str, Any]:
+    attributes = _common_attributes(projection.tape, projection.entries) | {
         "openinference.span.kind": "LLM",
         "gen_ai.operation.name": "chat",
-        "gen_ai.input.messages": _json_dumps(_otel_messages(trace.input_messages)),
-        "gen_ai.output.messages": _json_dumps(_otel_messages(trace.output_messages)),
+        "gen_ai.input.messages": _json_dumps(_otel_messages(projection.input_messages)),
+        "gen_ai.output.messages": _json_dumps(_otel_messages(projection.output_messages)),
         "input.mime_type": "application/json",
-        "input.value": _json_dumps(_message_payloads(trace.input_messages)),
+        "input.value": _json_dumps(_message_payloads(projection.input_messages)),
         "output.mime_type": "application/json",
-        "output.value": trace.output or "",
-        "gen_ai.output": trace.output or "",
+        "output.value": projection.output or "",
+        "gen_ai.output": projection.output or "",
     }
-    if trace.model:
-        llm_attributes["gen_ai.request.model"] = trace.model
-        llm_attributes["gen_ai.response.model"] = trace.model
-        llm_attributes["llm.model_name"] = trace.model
-    if trace.provider:
-        llm_attributes["gen_ai.provider.name"] = trace.provider
-        llm_attributes["llm.provider"] = trace.provider
-    if trace.usage_input_tokens is not None:
-        llm_attributes["gen_ai.usage.input_tokens"] = trace.usage_input_tokens
-        llm_attributes["llm.token_count.prompt"] = trace.usage_input_tokens
-    if trace.usage_output_tokens is not None:
-        llm_attributes["gen_ai.usage.output_tokens"] = trace.usage_output_tokens
-        llm_attributes["llm.token_count.completion"] = trace.usage_output_tokens
-    if trace.usage_total_tokens is not None:
-        llm_attributes["llm.token_count.total"] = trace.usage_total_tokens
-    if trace.duration_ms is not None:
-        llm_attributes["gen_ai.server.time_to_last_token"] = trace.duration_ms / 1000
-    llm_attributes.update(_openinference_messages("llm.input_messages", trace.input_messages))
-    llm_attributes.update(_openinference_messages("llm.output_messages", trace.output_messages))
-    llm_attributes.update(_openinference_tool_definitions(trace.tool_calls))
+    _add_model_attributes(attributes, projection)
+    _add_usage_attributes(attributes, projection)
+    if projection.duration_ms is not None:
+        attributes["gen_ai.server.time_to_last_token"] = projection.duration_ms / 1000
+    attributes.update(_openinference_messages("llm.input_messages", projection.input_messages))
+    attributes.update(_openinference_messages("llm.output_messages", projection.output_messages))
+    attributes.update(_openinference_tool_definitions(projection.tool_calls))
+    return attributes
 
-    return replace(trace, agent_attributes=agent_attributes, llm_attributes=llm_attributes)
+
+def _add_model_attributes(attributes: dict[str, Any], projection: TraceProjection) -> None:
+    if projection.model:
+        attributes["gen_ai.request.model"] = projection.model
+        attributes["gen_ai.response.model"] = projection.model
+        attributes["llm.model_name"] = projection.model
+    if projection.provider:
+        attributes["gen_ai.provider.name"] = projection.provider
+        attributes["llm.provider"] = projection.provider
+
+
+def _add_usage_attributes(attributes: dict[str, Any], projection: TraceProjection) -> None:
+    usage_attributes = {
+        "gen_ai.usage.input_tokens": projection.usage_input_tokens,
+        "llm.token_count.prompt": projection.usage_input_tokens,
+        "gen_ai.usage.output_tokens": projection.usage_output_tokens,
+        "llm.token_count.completion": projection.usage_output_tokens,
+        "llm.token_count.total": projection.usage_total_tokens,
+    }
+    attributes.update({name: value for name, value in usage_attributes.items() if value is not None})
+
+
+def _split_step_entries(entries: list[TapeEntry]) -> list[list[TapeEntry]]:
+    steps: list[list[TapeEntry]] = []
+    current: list[TapeEntry] = []
+
+    for entry in entries:
+        current.append(entry)
+        if entry.kind == "event" and _entry_name(entry) == "loop.step":
+            steps.append(current)
+            current = []
+
+    if current and not steps:
+        steps.append(current)
+    return steps
 
 
 def _extract_messages_and_tools(entries: list[TapeEntry]) -> tuple[list[TraceMessage], list[ToolCall]]:
@@ -320,20 +407,18 @@ def _attach_tool_results(tool_calls: list[ToolCall], results: list[Any]) -> list
     return updated
 
 
-def _common_attributes(trace: TapeTrace) -> dict[str, Any]:
+def _common_attributes(tape: str, entries: list[TapeEntry]) -> dict[str, Any]:
     attributes: dict[str, Any] = {
-        "bub.tape.name": trace.tape,
-        "bub.session.hash": _session_hash(trace.tape),
+        "bub.tape.name": tape,
+        "bub.session.hash": _session_hash(tape),
     }
-    if trace.entries:
-        attributes.update(
-            {
-                "bub.tape.entry.first_id": trace.entries[0].id,
-                "bub.tape.entry.last_id": trace.entries[-1].id,
-                "bub.tape.entry.first_date": trace.entries[0].date,
-                "bub.tape.entry.last_date": trace.entries[-1].date,
-            }
-        )
+    if entries:
+        attributes.update({
+            "bub.tape.entry.first_id": entries[0].id,
+            "bub.tape.entry.last_id": entries[-1].id,
+            "bub.tape.entry.first_date": entries[0].date,
+            "bub.tape.entry.last_date": entries[-1].date,
+        })
     return attributes
 
 
@@ -363,24 +448,23 @@ def _openinference_tool_definitions(tool_calls: list[ToolCall]) -> dict[str, Any
         if call.name in seen:
             continue
         seen.add(call.name)
-        attributes[f"llm.tools.{index}.tool.json_schema"] = _json_dumps(
-            {
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "parameters": {"type": "object"},
-                },
-            }
-        )
+        attributes[f"llm.tools.{index}.tool.json_schema"] = _json_dumps({
+            "type": "function",
+            "function": {
+                "name": call.name,
+                "parameters": {"type": "object"},
+            },
+        })
     return attributes
 
 
-def _tool_span_attributes(trace: TapeTrace, call: ToolCall) -> dict[str, Any]:
-    attributes = _common_attributes(trace) | {
+def _tool_span_attributes(step: StepTrace, call: ToolCall) -> dict[str, Any]:
+    attributes = _common_attributes(step.tape, step.entries) | {
         "openinference.span.kind": "TOOL",
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": call.name,
         "gen_ai.tool.args": call.arguments,
+        "bub.agent.step": step.step,
         "tool.name": call.name,
         "tool.call.id": call.id,
         "input.mime_type": "application/json",
@@ -490,6 +574,46 @@ def _usage(data: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
     )
 
 
+def _combined_usage(entries: list[TapeEntry]) -> tuple[int | None, int | None, int | None]:
+    totals = [0, 0, 0]
+    saw_usage = False
+    for entry in entries:
+        if entry.kind != "event" or _entry_name(entry) != "run":
+            continue
+        usage = _usage(_payload_data(entry))
+        if all(value is None for value in usage):
+            continue
+        saw_usage = True
+        for index, value in enumerate(usage):
+            if value is not None:
+                totals[index] += value
+    if not saw_usage:
+        return None, None, None
+    return totals[0], totals[1], totals[2]
+
+
+def _combined_duration_ms(entries: list[TapeEntry]) -> int | float | None:
+    total = 0
+    saw_duration = False
+    for entry in entries:
+        if entry.kind != "event" or _entry_name(entry) != "loop.step":
+            continue
+        elapsed_ms = _payload_data(entry).get("elapsed_ms")
+        if isinstance(elapsed_ms, (int, float)) and not isinstance(elapsed_ms, bool):
+            total += elapsed_ms
+            saw_duration = True
+    return total if saw_duration else None
+
+
+def _valid_duration_ms(value: object) -> int | float | None:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _step_number(data: dict[str, Any], fallback: int) -> int:
+    value = data.get("step")
+    return value if isinstance(value, int) and not isinstance(value, bool) else fallback
+
+
 def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -511,9 +635,18 @@ def _payload_data(entry: TapeEntry) -> dict[str, Any]:
 
 
 def _should_flush_batch(entry: TapeEntry) -> bool:
-    if entry.kind == "event" and _entry_name(entry) in {"command", "loop.step"}:
+    if entry.kind != "event":
+        return False
+    if _entry_name(entry) == "command":
         return True
-    return False
+    if _entry_name(entry) != "loop.step":
+        return False
+    return _is_terminal_step(entry)
+
+
+def _is_terminal_step(entry: TapeEntry) -> bool:
+    status = _as_text(_payload_data(entry).get("status"))
+    return status in TERMINAL_STEP_STATUSES
 
 
 def _session_hash(tape: str) -> str:
@@ -538,48 +671,48 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def _instrument_trace(trace: TapeTrace) -> None:
-    import logfire
+def _instrument_trace(trace: TapeTrace, *, tracer: Any) -> None:
     from opentelemetry.trace import SpanKind
 
-    with logfire.span(
-        "bub invoke_agent {tape}",
-        _span_name="bub.invoke_agent",
-        _span_kind=SpanKind.INTERNAL,
-        tape=trace.tape,
-        **trace.agent_attributes,
-    ):
-        llm_context = None
-        with logfire.span(
-            "bub chat {model}",
-            _span_name="bub.llm.chat",
-            _span_kind=SpanKind.CLIENT,
-            model=trace.model or "unknown",
-            **trace.llm_attributes,
-        ) as llm_span:
-            llm_context = llm_span.get_span_context()
+    with _otel_span(tracer, "bub.invoke_agent", kind=SpanKind.INTERNAL, attributes=trace.agent_attributes):
+        for step in trace.steps:
+            _instrument_step(step, tracer=tracer)
 
-        links = []
-        if llm_context is not None:
-            links.append((llm_context, {"bub.link.type": "llm_tool_call"}))
-        for call in trace.tool_calls:
-            with logfire.span(
-                "bub tool {tool}",
-                _span_name=f"bub.tool.{SAFE_NAME_RE.sub('.', call.name).strip('.') or 'call'}",
-                _span_kind=SpanKind.CLIENT,
-                _links=links,
-                tool=call.name,
-                **_tool_span_attributes(trace, call),
+
+def _instrument_step(step: StepTrace, *, tracer: Any) -> None:
+    from opentelemetry.trace import SpanKind
+
+    with _otel_span(tracer, "bub.agent.step", kind=SpanKind.INTERNAL, attributes=step.step_attributes):
+        with _otel_span(tracer, "bub.llm.chat", kind=SpanKind.CLIENT, attributes=step.llm_attributes):
+            pass
+
+        for call in step.tool_calls:
+            with _otel_span(
+                tracer,
+                f"bub.tool.{SAFE_NAME_RE.sub('.', call.name).strip('.') or 'call'}",
+                kind=SpanKind.CLIENT,
+                attributes=_tool_span_attributes(step, call),
             ):
                 pass
 
 
-def _instrument_reset(tape: str) -> None:
-    import logfire
+def _instrument_reset(tape: str, *, tracer: Any) -> None:
+    from opentelemetry.trace import SpanKind
 
-    with logfire.span(
-        "bub.tape.reset {tape}",
-        _span_name="bub.tape.reset",
-        **{"bub.tape.name": tape, "bub.session.hash": _session_hash(tape)},
+    with _otel_span(
+        tracer,
+        "bub.tape.reset",
+        kind=SpanKind.INTERNAL,
+        attributes={"bub.tape.name": tape, "bub.session.hash": _session_hash(tape)},
     ):
         pass
+
+
+@contextmanager
+def _otel_span(tracer: Any, name: str, *, kind: object, attributes: Mapping[str, Any]) -> Iterator[None]:
+    with tracer.start_as_current_span(name, kind=kind, attributes=_otel_attributes(attributes)):
+        yield
+
+
+def _otel_attributes(attributes: Mapping[str, Any]) -> dict[str, str | bool | int | float]:
+    return {name: value for name, value in attributes.items() if isinstance(value, (str, bool, int, float))}

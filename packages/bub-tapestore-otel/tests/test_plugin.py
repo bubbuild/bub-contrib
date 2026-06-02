@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import pluggy
-
 import bub_tapestore_otel.plugin as plugin
+import pluggy
 from bub.hookspecs import BUB_HOOK_NAMESPACE, BubHookSpecs, hookimpl
 from bub_tapestore_otel.plugin import OTelTapeStorePlugin, OTelTapeStoreSettings
 from bub_tapestore_otel.store import OTelTapeStore

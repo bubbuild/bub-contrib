@@ -27,6 +27,7 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
 
     assert trace.agent_attributes["openinference.span.kind"] == "AGENT"
     assert trace.agent_attributes["gen_ai.operation.name"] == "invoke_agent"
+    assert trace.agent_attributes["gen_ai.agent.name"] == "bub"
     assert trace.agent_attributes["gen_ai.provider.name"] == "openai"
     assert trace.agent_attributes["gen_ai.request.model"] == "gpt-5-mini"
     assert trace.agent_attributes["gen_ai.conversation.id"] == "chat__1"
@@ -164,8 +165,8 @@ def test_instrument_trace_nests_steps_and_tools_under_agent(monkeypatch) -> None
     _instrument_trace(trace, tracer=FakeTracer())
 
     assert spans == [
-        ("invoke_agent", None, trace.agent_attributes),
-        ("bub.agent.step", "invoke_agent", exporter._step_span_attributes(trace.steps[0])),
+        ("invoke_agent bub", None, trace.agent_attributes),
+        ("bub.agent.step", "invoke_agent bub", exporter._step_span_attributes(trace.steps[0])),
         ("chat gpt-5-mini", "bub.agent.step", trace.steps[0].llm_attributes),
         (
             "execute_tool search",

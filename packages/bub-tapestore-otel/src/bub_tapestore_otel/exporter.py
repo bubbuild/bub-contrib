@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from republic import TapeEntry
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
+DEFAULT_AGENT_NAME = "bub"
 TERMINAL_STEP_STATUSES = frozenset({"ok", "error", "failed", "cancelled"})
 TRACER_NAME = "bub_tapestore_otel"
 
@@ -22,6 +23,7 @@ class TapeProjectionModel(BaseModel):
 
 class OTelTapeExporterSettings(TapeProjectionModel):
     service_name: str = "bub"
+    agent_name: str = DEFAULT_AGENT_NAME
 
 
 class OTelExporterRuntime(TapeProjectionModel):
@@ -66,6 +68,7 @@ class StepTrace(TraceProjection):
 
 
 class TapeTrace(TraceProjection):
+    agent_name: str = DEFAULT_AGENT_NAME
     system_prompt: str | None = None
     prompt: str | None = None
     steps: list[StepTrace] = Field(default_factory=list)
@@ -106,14 +109,14 @@ class OTelTapeExporter:
         batch = self._record_entry(tape, entry)
         if batch is None:
             return
-        _instrument_trace(build_tape_trace(tape, batch), tracer=runtime.tracer)
+        _instrument_trace(build_tape_trace(tape, batch, agent_name=self._settings.agent_name), tracer=runtime.tracer)
         self._flush(runtime)
 
     def _reset(self, tape: str) -> None:
         runtime = self._ensure_exporter()
         batch = self._pop_pending(tape)
         if batch:
-            _instrument_trace(build_tape_trace(tape, batch), tracer=runtime.tracer)
+            _instrument_trace(build_tape_trace(tape, batch, agent_name=self._settings.agent_name), tracer=runtime.tracer)
         _instrument_reset(tape, tracer=runtime.tracer)
         self._flush(runtime)
 
@@ -146,11 +149,12 @@ def _build_otel_span_processor() -> object:
     return BatchSpanProcessor(OTLPSpanExporter())
 
 
-def build_tape_trace(tape: str, entries: list[TapeEntry]) -> TapeTrace:
+def build_tape_trace(tape: str, entries: list[TapeEntry], *, agent_name: str = DEFAULT_AGENT_NAME) -> TapeTrace:
     steps = [_build_step_trace(tape, step, index) for index, step in enumerate(_split_step_entries(entries), start=1)]
     prompt_tokens, completion_tokens, total_tokens = _combined_usage(entries)
     fields = _trace_projection_fields(tape, entries)
     fields.update(
+        agent_name=agent_name,
         system_prompt=_first_message_content(fields["input_messages"], "system"),
         prompt=_first_prompt(entries),
         usage_input_tokens=prompt_tokens,
@@ -200,6 +204,8 @@ def _trace_projection_fields(tape: str, entries: list[TapeEntry]) -> dict[str, A
 
 def _with_trace_attributes(trace: TapeTrace) -> TapeTrace:
     agent_attributes = _genai_span_attributes(trace, operation_name="invoke_agent")
+    if trace.agent_name:
+        agent_attributes["gen_ai.agent.name"] = trace.agent_name
     agent_attributes.update(_bub_batch_attributes(trace))
     agent_attributes.update(_openinference_span_attributes(trace, span_kind="AGENT"))
     if trace.status:
@@ -618,7 +624,7 @@ def _compact_json(value: Any) -> str:
 def _instrument_trace(trace: TapeTrace, *, tracer: Any) -> None:
     from opentelemetry.trace import SpanKind
 
-    with _otel_span(tracer, "invoke_agent", kind=SpanKind.INTERNAL, attributes=trace.agent_attributes):
+    with _otel_span(tracer, _agent_span_name(trace), kind=SpanKind.INTERNAL, attributes=trace.agent_attributes):
         for step in trace.steps:
             with _otel_span(tracer, "bub.agent.step", kind=SpanKind.INTERNAL, attributes=_step_span_attributes(step)):
                 with _otel_span(tracer, _llm_span_name(step), kind=SpanKind.CLIENT, attributes=step.llm_attributes):
@@ -636,6 +642,10 @@ def _instrument_trace(trace: TapeTrace, *, tracer: Any) -> None:
 
 def _llm_span_name(step: StepTrace) -> str:
     return f"chat {step.model}" if step.model else "chat"
+
+
+def _agent_span_name(trace: TapeTrace) -> str:
+    return f"invoke_agent {trace.agent_name}" if trace.agent_name else "invoke_agent"
 
 
 def _tool_span_name(call: ToolCall) -> str:

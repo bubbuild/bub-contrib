@@ -39,6 +39,7 @@ Plugin settings:
 | --- | --- | --- |
 | `BUB_TAPESTORE_OTEL_ENABLED` | `true` | Wrap the active tape store. |
 | `BUB_TAPESTORE_OTEL_SERVICE_NAME` | `bub` | OpenTelemetry `service.name` resource value. |
+| `BUB_TAPESTORE_OTEL_AGENT_NAME` | `bub` | OpenTelemetry `gen_ai.agent.name` value. |
 
 OTLP exporter configuration stays on the standard OpenTelemetry environment
 variables such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
@@ -59,8 +60,8 @@ semantic sources:
 
 It emits these spans:
 
-- `invoke_agent` root span with `gen_ai.operation.name=invoke_agent` and
-  `openinference.span.kind=AGENT`
+- `invoke_agent bub` root span with `gen_ai.operation.name=invoke_agent`,
+  `gen_ai.agent.name=bub`, and `openinference.span.kind=AGENT`
 - `bub.agent.step` framework span for each Bub loop turn, carrying custom
   `bub.agent.step` and `bub.agent.step.duration_ms` attributes
 - `chat <model>` child span with `gen_ai.operation.name=chat` and

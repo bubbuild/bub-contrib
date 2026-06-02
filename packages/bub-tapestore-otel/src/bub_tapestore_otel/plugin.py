@@ -26,6 +26,7 @@ class OTelTapeStoreSettings(bub.Settings):
 
     enabled: bool = Field(default=True, validation_alias="BUB_TAPESTORE_OTEL_ENABLED")
     service_name: str = Field(default="bub", validation_alias="BUB_TAPESTORE_OTEL_SERVICE_NAME")
+    agent_name: str = Field(default="bub", validation_alias="BUB_TAPESTORE_OTEL_AGENT_NAME")
 
 
 class OTelTapeStorePlugin:
@@ -45,6 +46,7 @@ class OTelTapeStorePlugin:
         exporter = OTelTapeExporter(
             OTelTapeExporterSettings(
                 service_name=settings.service_name,
+                agent_name=settings.agent_name,
             )
         )
         return _wrap_store_result(store, exporter)

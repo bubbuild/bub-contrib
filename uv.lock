@@ -662,6 +662,7 @@ version = "0.1.0"
 source = { editable = "packages/bub-pages" }
 dependencies = [
     { name = "bub" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -670,7 +671,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "bub", git = "https://github.com/bubbuild/bub.git" }]
+requires-dist = [
+    { name = "bub", git = "https://github.com/bubbuild/bub.git" },
+    { name = "uvicorn", specifier = ">=0.35.0,<1" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.3" }]

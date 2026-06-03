@@ -15,7 +15,7 @@ Use this skill when the task is to deploy or preview static pages through `bub-p
 - Do not require the user's site source code to live inside the Bub workspace, this plugin, or this repository.
 - Do not move source code into `bub-contrib` just to publish it.
 - If the site uses a framework or generator, build it wherever it already lives and register the resulting output directory.
-- For public internet exposure, prefer a production static host or reverse proxy in front of the served files. The built-in server is a simple Python static server.
+- For public internet exposure, prefer a production static host or put the Uvicorn ASGI server behind a process manager, reverse proxy, and CDN where appropriate.
 
 ## Workflow
 

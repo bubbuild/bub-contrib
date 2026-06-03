@@ -14,6 +14,7 @@ Language-agnostic static pages plugin for `bub`.
   - `publish`
   - `serve`
 - Pure Python publishing and serving with no Node, Go, Rust, or framework-specific runtime dependency
+- A framework-free ASGI static app served by Uvicorn
 
 ## Installation
 
@@ -68,8 +69,8 @@ Two minimal examples are included:
   - `/docs`
   - `/app`
   - `/`
-- The built-in server uses Python's `http.server` and is intended for local sharing, previews, and simple trusted deployments. Put it behind production-grade hosting when public internet exposure matters.
+- `serve` runs a framework-free ASGI app with Uvicorn. For production self-hosting, run it behind a process manager, reverse proxy, and CDN where appropriate.
 
 ## Design Notes
 
-`bub-pages` follows the same static-artifact boundary used by static hosting systems: publish files that browsers can load directly. GitHub Pages documents static files and custom build artifacts as the deployment unit, while OpenAI's June 2026 Codex Sites preview emphasizes shareable interactive pages and lightweight tools for workspaces. This plugin keeps that idea local and language-agnostic: any generator can produce the artifact directory, and `bub-pages` only registers, copies, and serves the result.
+`bub-pages` follows the same static-artifact boundary used by static hosting systems: publish files that browsers can load directly. GitHub Pages documents static files and custom build artifacts as the deployment unit, while OpenAI's June 2026 Codex Sites preview emphasizes shareable interactive pages and lightweight tools for workspaces. Uvicorn's ASGI model gives the plugin a clean app/server boundary without adopting a web framework. This keeps the plugin local and language-agnostic: any generator can produce the artifact directory, and `bub-pages` only registers, copies, and serves the result.

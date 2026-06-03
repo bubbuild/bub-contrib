@@ -7,7 +7,8 @@ from pathlib import Path
 import typer
 
 from bub_pages.config import PagesSettings, PagesStore, SiteConfig, normalize_site_path
-from bub_pages.publisher import PagesPublisher, serve_pages
+from bub_pages.publisher import PagesPublisher
+from bub_pages.server import serve_pages
 
 
 def make_pages_command(settings: PagesSettings | None = None) -> typer.Typer:
@@ -144,7 +145,7 @@ def make_pages_command(settings: PagesSettings | None = None) -> typer.Typer:
             False, "--publish", help="Publish all sites before serving."
         ),
     ) -> None:
-        """Serve published pages sites through Python's static file server."""
+        """Serve published pages sites with Uvicorn and the Bub Pages ASGI app."""
         if publish:
             try:
                 publisher.publish_names()

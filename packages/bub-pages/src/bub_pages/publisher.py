@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import posixpath
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlsplit
 
 from bub_pages.config import PagesSettings, PagesStore, SiteConfig
 
@@ -68,39 +65,6 @@ class PagesPublisher:
         shutil.rmtree(self.published_path(site_name), ignore_errors=True)
 
 
-def make_pages_handler(settings: PagesSettings):
-    config = PagesStore(settings).read()
-    routes = sorted(
-        (
-            (site.path, site.name, settings.pages_root / "sites" / site.name)
-            for site in config.sites.values()
-        ),
-        key=lambda item: len(item[0]),
-        reverse=True,
-    )
-
-    class PagesRequestHandler(SimpleHTTPRequestHandler):
-        def translate_path(self, path: str) -> str:
-            request_path = _clean_request_path(path)
-            for mount_path, _site_name, published_dir in routes:
-                relative_path = _relative_request_path(request_path, mount_path)
-                if relative_path is None:
-                    continue
-                return str(_safe_join(published_dir, relative_path))
-            return str(settings.pages_root / "__missing__")
-
-    return PagesRequestHandler
-
-
-def serve_pages(settings: PagesSettings, *, host: str, port: int) -> None:
-    handler = make_pages_handler(settings)
-    server = ThreadingHTTPServer((host, port), handler)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
-
-
 def _resolve_build_dir(site: SiteConfig) -> Path:
     if site.build_dir is not None:
         return site.build_dir.expanduser().resolve()
@@ -121,31 +85,3 @@ def _reject_symlinks(source: Path) -> None:
     for path in source.rglob("*"):
         if path.is_symlink():
             raise ValueError(f"pages artifacts must not contain symlinks: {path}")
-
-
-def _clean_request_path(path: str) -> str:
-    raw_path = unquote(urlsplit(path).path)
-    normalized = posixpath.normpath(raw_path)
-    if normalized == ".":
-        return "/"
-    if not normalized.startswith("/"):
-        normalized = f"/{normalized}"
-    return normalized
-
-
-def _relative_request_path(request_path: str, mount_path: str) -> str | None:
-    if mount_path == "/":
-        return request_path.removeprefix("/")
-    if request_path == mount_path:
-        return ""
-    prefix = f"{mount_path}/"
-    if request_path.startswith(prefix):
-        return request_path.removeprefix(prefix)
-    return None
-
-
-def _safe_join(root: Path, relative_path: str) -> Path:
-    parts = [
-        part for part in relative_path.split("/") if part and part not in {".", ".."}
-    ]
-    return root.joinpath(*parts)

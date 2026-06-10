@@ -50,7 +50,7 @@ Below is the list of packages currently included in this repository.
 To install an individual package, run:
 
 ```bash
-uv pip install git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/<package-name>
+bub install <package-name>@main
 ```
 
 ## Development Setup

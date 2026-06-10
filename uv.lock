@@ -29,7 +29,6 @@ members = [
     "bub-tapestore-redis",
     "bub-tapestore-sqlalchemy",
     "bub-tapestore-sqlite",
-    "bub-tg-feed",
     "bub-web-search",
     "bub-wechat",
     "bub-wecom",
@@ -46,19 +45,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/88/a0/3b96cd8374725c69bc3dae9fcc2082f3f6cafec1be35d24d7af0f8c3265f/agent_client_protocol-0.10.1.tar.gz", hash = "sha256:355c65ca19f0568344aafc2c1552b7066a8fc491df23ab28e7e253c6c9a85a25", size = 81924, upload-time = "2026-05-24T18:46:44.444Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/18/d8c7ff337cf621ea79a84006a7252ff057bfb5767549bb102cc6649f4ec2/agent_client_protocol-0.10.1-py3-none-any.whl", hash = "sha256:a03d3198f4d772f2e0ec012c00ac1cce131b4710220a3dc9fae3c991d047c750", size = 65401, upload-time = "2026-05-24T18:46:43.202Z" },
-]
-
-[[package]]
-name = "aio-pika"
-version = "9.6.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiormq" },
-    { name = "yarl" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/96/63/56354526f2e6e915c93bee6e4dedb35888fe82d6bc1a19f35f5a77e795ff/aio_pika-9.6.2.tar.gz", hash = "sha256:c49e9246080dc8ffa1bb0e4aca407bf3d8ad78c3ee3a93df88b68fe65d7a49b9", size = 70851, upload-time = "2026-03-22T19:03:20.878Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/05/256fa313f48bed075056d13593b92ce804be05d75f4f312be24edb82860a/aio_pika-9.6.2-py3-none-any.whl", hash = "sha256:2a5478af920d169795071c9c09c7542cd8cdece60438cf7804533dcbcce93b7f", size = 56269, upload-time = "2026-03-22T19:03:19.558Z" },
 ]
 
 [[package]]
@@ -165,19 +151,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/78/b7/15fb7a9d52e112a25b621c67b69c167805cb1f2ab8f1708a5c490d1b52fe/aiohttp-3.13.5-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:3b13560160d07e047a93f23aaa30718606493036253d5430887514715b67c9d9", size = 1772072, upload-time = "2026-03-31T22:00:07.494Z" },
     { url = "https://files.pythonhosted.org/packages/7e/df/57ba7f0c4a553fc2bd8b6321df236870ec6fd64a2a473a8a13d4f733214e/aiohttp-3.13.5-cp314-cp314t-win32.whl", hash = "sha256:9a0f4474b6ea6818b41f82172d799e4b3d29e22c2c520ce4357856fced9af2f8", size = 471819, upload-time = "2026-03-31T22:00:10.277Z" },
     { url = "https://files.pythonhosted.org/packages/62/29/2f8418269e46454a26171bfdd6a055d74febf32234e474930f2f60a17145/aiohttp-3.13.5-cp314-cp314t-win_amd64.whl", hash = "sha256:18a2f6c1182c51baa1d28d68fea51513cb2a76612f038853c0ad3c145423d3d9", size = 505441, upload-time = "2026-03-31T22:00:12.791Z" },
-]
-
-[[package]]
-name = "aiormq"
-version = "6.9.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pamqp" },
-    { name = "yarl" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/0e/db90154d52d399108903fe603e5110a533c42065180265dd003788264080/aiormq-6.9.4.tar.gz", hash = "sha256:0e7c01b662804e1cc7ace9a17794e8c1192a27fc2afa96162362a6e61ae8e8ef", size = 49232, upload-time = "2026-03-23T09:18:19.493Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/48/1ce3773f392f02ceda37aee168fade9d725483a9592c202d06044cd093ff/aiormq-6.9.4-py3-none-any.whl", hash = "sha256:726a8586695e863fba68cf88842065ab12348c9438dcebdfc9d0bddaf6083277", size = 32166, upload-time = "2026-03-23T09:18:17.523Z" },
 ]
 
 [[package]]
@@ -448,7 +421,6 @@ dependencies = [
     { name = "bub-tapestore-redis" },
     { name = "bub-tapestore-sqlalchemy" },
     { name = "bub-tapestore-sqlite" },
-    { name = "bub-tg-feed" },
     { name = "bub-web-search" },
     { name = "bub-wechat" },
     { name = "bub-wecom" },
@@ -484,7 +456,6 @@ requires-dist = [
     { name = "bub-tapestore-redis", editable = "packages/bub-tapestore-redis" },
     { name = "bub-tapestore-sqlalchemy", editable = "packages/bub-tapestore-sqlalchemy" },
     { name = "bub-tapestore-sqlite", editable = "packages/bub-tapestore-sqlite" },
-    { name = "bub-tg-feed", editable = "packages/bub-tg-feed" },
     { name = "bub-web-search", editable = "packages/bub-web-search" },
     { name = "bub-wechat", editable = "packages/bub-wechat" },
     { name = "bub-wecom", editable = "packages/bub-wecom" },
@@ -789,21 +760,6 @@ requires-dist = [
     { name = "any-llm-sdk" },
     { name = "republic", specifier = ">=0.5.7" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
-]
-
-[[package]]
-name = "bub-tg-feed"
-version = "0.1.0"
-source = { editable = "packages/bub-tg-feed" }
-dependencies = [
-    { name = "aio-pika" },
-    { name = "aiohttp" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aio-pika", specifier = ">=9.6.1" },
-    { name = "aiohttp", specifier = ">=3.13.3" },
 ]
 
 [[package]]
@@ -2194,15 +2150,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
-]
-
-[[package]]
-name = "pamqp"
-version = "3.3.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fb/62/35bbd3d3021e008606cd0a9532db7850c65741bbf69ac8a3a0d8cfeb7934/pamqp-3.3.0.tar.gz", hash = "sha256:40b8795bd4efcf2b0f8821c1de83d12ca16d5760f4507836267fd7a02b06763b", size = 30993, upload-time = "2024-01-12T20:37:25.085Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ac/8d/c1e93296e109a320e508e38118cf7d1fc2a4d1c2ec64de78565b3c445eb5/pamqp-3.3.0-py2.py3-none-any.whl", hash = "sha256:c901a684794157ae39b52cbf700db8c9aae7a470f13528b9d7b4e5f7202f8eb0", size = 33848, upload-time = "2024-01-12T20:37:21.359Z" },
 ]
 
 [[package]]

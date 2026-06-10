@@ -23,7 +23,6 @@ members = [
     "bub-mcp-server",
     "bub-qq",
     "bub-schedule",
-    "bub-searxng-search",
     "bub-session-prompt",
     "bub-tapestore-otel",
     "bub-tapestore-redis",
@@ -415,7 +414,6 @@ dependencies = [
     { name = "bub-mcp-server" },
     { name = "bub-qq" },
     { name = "bub-schedule" },
-    { name = "bub-searxng-search" },
     { name = "bub-session-prompt" },
     { name = "bub-tapestore-otel" },
     { name = "bub-tapestore-redis" },
@@ -450,7 +448,6 @@ requires-dist = [
     { name = "bub-mcp-server", editable = "packages/bub-mcp-server" },
     { name = "bub-qq", editable = "packages/bub-qq" },
     { name = "bub-schedule", editable = "packages/bub-schedule" },
-    { name = "bub-searxng-search", editable = "packages/bub-searxng-search" },
     { name = "bub-session-prompt", editable = "packages/bub-session-prompt" },
     { name = "bub-tapestore-otel", editable = "packages/bub-tapestore-otel" },
     { name = "bub-tapestore-redis", editable = "packages/bub-tapestore-redis" },
@@ -669,29 +666,6 @@ dev = [
 ]
 
 [[package]]
-name = "bub-searxng-search"
-version = "0.1.0"
-source = { editable = "packages/bub-searxng-search" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "pydantic-settings" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.13.3" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.3" }]
-
-[[package]]
 name = "bub-session-prompt"
 version = "0.1.0"
 source = { editable = "packages/bub-session-prompt" }
@@ -766,6 +740,26 @@ requires-dist = [
 name = "bub-web-search"
 version = "0.1.0"
 source = { editable = "packages/bub-web-search" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.10.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "bub-wechat"

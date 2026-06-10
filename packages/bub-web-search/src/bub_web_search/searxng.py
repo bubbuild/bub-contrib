@@ -2,23 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from json import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
-import bub
-from bub import tool
-from bub.tools import REGISTRY
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import SettingsConfigDict
 
-if TYPE_CHECKING:
-    from republic import Tool
+from bub_web_search.config import WebSearchSettings
 
-TOOL_NAME = "searxng.search"
-DEFAULT_TIMEOUT_SECONDS = 10
-DEFAULT_SAFE_SEARCH = 1
-DEFAULT_USER_AGENT = "bub-searxng-search/1.0"
 MAX_RESULTS_LIMIT = 10
 MAX_SNIPPET_CHARS = 280
 MAX_TITLE_CHARS = 160
@@ -62,85 +53,10 @@ class SearXNGSearchInput(BaseModel):
         return query
 
 
-@bub.config(name="searxng-search")
-class SearXNGSearchSettings(bub.Settings):
-    model_config = SettingsConfigDict(
-        env_prefix="BUB_SEARXNG_SEARCH_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    base_url: str | None = None
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
-    default_language: str | None = None
-    default_safe_search: int = DEFAULT_SAFE_SEARCH
-    user_agent: str = DEFAULT_USER_AGENT
-    auth_header: str | None = None
-    auth_value: str | None = None
-
-    @property
-    def resolved_base_url(self) -> str | None:
-        if self.base_url is None:
-            return None
-        base_url = self.base_url.strip().rstrip("/")
-        return base_url or None
-
-    @property
-    def is_configured(self) -> bool:
-        return self.resolved_base_url is not None
-
-    @property
-    def resolved_timeout_seconds(self) -> int:
-        return max(1, self.timeout_seconds)
-
-    @property
-    def resolved_default_safe_search(self) -> int:
-        if self.default_safe_search in {0, 1, 2}:
-            return self.default_safe_search
-        return DEFAULT_SAFE_SEARCH
-
-    @property
-    def resolved_user_agent(self) -> str:
-        user_agent = self.user_agent.strip()
-        return user_agent or DEFAULT_USER_AGENT
-
-    @property
-    def resolved_auth_headers(self) -> dict[str, str]:
-        if self.auth_header is None or self.auth_value is None:
-            return {}
-        header_name = self.auth_header.strip()
-        header_value = self.auth_value.strip()
-        if not header_name or not header_value:
-            return {}
-        return {header_name: header_value}
-
-
-def register_tools(
-    settings_factory: Callable[[], SearXNGSearchSettings] = lambda: bub.ensure_config(
-        SearXNGSearchSettings
-    ),
-) -> Tool | None:
-    REGISTRY.pop(TOOL_NAME, None)
-    settings = settings_factory()
-    if not settings.is_configured:
-        return None
-
-    @tool(
-        name=TOOL_NAME,
-        model=SearXNGSearchInput,
-        description="Search a configured SearXNG instance and return concise web results.",
-    )
-    async def searxng_search(param: SearXNGSearchInput) -> str:
-        return await _search(param=param, settings=settings)
-
-    return searxng_search
-
-
-async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings) -> str:
+async def search(*, param: SearXNGSearchInput, settings: WebSearchSettings) -> str:
     import aiohttp
 
-    base_url = settings.resolved_base_url
+    base_url = settings.resolved_searxng_base_url
     if base_url is None:
         return "error: searxng base url is not configured"
 
@@ -148,15 +64,17 @@ async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings)
     params = _build_request_params(param=param, settings=settings)
     headers = {
         "Accept": "application/json",
-        "User-Agent": settings.resolved_user_agent,
-        **settings.resolved_auth_headers,
+        "User-Agent": settings.resolved_searxng_user_agent,
+        **settings.resolved_searxng_auth_headers,
     }
 
     try:
         async with (
             aiohttp.ClientSession(
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=settings.resolved_timeout_seconds),
+                timeout=aiohttp.ClientTimeout(
+                    total=settings.resolved_searxng_timeout_seconds
+                ),
             ) as session,
             session.get(endpoint, params=params) as response,
         ):
@@ -169,7 +87,10 @@ async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings)
     except aiohttp.ClientError as exc:
         return f"HTTP error: {exc!s}"
     except TimeoutError:
-        return f"error: request timed out after {settings.resolved_timeout_seconds} seconds"
+        return (
+            "error: request timed out after "
+            f"{settings.resolved_searxng_timeout_seconds} seconds"
+        )
 
     try:
         payload = json.loads(body)
@@ -181,7 +102,7 @@ async def _search(*, param: SearXNGSearchInput, settings: SearXNGSearchSettings)
 
 
 def _build_request_params(
-    *, param: SearXNGSearchInput, settings: SearXNGSearchSettings
+    *, param: SearXNGSearchInput, settings: WebSearchSettings
 ) -> dict[str, str | int]:
     request_params: dict[str, str | int] = {
         "q": param.query,
@@ -189,11 +110,11 @@ def _build_request_params(
         "safesearch": (
             param.safe_search
             if param.safe_search is not None
-            else settings.resolved_default_safe_search
+            else settings.resolved_searxng_default_safe_search
         ),
     }
     if language := _clean_value(param.language) or _clean_value(
-        settings.default_language
+        settings.searxng_default_language
     ):
         request_params["language"] = language
     if categories := _join_csv(param.categories):
@@ -388,6 +309,3 @@ def _first_non_empty(*values: object) -> str:
         if cleaned := _clean_value(value):
             return cleaned
     return ""
-
-
-register_tools()

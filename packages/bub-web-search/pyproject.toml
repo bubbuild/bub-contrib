@@ -7,7 +7,11 @@ authors = [
     { name = "Frost Ming", email = "me@frostming.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "aiohttp>=3.13.3",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.10.1",
+]
 
 [project.entry-points.bub]
 web-search = "bub_web_search.tools"
@@ -15,3 +19,8 @@ web-search = "bub_web_search.tools"
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

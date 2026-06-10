@@ -1,79 +1,64 @@
-import json
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import bub
 from bub import tool
-from pydantic_settings import SettingsConfigDict
+from bub.tools import REGISTRY
 
-DEFAULT_OLLAMA_WEB_API_BASE = "https://ollama.com/api"
-WEB_USER_AGENT = "bub-web-tools/1.0"
+from bub_web_search import ollama, searxng
+from bub_web_search.config import WebSearchSettings
 
+if TYPE_CHECKING:
+    from republic import Tool
 
-@bub.config(name="web-search")
-class WebSearchSettings(bub.Settings):
-    model_config = SettingsConfigDict(
-        env_prefix="BUB_SEARCH_", extra="ignore", env_file=".env"
-    )
-
-    ollama_api_key: str | None = None
-    ollama_api_base: str = DEFAULT_OLLAMA_WEB_API_BASE
+SEARCH_TOOL_NAME = "web.search"
 
 
-settings = bub.ensure_config(WebSearchSettings)
-if settings.ollama_api_key:
+def register_tools(
+    settings_factory: Callable[[], WebSearchSettings] = lambda: bub.ensure_config(
+        WebSearchSettings
+    ),
+) -> Tool | None:
+    REGISTRY.pop(SEARCH_TOOL_NAME, None)
 
-    @tool(name="web.search")
+    settings = settings_factory()
+    provider = settings.resolved_provider
+    if provider == "ollama":
+        return _register_ollama_tool(settings)
+    elif provider == "searxng":
+        return _register_searxng_tool(settings)
+    return None
+
+
+def _register_ollama_tool(settings: WebSearchSettings) -> Tool | None:
+    if not settings.ollama_api_key:
+        return None
+
+    @tool(name=SEARCH_TOOL_NAME)
     async def web_search_ollama(query: str, max_results: int = 10) -> str:
-        """Search the web for the given query and return a list of results."""
-        import aiohttp
+        """Search the web with Ollama and return concise results."""
+        return await ollama.search(
+            query=query, max_results=max_results, settings=settings
+        )
 
-        api_key = settings.ollama_api_key
-        if not api_key:
-            return "error: ollama api key is not configured"
-
-        api_base = settings.ollama_api_base
-        if not api_base:
-            return "error: invalid ollama api base url"
-
-        endpoint = f"{api_base}/web_search"
-        payload = {"query": query, "max_results": max_results}
-        try:
-            async with (
-                aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=20)
-                ) as session,
-                session.post(
-                    endpoint,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                        "User-Agent": WEB_USER_AGENT,
-                    },
-                ) as response,
-            ):
-                data = await response.json()
-        except aiohttp.ClientError as exc:
-            return f"HTTP error: {exc!s}"
-        except json.JSONDecodeError as exc:
-            return f"error: invalid json response: {exc!s}"
-
-        results = data.get("results")
-        if not isinstance(results, list) or not results:
-            return "none"
-        return _format_search_results(results)
+    return web_search_ollama
 
 
-def _format_search_results(results: list[object]) -> str:
-    lines: list[str] = []
-    for idx, item in enumerate(results, start=1):
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("title") or "(untitled)")
-        url = str(item.get("url") or "")
-        content = str(item.get("content") or "")
-        lines.append(f"{idx}. {title}")
-        if url:
-            lines.append(f"   {url}")
-        if content:
-            lines.append(f"   {content}")
-    return "\n".join(lines) if lines else "none"
+def _register_searxng_tool(settings: WebSearchSettings) -> Tool | None:
+    if settings.resolved_searxng_base_url is None:
+        return None
+
+    @tool(
+        name=SEARCH_TOOL_NAME,
+        model=searxng.SearXNGSearchInput,
+        description="Search a configured SearXNG instance and return concise web results.",
+    )
+    async def searxng_search(param: searxng.SearXNGSearchInput) -> str:
+        return await searxng.search(param=param, settings=settings)
+
+    return searxng_search
+
+
+register_tools()

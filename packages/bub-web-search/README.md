@@ -1,12 +1,16 @@
 # bub-web-search
 
-Web search tool package for `bub`.
+Provider-selectable web search tools for `bub`.
 
-## What It Provides
+## Providers
 
-- A Bub tool named `web.search`
-- A thin wrapper around the Ollama web search HTTP API
-- Plain-text formatted search results suitable for model/tool consumption
+Set `BUB_SEARCH_PROVIDER` to enable exactly one search provider:
+
+- `ollama` registers `web.search`
+- `searxng` registers `searxng.search`
+
+If the provider is unset or its required configuration is missing, neither tool is
+registered.
 
 ## Installation
 
@@ -20,34 +24,56 @@ You can also install it with Bub:
 bub install bub-web-search@main
 ```
 
-## Required Environment Variables
+## Ollama
 
-- `BUB_SEARCH_OLLAMA_API_KEY`: API key used for Ollama web search requests
+Required:
 
-## Optional Environment Variables
+- `BUB_SEARCH_PROVIDER=ollama`
+- `BUB_SEARCH_OLLAMA_API_KEY`
 
-- `BUB_SEARCH_OLLAMA_API_BASE`: override API base URL
+Optional:
+
+- `BUB_SEARCH_OLLAMA_API_BASE`
   - Default: `https://ollama.com/api`
 
-## Runtime Behavior
+The `web.search` tool accepts `query` and `max_results`.
 
-- The package exposes a single tool: `web.search`
-- The tool sends `POST <api_base>/web_search` with:
-  - `query`
-  - `max_results`
-- Results are rendered as numbered plain text entries containing:
-  - title
-  - URL when available
-  - content snippet when available
-- If the API key is missing at import time, the tool is not registered
-- When the upstream response has no usable results, the tool returns `none`
+## SearXNG
 
-## Tool Signature
+Required:
 
-- `web.search(query: str, max_results: int = 10) -> str`
+- `BUB_SEARCH_PROVIDER=searxng`
+- `BUB_SEARCH_SEARXNG_BASE_URL`
 
-## Failure Modes
+Optional:
 
-- Network/client failures return `HTTP error: ...`
-- Invalid JSON responses return `error: invalid json response: ...`
-- Invalid runtime configuration returns an `error: ...` string
+- `BUB_SEARCH_SEARXNG_TIMEOUT_SECONDS`
+  - Default: `10`
+- `BUB_SEARCH_SEARXNG_DEFAULT_LANGUAGE`
+- `BUB_SEARCH_SEARXNG_DEFAULT_SAFE_SEARCH`
+  - `0` off, `1` moderate, `2` strict
+  - Default: `1`
+- `BUB_SEARCH_SEARXNG_USER_AGENT`
+  - Default: `bub-web-search/1.0`
+- `BUB_SEARCH_SEARXNG_AUTH_HEADER`
+- `BUB_SEARCH_SEARXNG_AUTH_VALUE`
+
+The `searxng.search` tool accepts:
+
+- `query`
+- `max_results`
+- `categories`
+- `engines`
+- `language`
+- `time_range`
+- `safe_search`
+
+The SearXNG instance must allow JSON responses from its `/search` endpoint.
+
+## Migration From bub-searxng-search
+
+Replace the package with `bub-web-search`, set
+`BUB_SEARCH_PROVIDER=searxng`, and rename the environment variables:
+
+- `BUB_SEARXNG_SEARCH_BASE_URL` to `BUB_SEARCH_SEARXNG_BASE_URL`
+- other `BUB_SEARXNG_SEARCH_*` variables to `BUB_SEARCH_SEARXNG_*`

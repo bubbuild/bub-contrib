@@ -6,8 +6,8 @@ from typing import Any
 import aiohttp
 import pytest
 
-from bub.tools import REGISTRY
-from bub_searxng_search import tools
+from bub_web_search import searxng
+from bub_web_search.config import DEFAULT_SEARXNG_USER_AGENT, WebSearchSettings
 
 
 class FakeResponse:
@@ -26,7 +26,9 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, *, response: FakeResponse, capture: dict[str, Any], **kwargs: Any) -> None:
+    def __init__(
+        self, *, response: FakeResponse, capture: dict[str, Any], **kwargs: Any
+    ) -> None:
         self._response = response
         self._capture = capture
         self._capture["session_kwargs"] = kwargs
@@ -43,27 +45,9 @@ class FakeSession:
         return self._response
 
 
-def teardown_function() -> None:
-    REGISTRY.pop(tools.TOOL_NAME, None)
-
-
-def test_register_tools_skips_unconfigured_instances() -> None:
-    tool_instance = tools.register_tools(lambda: tools.SearXNGSearchSettings(base_url=" "))
-
-    assert tool_instance is None
-    assert tools.TOOL_NAME not in REGISTRY
-
-
-def test_register_tools_adds_tool_when_base_url_exists() -> None:
-    tool_instance = tools.register_tools(lambda: tools.SearXNGSearchSettings(base_url="https://search.example.com"))
-
-    assert tool_instance is not None
-    assert REGISTRY[tools.TOOL_NAME] is tool_instance
-
-
 def test_search_input_rejects_blank_query() -> None:
     with pytest.raises(ValueError, match="query must not be blank"):
-        tools.SearXNGSearchInput(query="   ")
+        searxng.SearXNGSearchInput(query="   ")
 
 
 def test_search_formats_answers_infoboxes_and_results(monkeypatch) -> None:
@@ -99,15 +83,15 @@ def test_search_formats_answers_infoboxes_and_results(monkeypatch) -> None:
         aiohttp,
         "ClientSession",
         lambda **kwargs: FakeSession(
-            response=FakeResponse(body=tools.json.dumps(payload)),
+            response=FakeResponse(body=searxng.json.dumps(payload)),
             capture=capture,
             **kwargs,
         ),
     )
 
     result = asyncio.run(
-        tools._search(
-            param=tools.SearXNGSearchInput(
+        searxng.search(
+            param=searxng.SearXNGSearchInput(
                 query="bub",
                 max_results=1,
                 categories=["general", "news"],
@@ -116,11 +100,11 @@ def test_search_formats_answers_infoboxes_and_results(monkeypatch) -> None:
                 time_range="year",
                 safe_search=2,
             ),
-            settings=tools.SearXNGSearchSettings(
-                base_url="https://search.example.com/",
-                timeout_seconds=12,
-                auth_header="X-API-Key",
-                auth_value="secret",
+            settings=WebSearchSettings(
+                searxng_base_url="https://search.example.com/",
+                searxng_timeout_seconds=12,
+                searxng_auth_header="X-API-Key",
+                searxng_auth_value="secret",
             ),
         )
     )
@@ -136,7 +120,9 @@ def test_search_formats_answers_infoboxes_and_results(monkeypatch) -> None:
         "time_range": "year",
     }
     assert capture["session_kwargs"]["headers"]["Accept"] == "application/json"
-    assert capture["session_kwargs"]["headers"]["User-Agent"] == tools.DEFAULT_USER_AGENT
+    assert (
+        capture["session_kwargs"]["headers"]["User-Agent"] == DEFAULT_SEARXNG_USER_AGENT
+    )
     assert capture["session_kwargs"]["headers"]["X-API-Key"] == "secret"
     assert capture["session_kwargs"]["timeout"].total == 12
     assert "Answers:" in result
@@ -159,9 +145,9 @@ def test_search_returns_http_status_message(monkeypatch) -> None:
     )
 
     result = asyncio.run(
-        tools._search(
-            param=tools.SearXNGSearchInput(query="bub"),
-            settings=tools.SearXNGSearchSettings(base_url="https://search.example.com"),
+        searxng.search(
+            param=searxng.SearXNGSearchInput(query="bub"),
+            settings=WebSearchSettings(searxng_base_url="https://search.example.com"),
         )
     )
 
@@ -180,9 +166,9 @@ def test_search_returns_invalid_json_error(monkeypatch) -> None:
     )
 
     result = asyncio.run(
-        tools._search(
-            param=tools.SearXNGSearchInput(query="bub"),
-            settings=tools.SearXNGSearchSettings(base_url="https://search.example.com"),
+        searxng.search(
+            param=searxng.SearXNGSearchInput(query="bub"),
+            settings=WebSearchSettings(searxng_base_url="https://search.example.com"),
         )
     )
 

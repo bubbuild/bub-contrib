@@ -13,7 +13,7 @@ Feishu channel adapter for `bub`.
 ## Installation
 
 ```bash
-uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-feishu"
+uv pip install bub-feishu
 ```
 
 You can also install it with Bub:

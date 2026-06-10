@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      subpackage:
+        description: Package name under packages/
+        required: true
+        type: string
+      version:
+        description: PEP 440 version to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.subpackage }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.subpackage }} ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SUBPACKAGE: ${{ inputs.subpackage }}
+      VERSION: ${{ inputs.version }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+    steps:
+      - name: Validate release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Releases must run from the default branch: $DEFAULT_BRANCH"
+            exit 1
+          fi
+
+          if [[ ! "$SUBPACKAGE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Invalid subpackage name: $SUBPACKAGE"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Validate package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_file="packages/$SUBPACKAGE/pyproject.toml"
+          if [[ ! -f "$package_file" ]]; then
+            echo "::error::Subpackage does not exist: $SUBPACKAGE"
+            exit 1
+          fi
+
+          project_name="$(
+            python -c \
+              'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["name"])' \
+              "$package_file"
+          )"
+          if [[ "$project_name" != "$SUBPACKAGE" ]]; then
+            echo "::error::Directory name does not match project.name: $project_name"
+            exit 1
+          fi
+
+      - name: Set version
+        run: uv version --package "$SUBPACKAGE" --frozen "$VERSION"
+
+      - name: Build package
+        run: uv build --package "$SUBPACKAGE" --out-dir dist --clear
+
+      - name: Publish package
+        run: uv publish --trusted-publishing always dist/*

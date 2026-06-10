@@ -29,7 +29,7 @@ Settings are read from environment variables with the `BUB_MCP_SERVER_` prefix.
 ## Installation
 
 ```bash
-uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-mcp-server"
+uv pip install bub-mcp-server
 ```
 
 In this repository, the package is included in the workspace and root dependencies.

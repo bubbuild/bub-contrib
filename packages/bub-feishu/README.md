@@ -19,7 +19,7 @@ uv pip install bub-feishu
 You can also install it with Bub:
 
 ```bash
-bub install bub-feishu@main
+bub install bub-feishu
 ```
 
 ## Configuration

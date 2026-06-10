@@ -19,7 +19,7 @@ uv pip install bub-discord
 You can also install it with Bub:
 
 ```bash
-bub install bub-discord@main
+bub install bub-discord
 ```
 
 ## Configuration

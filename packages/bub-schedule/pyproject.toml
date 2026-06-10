@@ -5,6 +5,7 @@ description = "Scheduling tools for Bub"
 authors = [
     { name = "Frost Ming", email = "me@frostming.com" }
 ]
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "apscheduler>=3.11.2",

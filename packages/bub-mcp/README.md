@@ -2,6 +2,12 @@
 
 Expose configured MCP servers as Bub tools.
 
+## Installation
+
+```bash
+uv pip install bub-mcp
+```
+
 ## Configuration
 
 The plugin reads MCP server definitions from a dedicated JSON file under Bub home:

@@ -15,13 +15,13 @@ Scheduling plugin for the `bub` ecosystem.
 ## Installation
 
 ```bash
-uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-schedule"
+uv pip install bub-schedule
 ```
 
 You can also install it with Bub:
 
 ```bash
-bub install bub-schedule@main
+bub install bub-schedule
 ```
 
 ## Runtime Behavior

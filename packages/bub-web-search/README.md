@@ -15,13 +15,7 @@ registered.
 ## Installation
 
 ```bash
-uv pip install "git+https://github.com/bubbuild/bub-contrib.git#subdirectory=packages/bub-web-search"
-```
-
-You can also install it with Bub:
-
-```bash
-bub install bub-web-search@main
+bub install bub-web-search
 ```
 
 ## Ollama

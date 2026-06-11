@@ -18,6 +18,9 @@ registered.
 bub install bub-web-search
 ```
 
+Run `bub onboard` to select a provider and write its configuration
+interactively.
+
 ## Ollama
 
 Required:

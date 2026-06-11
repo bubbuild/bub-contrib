@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: pypi
+      url: https://pypi.org/project/${{ inputs.subpackage }}
     permissions:
       contents: read
       id-token: write

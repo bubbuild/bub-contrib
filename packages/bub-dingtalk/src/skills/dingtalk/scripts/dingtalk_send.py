@@ -20,6 +20,7 @@ from typing import Any
 import requests
 
 OPENAPI_BASE = "https://api.dingtalk.com"
+OAPI_BASE = "https://oapi.dingtalk.com"
 TOKEN_URL = f"{OPENAPI_BASE}/v1.0/oauth2/accessToken"
 
 
@@ -48,12 +49,84 @@ def send_message(
     msg_key: str = "sampleMarkdown",
 ) -> dict[str, Any]:
     """Send a markdown message to DingTalk."""
+    return _send_robot_message(
+        client_id,
+        client_secret,
+        chat_id,
+        msg_key,
+        {"text": content, "title": title},
+    )
+
+
+def upload_media(
+    client_id: str,
+    client_secret: str,
+    file_bytes: bytes,
+    filename: str,
+    mime_type: str = "image/png",
+) -> str:
+    """Upload an image to DingTalk and return its media_id.
+
+    Uses the legacy ``/media/upload`` endpoint (multipart/form-data, field name
+    ``media``). The returned ``media_id`` is reusable and can be passed as the
+    ``photoURL`` of a ``sampleImageMsg`` robot message. See:
+    https://open.dingtalk.com/document/orgapp/upload-media-files
+    """
+    token = get_access_token(client_id, client_secret)
+    resp = requests.post(
+        f"{OAPI_BASE}/media/upload",
+        params={"type": "image", "access_token": token},
+        files={"media": (filename, file_bytes, mime_type)},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json() if resp.text else {}
+    errcode = data.get("errcode")
+    if errcode not in (None, 0):
+        raise RuntimeError(
+            f"DingTalk media upload failed: errcode={errcode} "
+            f"errmsg={data.get('errmsg', '')}"
+        )
+    media_id = data.get("media_id")
+    if not media_id:
+        raise RuntimeError(f"DingTalk media upload returned no media_id: {data}")
+    return str(media_id)
+
+
+def send_image_message(
+    client_id: str,
+    client_secret: str,
+    chat_id: str,
+    photo_ref: str,
+) -> dict[str, Any]:
+    """Send a ``sampleImageMsg`` robot message.
+
+    ``photo_ref`` may be either a ``media_id`` returned by :func:`upload_media`
+    or a publicly reachable HTTPS URL. Local file paths are not supported here;
+    upload them first.
+    """
+    return _send_robot_message(
+        client_id,
+        client_secret,
+        chat_id,
+        "sampleImageMsg",
+        {"photoURL": photo_ref},
+    )
+
+
+def _send_robot_message(
+    client_id: str,
+    client_secret: str,
+    chat_id: str,
+    msg_key: str,
+    msg_param: dict[str, Any],
+) -> dict[str, Any]:
+    """Dispatch a robot message to either group or 1:1 based on chat_id prefix."""
     token = get_access_token(client_id, client_secret)
     headers = {
         "Content-Type": "application/json",
         "x-acs-dingtalk-access-token": token,
     }
-    msg_param = {"text": content, "title": title}
 
     if chat_id.startswith("group:"):
         url = f"{OPENAPI_BASE}/v1.0/robot/groupMessages/send"

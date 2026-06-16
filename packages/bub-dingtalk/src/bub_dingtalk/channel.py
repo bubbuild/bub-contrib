@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
+from pathlib import Path
 from typing import Any
 
 import bub
@@ -44,6 +46,54 @@ def _parse_allow_users(value: str) -> set[str]:
     if v == "*":
         return {"*"}
     return {u.strip() for u in v.split(",") if u.strip()}
+
+
+# Markdown image syntax: ![alt](target). We only act on local paths.
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
+_URL_PREFIXES = ("http://", "https://", "data:")
+
+_EXT_TO_MIME: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+
+def _mime_for_path(path: Path) -> str:
+    return _EXT_TO_MIME.get(path.suffix.lower(), "image/png")
+
+
+def _extract_local_images(content: str) -> tuple[str, list[tuple[str, Path]]]:
+    """Pull local-file image references out of markdown text.
+
+    Returns ``(stripped_content, images)`` where ``images`` is a list of
+    ``(alt_text, absolute_path)`` for each local file that exists. Markdown
+    image references pointing at http/https/data URLs, or at non-existent
+    local paths, are left intact in ``stripped_content``.
+    """
+    images: list[tuple[str, Path]] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        raw = match.group(2).strip()
+        if raw.startswith(_URL_PREFIXES):
+            return match.group(0)
+        path_str = raw[7:] if raw.startswith("file://") else raw
+        candidate = Path(path_str).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        if not candidate.is_file():
+            logger.warning("DingTalk image not found, leaving markdown: {}", candidate)
+            return match.group(0)
+        images.append((alt, candidate))
+        return ""
+
+    stripped = _MD_IMAGE_RE.sub(_replace, content)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    return stripped, images
 
 
 class DingTalkCallbackHandler(CallbackHandler):
@@ -170,13 +220,21 @@ class DingTalkChannel(Channel):
         logger.info("DingTalk channel stopped")
 
     async def send(self, message: ChannelMessage) -> None:
-        """Send message to DingTalk via skill."""
-        content = (message.content or "").strip()
+        """Send message to DingTalk via skill.
+
+        Detects local image references written as ``![alt](/abs/path.png)``
+        in the content. The text is sent first (with the markdown stripped),
+        then each local image is uploaded and sent as a ``sampleImageMsg``
+        in the order it appeared.
+        """
+        raw_content = message.content or ""
+        content, images = _extract_local_images(raw_content)
         logger.info(
-            "DingTalk send: called session_id={} chat_id={} content_len={}",
+            "DingTalk send: session_id={} chat_id={} content_len={} images={}",
             message.session_id,
             message.chat_id,
             len(content),
+            len(images),
         )
 
         chat_id = message.chat_id or ""
@@ -188,30 +246,71 @@ class DingTalkChannel(Channel):
             )
             return
 
-        if not content:
+        if not content and not images:
             logger.warning(
                 "DingTalk send: skipping empty content session_id={}",
                 message.session_id,
             )
             return
 
-        logger.info(
-            "DingTalk send: sending chat_id={} content_len={}", chat_id, len(content)
+        from skills.dingtalk.scripts.dingtalk_send import (
+            send_image_message,
+            send_message,
+            upload_media,
         )
-        try:
-            from skills.dingtalk.scripts.dingtalk_send import send_message
 
-            await asyncio.to_thread(
-                send_message,
-                self._config.client_id,
-                self._config.client_secret,
-                chat_id,
-                content,
-                title="Bub Reply",
+        if content:
+            logger.info(
+                "DingTalk send: text chat_id={} content_len={}", chat_id, len(content)
             )
-            logger.info("DingTalk send: success chat_id={}", chat_id)
-        except Exception as e:
-            logger.error("DingTalk send failed for chat_id={} error={}", chat_id, e)
+            try:
+                await asyncio.to_thread(
+                    send_message,
+                    self._config.client_id,
+                    self._config.client_secret,
+                    chat_id,
+                    content,
+                    title="Bub Reply",
+                )
+            except Exception as e:
+                logger.error(
+                    "DingTalk send text failed chat_id={} error={}", chat_id, e
+                )
+
+        for alt, image_path in images:
+            logger.info(
+                "DingTalk send: image chat_id={} path={} alt={}",
+                chat_id,
+                image_path,
+                alt,
+            )
+            try:
+                file_bytes = image_path.read_bytes()
+                media_id = await asyncio.to_thread(
+                    upload_media,
+                    self._config.client_id,
+                    self._config.client_secret,
+                    file_bytes,
+                    image_path.name,
+                    _mime_for_path(image_path),
+                )
+                await asyncio.to_thread(
+                    send_image_message,
+                    self._config.client_id,
+                    self._config.client_secret,
+                    chat_id,
+                    media_id,
+                )
+                logger.info(
+                    "DingTalk send: image ok chat_id={} path={}", chat_id, image_path
+                )
+            except Exception as e:
+                logger.error(
+                    "DingTalk send image failed chat_id={} path={} error={}",
+                    chat_id,
+                    image_path,
+                    e,
+                )
 
     async def _on_message(
         self,

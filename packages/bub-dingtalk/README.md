@@ -56,6 +56,29 @@ Inbound messages keep the original DingTalk text as plain string `content`.
 - Delegates outbound delivery to `skills.dingtalk.scripts.dingtalk_send.send_message()`.
 - Uses standard TLS verification; there is no global SSL monkey patching or per-request verification bypass.
 
+### Image Support
+
+Local image files referenced via markdown syntax in the reply content are
+detected and delivered as native DingTalk image messages:
+
+```markdown
+Here's the chart:
+![sales](/tmp/sales_report.png)
+```
+
+The channel:
+
+1. Strips the `![alt](path)` markdown from the text.
+2. Uploads each local file via `POST https://oapi.dingtalk.com/media/upload`
+   to obtain a `media_id`.
+3. Sends a `sampleImageMsg` with `photoURL = <media_id>` (works in both
+   1:1 and group chats; `media_id` is preferred over raw URLs because
+   DingTalk cannot fetch `http://ip:port` or local-network images).
+
+Supported formats: `jpg`, `gif`, `png`, `bmp` (max 20MB each). `http(s)`/`data:`
+URLs and non-existent local paths are left untouched in the text. See
+`src/skills/dingtalk/SKILL.md` for the agent-facing contract.
+
 ## Verify Inbound Flow
 
 The packaged skill resources live under `src/skills/dingtalk`.

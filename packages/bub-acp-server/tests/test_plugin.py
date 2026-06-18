@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -92,6 +93,22 @@ class NoTextFramework(FakeFramework):
         return TurnResult(session_id=inbound.session_id, prompt=inbound.content, model_output="late text")
 
 
+class ConfigFramework(FakeFramework):
+    def __init__(self) -> None:
+        super().__init__()
+        self.runtime_queries: list[tuple[str, Path]] = []
+
+    async def get_runtime_options(self, *, session_id: str, workspace: Path) -> object:
+        self.runtime_queries.append((session_id, workspace))
+        return SimpleNamespace(
+            models=[
+                SimpleNamespace(id="openai:gpt-5", name="GPT-5", description="OpenAI model"),
+                SimpleNamespace(id="anthropic:claude-sonnet-4-5", name="Claude Sonnet"),
+            ],
+            current_model="openai:gpt-5",
+        )
+
+
 @pytest.mark.asyncio
 async def test_initialize_advertises_session_capabilities() -> None:
     agent = BubACPAgent(FakeFramework())
@@ -178,6 +195,69 @@ async def test_sessions_survive_agent_restart(tmp_path: Path) -> None:
 
     assert [session.session_id for session in sessions.sessions] == [created.session_id]
     assert sessions.sessions[0].cwd == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_session_lifecycle_returns_config_options(tmp_path: Path) -> None:
+    framework = ConfigFramework()
+    client = FakeClient()
+    agent = BubACPAgent(framework)
+    agent.on_connect(client)
+
+    created = await agent.new_session(cwd=str(tmp_path))
+    loaded = await agent.load_session(cwd=str(tmp_path), session_id=created.session_id)
+    resumed = await agent.resume_session(cwd=str(tmp_path), session_id=created.session_id)
+
+    assert created.config_options is not None
+    assert created.config_options[0].id == "model"
+    assert created.config_options[0].name == "Model"
+    assert created.config_options[0].current_value == "openai:gpt-5"
+    assert created.config_options[0].options[0].value == "openai:gpt-5"
+    assert len(created.config_options) == 1
+    assert loaded.config_options is not None
+    assert loaded.config_options[0].id == "model"
+    assert resumed.config_options is not None
+    assert resumed.config_options[0].id == "model"
+    assert framework.runtime_queries == [
+        (created.session_id, tmp_path),
+        (created.session_id, tmp_path),
+        (created.session_id, tmp_path),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_set_config_option_updates_session_runtime_and_returns_config_options(tmp_path: Path) -> None:
+    framework = ConfigFramework()
+    agent = BubACPAgent(framework)
+    created = await agent.new_session(cwd=str(tmp_path))
+
+    response = await agent.set_config_option(
+        config_id="model",
+        session_id=created.session_id,
+        value="anthropic:claude-sonnet-4-5",
+    )
+
+    assert agent._sessions[created.session_id].runtime == {"model": "anthropic:claude-sonnet-4-5"}
+    assert response.config_options[0].id == "model"
+    assert response.config_options[0].current_value == "anthropic:claude-sonnet-4-5"
+
+
+@pytest.mark.asyncio
+async def test_prompt_passes_acp_runtime_selection_to_bub_message(tmp_path: Path) -> None:
+    framework = ConfigFramework()
+    client = FakeClient()
+    agent = BubACPAgent(framework)
+    agent.on_connect(client)
+    created = await agent.new_session(cwd=str(tmp_path))
+    await agent.set_config_option(
+        config_id="model",
+        session_id=created.session_id,
+        value="anthropic:claude-sonnet-4-5",
+    )
+
+    await agent.prompt([TextContentBlock(type="text", text="hello")], session_id=created.session_id)
+
+    assert framework.messages[0].runtime == {"model": "anthropic:claude-sonnet-4-5"}
 
 
 @pytest.mark.asyncio

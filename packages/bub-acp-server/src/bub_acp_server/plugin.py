@@ -42,9 +42,12 @@ from acp.schema import (
     ResourceContentBlock,
     SessionCapabilities,
     SessionCloseCapabilities,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SessionInfo,
     SessionListCapabilities,
     SessionResumeCapabilities,
+    SetSessionConfigOptionResponse,
     SseMcpServer,
     TextContentBlock,
     ToolKind,
@@ -77,6 +80,7 @@ class ACPSession:
     session_id: str
     cwd: Path
     additional_directories: list[str] = field(default_factory=list)
+    runtime: dict[str, str] = field(default_factory=dict)
     title: str | None = None
     updated_at: str | None = None
 
@@ -97,6 +101,7 @@ class ACPSession:
             "session_id": self.session_id,
             "cwd": str(self.cwd),
             "additional_directories": list(self.additional_directories),
+            "runtime": dict(self.runtime),
             "title": self.title,
             "updated_at": self.updated_at,
         }
@@ -116,10 +121,14 @@ class ACPSession:
 
         title = data.get("title")
         updated_at = data.get("updated_at")
+        runtime = data.get("runtime")
+        if not isinstance(runtime, Mapping):
+            runtime = {}
         return cls(
             session_id=session_id,
             cwd=Path(cwd).expanduser().resolve(),
             additional_directories=[str(item) for item in additional_directories if isinstance(item, str)],
+            runtime={str(key): str(value) for key, value in runtime.items() if isinstance(key, str)},
             title=title if isinstance(title, str) else None,
             updated_at=updated_at if isinstance(updated_at, str) else None,
         )
@@ -264,7 +273,10 @@ class BubACPAgent:
         session.touch()
         self._sessions[session_id] = session
         self._save_sessions()
-        return NewSessionResponse(session_id=session_id)
+        return NewSessionResponse(
+            session_id=session_id,
+            config_options=await self._session_config_options(session),
+        )
 
     async def load_session(
         self,
@@ -281,7 +293,7 @@ class BubACPAgent:
             additional_directories=additional_directories,
         )
         await self._attach_session_history(session)
-        return LoadSessionResponse()
+        return LoadSessionResponse(config_options=await self._session_config_options(session))
 
     async def resume_session(
         self,
@@ -292,12 +304,12 @@ class BubACPAgent:
         **kwargs: Any,
     ) -> ResumeSessionResponse:
         del mcp_servers, kwargs
-        self._load_or_adopt_session(
+        session = self._load_or_adopt_session(
             session_id=session_id,
             cwd=cwd,
             additional_directories=additional_directories,
         )
-        return ResumeSessionResponse()
+        return ResumeSessionResponse(config_options=await self._session_config_options(session))
 
     async def list_sessions(
         self,
@@ -320,6 +332,20 @@ class BubACPAgent:
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         del kwargs
         await self.framework.quit_via_router(session_id)
+
+    async def set_config_option(
+        self,
+        config_id: str,
+        session_id: str,
+        value: str | bool,
+        **kwargs: Any,
+    ) -> SetSessionConfigOptionResponse:
+        del kwargs
+        session = self._sessions.get(session_id) or self._adopt_session(session_id)
+        session.touch()
+        config_options = await self._set_session_runtime_option(session, config_id, value)
+        self._save_sessions()
+        return SetSessionConfigOptionResponse(config_options=config_options)
 
     async def prompt(
         self,
@@ -345,6 +371,7 @@ class BubACPAgent:
             media=media,
             context={"acp_session_id": session_id},
         )
+        setattr(inbound, "runtime", dict(session.runtime))
         if self.settings.send_user_message_updates:
             await self._send_user_message_updates(prompt, session_id)
 
@@ -464,6 +491,31 @@ class BubACPAgent:
                     result = await result
                 return list(cast(Iterable[TapeEntry], result))
         return _load_tape_entries_from_file(bub.home.expanduser() / "tapes" / f"{tape_name}.jsonl")
+
+    async def _session_config_options(self, session: ACPSession) -> list[SessionConfigOptionSelect] | None:
+        runtime_options = await _framework_runtime_options(self.framework, session)
+        acp_options = _runtime_options_to_acp_config_options(runtime_options, session)
+        return acp_options or None
+
+    async def _set_session_runtime_option(
+        self,
+        session: ACPSession,
+        config_id: str,
+        value: str | bool,
+    ) -> list[SessionConfigOptionSelect]:
+        if config_id != "model":
+            raise ValueError(f"unknown ACP config option: {config_id}")
+        if not isinstance(value, str):
+            raise ValueError(f"invalid value for ACP config option {config_id}: {value}")
+        config_options = await self._session_config_options(session)
+        selected_option = next((option for option in config_options or [] if option.id == "model"), None)
+        if selected_option is None:
+            raise ValueError(f"unknown ACP config option: {config_id}")
+        allowed_values = {option.value for option in selected_option.options}
+        if value not in allowed_values:
+            raise ValueError(f"invalid value for ACP config option {config_id}: {value}")
+        session.runtime["model"] = value
+        return await self._session_config_options(session) or []
 
     async def _send_user_message_updates(self, prompt: list[ACPPromptBlock], session_id: str) -> None:
         client = self._require_client()
@@ -617,6 +669,51 @@ def _framework_tape_store(framework: BubFramework) -> object | None:
         return None
     store = get_tape_store()
     return store if hasattr(store, "fetch_all") else None
+
+
+async def _framework_runtime_options(framework: BubFramework, session: ACPSession) -> object | None:
+    get_runtime_options = getattr(framework, "get_runtime_options", None)
+    if get_runtime_options is None:
+        return None
+    result = get_runtime_options(session_id=session.session_id, workspace=session.cwd)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def _runtime_options_to_acp_config_options(runtime_options: object | None, session: ACPSession) -> list[SessionConfigOptionSelect]:
+    if runtime_options is None:
+        return []
+    choices = _list_payload(_block_value(runtime_options, "models", []))
+    if not choices:
+        return []
+    current_model = _block_value(runtime_options, "current_model", None)
+    current_value = session.runtime.get("model") or (
+        str(current_model) if current_model is not None else str(_block_value(choices[0], "id"))
+    )
+    return [
+        SessionConfigOptionSelect(
+            type="select",
+            id="model",
+            name="Model",
+            current_value=current_value,
+            options=[_runtime_choice_to_acp_option(choice) for choice in choices],
+            category="model",
+        )
+    ]
+
+
+def _runtime_choice_to_acp_option(choice: object) -> SessionConfigSelectOption:
+    choice_id = str(_block_value(choice, "id"))
+    name = _block_value(choice, "name", None)
+    description = _block_value(choice, "description", None)
+    meta = _block_value(choice, "meta", None)
+    return SessionConfigSelectOption(
+        value=choice_id,
+        name=str(name) if name is not None else choice_id,
+        description=str(description) if description is not None else None,
+        field_meta=dict(meta) if isinstance(meta, Mapping) else None,
+    )
 
 
 def _session_tape_name(session_id: str, workspace: Path) -> str:

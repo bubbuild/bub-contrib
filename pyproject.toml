@@ -18,6 +18,7 @@ dependencies = [
     "bub-mcp-server",
     "bub-qq",
     "bub-schedule",
+    "bub-slack",
     "bub-tapestore-sqlalchemy",
     "bub-tapestore-otel",
     "bub-tapestore-redis",
@@ -47,6 +48,7 @@ bub-mcp = { workspace = true }
 bub-mcp-server = { workspace = true }
 bub-qq = { workspace = true }
 bub-schedule = { workspace = true }
+bub-slack = { workspace = true }
 bub-tapestore-sqlalchemy = { workspace = true }
 bub-tapestore-otel = { workspace = true }
 bub-tapestore-redis = { workspace = true }

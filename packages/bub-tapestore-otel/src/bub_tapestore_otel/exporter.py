@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 from republic import TapeEntry
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
@@ -48,7 +48,7 @@ class TraceMessage(TapeProjectionModel):
 
 class TraceProjection(TapeProjectionModel):
     tape: str
-    entries: list[TapeEntry]
+    entries: SkipValidation[list[TapeEntry]]
     input_messages: list[TraceMessage]
     output_messages: list[TraceMessage]
     tool_calls: list[ToolCall]

@@ -7,6 +7,32 @@ from bub_tapestore_otel.exporter import OTelTapeExporter, _instrument_trace, _sh
 from republic import TapeEntry
 
 
+def test_build_tape_trace_tolerates_tape_entry_from_different_class_identity() -> None:
+    """Regression test for issue #47: bub version drift causes pydantic ValidationError.
+
+    When bub resolves to git HEAD rather than the workspace-locked commit,
+    TapeEntry instances may fail pydantic's isinstance check against the
+    TapeEntry class captured at schema-build time.  SkipValidation on the
+    entries field must prevent that rejection regardless of class identity.
+    """
+    real_entry = TapeEntry.event("loop.step", data={"status": "ok"})
+
+    # Simulate a TapeEntry produced by a different bub version: same shape,
+    # different class object — exactly what causes the ValidationError in prod.
+    class FakeTapeEntry:
+        def __init__(self, entry: TapeEntry) -> None:
+            self.id = entry.id
+            self.kind = entry.kind
+            self.date = entry.date
+            self.payload = entry.payload
+
+    fake_entry = FakeTapeEntry(real_entry)
+
+    # Must not raise pydantic.ValidationError
+    trace = build_tape_trace("drift__1", [fake_entry])  # type: ignore[list-item]
+    assert len(trace.entries) == 1
+
+
 def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> None:
     entries = [
         TapeEntry.system("system rules"),

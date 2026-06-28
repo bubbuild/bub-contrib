@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from republic import RepublicError, TapeContext, TapeEntry, TapeQuery
+from republic import RepublicError, TapeEntry, TapeQuery
 
 from bub_tapestore_sqlite.store import SQLiteTapeStore
 
@@ -29,14 +29,12 @@ def _embedding_response(vectors: list[list[float]]) -> SimpleNamespace:
 
 
 def _mock_embedding_client(monkeypatch, fake_aembedding):
-    from bub.builtin import agent as agent_module
+    import bub_tapestore_sqlite.store as store_module
 
-    build_calls: list[TapeContext] = []
+    build_calls: list[None] = []
 
-    def fake_build_llm(settings, tape_store, tape_context):
-        del settings, tape_store
-        assert isinstance(tape_context, TapeContext)
-        build_calls.append(tape_context)
+    def fake_build_embedding_client():
+        build_calls.append(None)
         return SimpleNamespace(
             _core=SimpleNamespace(
                 get_client=lambda provider: SimpleNamespace(
@@ -45,7 +43,7 @@ def _mock_embedding_client(monkeypatch, fake_aembedding):
             )
         )
 
-    monkeypatch.setattr(agent_module, "_build_llm", fake_build_llm)
+    monkeypatch.setattr(store_module, "_build_embedding_client", fake_build_embedding_client)
     return build_calls
 
 

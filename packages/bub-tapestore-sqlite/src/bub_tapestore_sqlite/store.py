@@ -10,7 +10,7 @@ import aiosqlite
 import bub
 import sqlite_vec
 from any_llm import AnyLLM
-from republic import RepublicError, TapeContext, TapeEntry, TapeQuery
+from republic import RepublicError, TapeEntry, TapeQuery
 from republic.core.errors import ErrorKind
 
 ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
@@ -50,15 +50,8 @@ class SQLiteTapeStore:
         synchronous: str = "NORMAL",
         embedding_model: str | None = None,
     ) -> None:
-        from bub.builtin.agent import _build_llm
-        from bub.builtin.settings import AgentSettings
-
         self._path = Path(path)
-        self._llm = _build_llm(  # type: ignore[arg-type]
-            bub.ensure_config(AgentSettings),
-            self,
-            TapeContext(),
-        )
+        self._llm: Any = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._busy_timeout_ms = busy_timeout_ms
         self._journal_mode = normalize_journal_mode(journal_mode)
@@ -201,6 +194,8 @@ class SQLiteTapeStore:
         if self._embedding_model is None:
             raise RuntimeError("No embedding model configured for tape store.")
         provider, model = self._embedding_model.split(":", 1)
+        if self._llm is None:
+            self._llm = _build_embedding_client()
         llm: AnyLLM = self._llm._core.get_client(provider)
         response = await llm.aembedding(model, texts)
         return self._embedding_response_to_vectors(response)
@@ -796,3 +791,14 @@ class SQLiteTapeStore:
             raise RepublicError(
                 ErrorKind.NOT_FOUND, f"Anchor '{query._after_anchor}' was not found."
             )
+
+
+def _build_embedding_client() -> Any:
+    """Build an LLM client for embedding using public bub settings."""
+    from any_llm import AnyLLM
+    from bub.builtin.settings import AgentSettings
+
+    settings = bub.ensure_config(AgentSettings)
+    if hasattr(settings, "model_client_kwargs"):
+        return AnyLLM.create(**settings.model_client_kwargs())
+    return AnyLLM.create()

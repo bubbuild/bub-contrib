@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from republic import RepublicError, TapeEntry, TapeQuery
+from bub.runtime import BubError
+from bub.tape import TapeEntry, TapeQuery
 
 from bub_tapestore_sqlite.store import SQLiteTapeStore
 
@@ -31,17 +32,11 @@ def _embedding_response(vectors: list[list[float]]) -> SimpleNamespace:
 def _mock_embedding_client(monkeypatch, fake_aembedding):
     import bub_tapestore_sqlite.store as store_module
 
-    build_calls: list[None] = []
+    build_calls: list[str] = []
 
-    def fake_build_embedding_client():
-        build_calls.append(None)
-        return SimpleNamespace(
-            _core=SimpleNamespace(
-                get_client=lambda provider: SimpleNamespace(
-                    aembedding=fake_aembedding,
-                )
-            )
-        )
+    def fake_build_embedding_client(embedding_model: str):
+        build_calls.append(embedding_model)
+        return SimpleNamespace(aembedding=fake_aembedding)
 
     monkeypatch.setattr(store_module, "_build_embedding_client", fake_build_embedding_client)
     return build_calls
@@ -171,7 +166,7 @@ def test_query_missing_anchor_matches_existing_error_shape(tmp_path: Path) -> No
         tape = "session__3"
         await store.append(tape, TapeEntry.message({"content": "hello"}))
 
-        with pytest.raises(RepublicError, match="Anchor 'missing' was not found."):
+        with pytest.raises(BubError, match="Anchor 'missing' was not found."):
             await TapeQuery(tape, store).after_anchor("missing").all()
 
         await store.close()

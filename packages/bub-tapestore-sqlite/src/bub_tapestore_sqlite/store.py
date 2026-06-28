@@ -7,11 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
-import bub
 import sqlite_vec
 from any_llm import AnyLLM
-from republic import RepublicError, TapeEntry, TapeQuery
-from republic.core.errors import ErrorKind
+from bub.runtime import BubError, ErrorKind
+from bub.tape import TapeEntry, TapeQuery
 
 ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
 ALLOWED_SYNCHRONOUS_MODES = {"OFF", "NORMAL", "FULL", "EXTRA"}
@@ -51,7 +50,7 @@ class SQLiteTapeStore:
         embedding_model: str | None = None,
     ) -> None:
         self._path = Path(path)
-        self._llm: Any = None
+        self._embedding_client: AnyLLM | None = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._busy_timeout_ms = busy_timeout_ms
         self._journal_mode = normalize_journal_mode(journal_mode)
@@ -193,11 +192,10 @@ class SQLiteTapeStore:
     async def _compute_embedding(self, texts: list[str]) -> list[list[float]]:
         if self._embedding_model is None:
             raise RuntimeError("No embedding model configured for tape store.")
-        provider, model = self._embedding_model.split(":", 1)
-        if self._llm is None:
-            self._llm = _build_embedding_client()
-        llm: AnyLLM = self._llm._core.get_client(provider)
-        response = await llm.aembedding(model, texts)
+        if self._embedding_client is None:
+            self._embedding_client = _build_embedding_client(self._embedding_model)
+        _, model = AnyLLM.split_model_provider(self._embedding_model)
+        response = await self._embedding_client.aembedding(model, texts)
         return self._embedding_response_to_vectors(response)
 
     async def _fetch_by_semantic_query(
@@ -557,7 +555,7 @@ class SQLiteTapeStore:
                 forward=False,
             )
             if start_id is None:
-                raise RepublicError(
+                raise BubError(
                     ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
                 )
             end_id = await self._find_anchor_id(
@@ -568,7 +566,7 @@ class SQLiteTapeStore:
                 after_entry_id=start_id,
             )
             if end_id is None:
-                raise RepublicError(
+                raise BubError(
                     ErrorKind.NOT_FOUND, f"Anchor '{end_name}' was not found."
                 )
             return start_id, end_id
@@ -581,7 +579,7 @@ class SQLiteTapeStore:
                 forward=False,
             )
             if anchor_id is None:
-                raise RepublicError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
+                raise BubError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
             return anchor_id, None
 
         if query._after_anchor is not None:
@@ -592,7 +590,7 @@ class SQLiteTapeStore:
                 forward=False,
             )
             if anchor_id is None:
-                raise RepublicError(
+                raise BubError(
                     ErrorKind.NOT_FOUND,
                     f"Anchor '{query._after_anchor}' was not found.",
                 )
@@ -782,23 +780,20 @@ class SQLiteTapeStore:
     def _raise_missing_for_query(query: TapeQuery) -> None:
         if query._between_anchors is not None:
             start_name, _ = query._between_anchors
-            raise RepublicError(
+            raise BubError(
                 ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
             )
         if query._after_last:
-            raise RepublicError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
+            raise BubError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
         if query._after_anchor is not None:
-            raise RepublicError(
+            raise BubError(
                 ErrorKind.NOT_FOUND, f"Anchor '{query._after_anchor}' was not found."
             )
 
 
-def _build_embedding_client() -> Any:
-    """Build an LLM client for embedding using public bub settings."""
-    from any_llm import AnyLLM
-    from bub.builtin.settings import AgentSettings
+def _build_embedding_client(embedding_model: str) -> AnyLLM:
+    from bub.builtin.settings import load_settings
 
-    settings = bub.ensure_config(AgentSettings)
-    if hasattr(settings, "model_client_kwargs"):
-        return AnyLLM.create(**settings.model_client_kwargs())
-    return AnyLLM.create()
+    provider, _ = AnyLLM.split_model_provider(embedding_model)
+    settings = load_settings()
+    return AnyLLM.create(provider, **settings.model_client_kwargs(provider))

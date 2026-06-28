@@ -8,8 +8,8 @@ from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, SkipValidation
-from republic import TapeEntry
+from bub.tape import TapeEntry
+from pydantic import BaseModel, ConfigDict, Field
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
 DEFAULT_AGENT_NAME = "bub"
@@ -48,7 +48,7 @@ class TraceMessage(TapeProjectionModel):
 
 class TraceProjection(TapeProjectionModel):
     tape: str
-    entries: SkipValidation[list[TapeEntry]]
+    entries: list[TapeEntry]
     input_messages: list[TraceMessage]
     output_messages: list[TraceMessage]
     tool_calls: list[ToolCall]

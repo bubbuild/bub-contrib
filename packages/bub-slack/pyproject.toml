@@ -1,0 +1,28 @@
+[project]
+name = "bub-slack"
+version = "0.1.0"
+description = "Slack channel for Bub"
+readme = "README.md"
+authors = [
+    { name = "yiling" }
+]
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "slack-sdk>=3.30.0",
+    "aiohttp>=3.10.0",
+    "loguru",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+]
+
+[project.entry-points.bub]
+slack = "bub_slack.plugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["bub_slack", "skills.slack"]
+source-include = ["src/skills/slack/SKILL.md", "src/skills/slack/scripts/*.py"]

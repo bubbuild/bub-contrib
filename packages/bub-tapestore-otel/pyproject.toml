@@ -11,6 +11,7 @@ dependencies = [
     "bub",
     "opentelemetry-exporter-otlp-proto-http>=1.39.0",
     "opentelemetry-sdk>=1.39.0",
+    "republic>=0.5.7",
 ]
 
 [project.entry-points.bub]

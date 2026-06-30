@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import bub_tapestore_otel.exporter as exporter
 from bub_tapestore_otel.exporter import OTelTapeExporter, _instrument_trace, _should_flush_batch, build_tape_trace
-from bub.tape import TapeEntry
+from republic import TapeEntry
 
 
 def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> None:

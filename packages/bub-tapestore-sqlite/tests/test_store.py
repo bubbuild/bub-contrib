@@ -6,8 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from bub.runtime import BubError
-from bub.tape import TapeEntry, TapeQuery
+from republic import RepublicError, TapeEntry, TapeQuery
 
 from bub_tapestore_sqlite.store import SQLiteTapeStore
 
@@ -166,7 +165,7 @@ def test_query_missing_anchor_matches_existing_error_shape(tmp_path: Path) -> No
         tape = "session__3"
         await store.append(tape, TapeEntry.message({"content": "hello"}))
 
-        with pytest.raises(BubError, match="Anchor 'missing' was not found."):
+        with pytest.raises(RepublicError, match="Anchor 'missing' was not found."):
             await TapeQuery(tape, store).after_anchor("missing").all()
 
         await store.close()

@@ -252,7 +252,7 @@ class BubACPAgent:
                     close=SessionCloseCapabilities(),
                     list=SessionListCapabilities(),
                     resume=SessionResumeCapabilities(),
-                )
+                ),
             ),
         )
 
@@ -361,6 +361,9 @@ class BubACPAgent:
         self._save_sessions()
 
         content, media = _prompt_to_bub_content(prompt)
+        context = {"acp_session_id": session_id}
+        if model := session.runtime.get("model"):
+            context["model"] = model
         inbound = ChannelMessage(
             session_id=session_id,
             channel=self.settings.channel_name,
@@ -369,9 +372,8 @@ class BubACPAgent:
             is_active=True,
             kind="normal",
             media=media,
-            context={"acp_session_id": session_id},
+            context=context,
         )
-        setattr(inbound, "runtime", dict(session.runtime))
         if self.settings.send_user_message_updates:
             await self._send_user_message_updates(prompt, session_id)
 
@@ -672,7 +674,9 @@ def _framework_tape_store(framework: BubFramework) -> object | None:
     return store if hasattr(store, "fetch_all") else None
 
 
-def _runtime_options_to_acp_config_options(runtime_options: object, session: ACPSession) -> list[SessionConfigOptionSelect]:
+def _runtime_options_to_acp_config_options(
+    runtime_options: object, session: ACPSession
+) -> list[SessionConfigOptionSelect]:
     choices = _list_payload(_block_value(runtime_options, "models", []))
     if not choices:
         return []

@@ -250,7 +250,7 @@ async def test_set_config_option_updates_session_runtime_and_returns_config_opti
 
 
 @pytest.mark.asyncio
-async def test_prompt_passes_acp_runtime_selection_to_bub_message(tmp_path: Path) -> None:
+async def test_prompt_passes_model_selection_to_bub_context(tmp_path: Path) -> None:
     framework = ConfigFramework()
     client = FakeClient()
     agent = BubACPAgent(framework)
@@ -264,7 +264,8 @@ async def test_prompt_passes_acp_runtime_selection_to_bub_message(tmp_path: Path
 
     await agent.prompt([TextContentBlock(type="text", text="hello")], session_id=created.session_id)
 
-    assert framework.messages[0].runtime == {"model": "anthropic:claude-sonnet-4-5"}
+    assert framework.messages[0].context["model"] == "anthropic:claude-sonnet-4-5"
+    assert not hasattr(framework.messages[0], "runtime")
 
 
 @pytest.mark.asyncio

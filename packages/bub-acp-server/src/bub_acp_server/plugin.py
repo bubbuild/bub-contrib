@@ -493,7 +493,7 @@ class BubACPAgent:
         return _load_tape_entries_from_file(bub.home.expanduser() / "tapes" / f"{tape_name}.jsonl")
 
     async def _session_config_options(self, session: ACPSession) -> list[SessionConfigOptionSelect] | None:
-        runtime_options = await _framework_runtime_options(self.framework, session)
+        runtime_options = await self.framework.get_runtime_options(session_id=session.session_id, workspace=session.cwd)
         acp_options = _runtime_options_to_acp_config_options(runtime_options, session)
         return acp_options or None
 
@@ -515,7 +515,8 @@ class BubACPAgent:
         if value not in allowed_values:
             raise ValueError(f"invalid value for ACP config option {config_id}: {value}")
         session.runtime["model"] = value
-        return await self._session_config_options(session) or []
+        selected_option.current_value = value
+        return config_options or []
 
     async def _send_user_message_updates(self, prompt: list[ACPPromptBlock], session_id: str) -> None:
         client = self._require_client()
@@ -671,19 +672,7 @@ def _framework_tape_store(framework: BubFramework) -> object | None:
     return store if hasattr(store, "fetch_all") else None
 
 
-async def _framework_runtime_options(framework: BubFramework, session: ACPSession) -> object | None:
-    get_runtime_options = getattr(framework, "get_runtime_options", None)
-    if get_runtime_options is None:
-        return None
-    result = get_runtime_options(session_id=session.session_id, workspace=session.cwd)
-    if inspect.isawaitable(result):
-        result = await result
-    return result
-
-
-def _runtime_options_to_acp_config_options(runtime_options: object | None, session: ACPSession) -> list[SessionConfigOptionSelect]:
-    if runtime_options is None:
-        return []
+def _runtime_options_to_acp_config_options(runtime_options: object, session: ACPSession) -> list[SessionConfigOptionSelect]:
     choices = _list_payload(_block_value(runtime_options, "models", []))
     if not choices:
         return []

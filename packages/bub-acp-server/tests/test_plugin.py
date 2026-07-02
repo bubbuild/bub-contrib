@@ -41,6 +41,9 @@ class FakeFramework:
     async def quit_via_router(self, session_id: str) -> None:
         return None
 
+    async def get_runtime_options(self, *, session_id: str, workspace: Path) -> object:
+        return SimpleNamespace(models=[], current_model=None)
+
     async def process_inbound(self, inbound: object, stream_output: bool = False) -> TurnResult:
         self.messages.append(inbound)
         self.stream_output_values.append(stream_output)
@@ -240,6 +243,10 @@ async def test_set_config_option_updates_session_runtime_and_returns_config_opti
     assert agent._sessions[created.session_id].runtime == {"model": "anthropic:claude-sonnet-4-5"}
     assert response.config_options[0].id == "model"
     assert response.config_options[0].current_value == "anthropic:claude-sonnet-4-5"
+    assert framework.runtime_queries == [
+        (created.session_id, tmp_path),
+        (created.session_id, tmp_path),
+    ]
 
 
 @pytest.mark.asyncio

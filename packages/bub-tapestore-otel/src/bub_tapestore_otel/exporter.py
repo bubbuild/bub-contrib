@@ -9,7 +9,11 @@ from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
-from republic import TapeEntry
+
+try:  # bub >= 0.3.10 vendors the tape module as bub.tape and constructs entries from it
+    from bub.tape import TapeEntry
+except ImportError:  # older bub sources tapes from republic
+    from republic import TapeEntry
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
 DEFAULT_AGENT_NAME = "bub"
@@ -48,7 +52,10 @@ class TraceMessage(TapeProjectionModel):
 
 class TraceProjection(TapeProjectionModel):
     tape: str
-    entries: list[TapeEntry]
+    # entries are an internal payload; skip pydantic validation so the plugin
+    # survives TapeEntry class-identity drift across bub versions (republic vs
+    # bub.tape) instead of silently dropping every span on a mismatch.
+    entries: list[Any]
     input_messages: list[TraceMessage]
     output_messages: list[TraceMessage]
     tool_calls: list[ToolCall]

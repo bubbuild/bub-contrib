@@ -8,12 +8,9 @@ from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
-try:  # bub >= 0.3.10 vendors the tape module as bub.tape and constructs entries from it
-    from bub.tape import TapeEntry
-except ImportError:  # older bub sources tapes from republic
-    from republic import TapeEntry
+from bub_tapestore_otel._compat import TapeEntry
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
 DEFAULT_AGENT_NAME = "bub"
@@ -52,10 +49,9 @@ class TraceMessage(TapeProjectionModel):
 
 class TraceProjection(TapeProjectionModel):
     tape: str
-    # entries are an internal payload; skip pydantic validation so the plugin
-    # survives TapeEntry class-identity drift across bub versions (republic vs
-    # bub.tape) instead of silently dropping every span on a mismatch.
-    entries: list[Any]
+    # entries may be instances of either bub.tape's or republic's TapeEntry;
+    # validating class identity would silently drop every span on a mismatch.
+    entries: list[SkipValidation[TapeEntry]]
     input_messages: list[TraceMessage]
     output_messages: list[TraceMessage]
     tool_calls: list[ToolCall]

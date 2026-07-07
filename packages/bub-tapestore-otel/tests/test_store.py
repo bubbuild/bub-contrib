@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import pytest
+from bub_tapestore_otel._compat import TapeEntry, TapeQuery
 from bub_tapestore_otel.store import OTelTapeStore
-from republic import TapeEntry, TapeQuery
 
 
 class MemoryStore:

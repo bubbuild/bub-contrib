@@ -3,12 +3,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import bub_tapestore_otel.exporter as exporter
+from bub_tapestore_otel._compat import TapeEntry
 from bub_tapestore_otel.exporter import OTelTapeExporter, _instrument_trace, _should_flush_batch, build_tape_trace
-
-try:  # mirror the runtime import: bub >= 0.3.10 constructs entries from bub.tape
-    from bub.tape import TapeEntry
-except ImportError:
-    from republic import TapeEntry
 
 
 def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> None:
@@ -131,6 +127,25 @@ def test_build_tape_trace_falls_back_to_prompt_when_messages_are_missing() -> No
     assert trace.input_messages[0].role == "user"
     assert trace.input_messages[0].content == "plain prompt"
     assert trace.llm_attributes["llm.input_messages.0.message.content"] == "plain prompt"
+
+
+def test_build_tape_trace_accepts_entries_from_a_foreign_tape_entry_class() -> None:
+    # bub >= 0.3.10 constructs entries from bub.tape while older installs use
+    # republic's TapeEntry; validating class identity here would silently drop
+    # every span on a mismatch.
+    entry = SimpleNamespace(
+        kind="event",
+        payload={"name": "loop.step", "data": {"status": "ok", "elapsed_ms": 42}},
+        id="entry-1",
+        date="2026-07-07T00:00:00Z",
+    )
+
+    trace = build_tape_trace("drift__1", [entry])
+
+    assert trace.entries == [entry]
+    assert trace.status == "ok"
+    assert trace.duration_ms == 42
+    assert exporter._step_span_attributes(trace.steps[0])["bub.tape.entry.first_id"] == "entry-1"
 
 
 def test_batch_flushes_on_completed_tape_turn_markers() -> None:

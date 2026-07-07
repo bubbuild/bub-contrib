@@ -6,11 +6,7 @@ from typing import Protocol
 
 from loguru import logger
 
-try:  # bub >= 0.3.10 vendors the tape module as bub.tape and constructs entries from it
-    from bub.tape import AsyncTapeStore, TapeEntry, TapeQuery, TapeStore
-except ImportError:  # older bub sources tapes from republic
-    from republic import TapeEntry, TapeQuery
-    from republic.tape import AsyncTapeStore, TapeStore
+from bub_tapestore_otel._compat import AsyncTapeStore, TapeEntry, TapeQuery, TapeStore
 
 
 class TapeExporter(Protocol):

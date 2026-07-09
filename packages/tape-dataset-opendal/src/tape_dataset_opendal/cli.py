@@ -8,7 +8,7 @@ from typing import Annotated
 import opendal
 import typer
 from bub.framework import BubFramework
-from republic.tape.store import AsyncTapeStore, TapeStore, is_async_tape_store
+from bub.tape import AsyncTapeStore, TapeStore, is_async_tape_store
 
 from tape_dataset_opendal import export_dataset, export_dataset_async
 from tape_dataset_opendal.filters import EntryFilter

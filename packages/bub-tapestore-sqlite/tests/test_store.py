@@ -6,8 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from republic import RepublicError, TapeContext, TapeEntry, TapeQuery
+from bub.runtime import BubError
+from bub.tape import TapeEntry, TapeQuery
 
+from bub_tapestore_sqlite import store as store_module
 from bub_tapestore_sqlite.store import SQLiteTapeStore
 
 
@@ -29,24 +31,49 @@ def _embedding_response(vectors: list[list[float]]) -> SimpleNamespace:
 
 
 def _mock_embedding_client(monkeypatch, fake_aembedding):
-    from bub.builtin import agent as agent_module
+    build_calls: list[str] = []
 
-    build_calls: list[TapeContext] = []
-
-    def fake_build_llm(settings, tape_store, tape_context):
-        del settings, tape_store
-        assert isinstance(tape_context, TapeContext)
-        build_calls.append(tape_context)
-        return SimpleNamespace(
-            _core=SimpleNamespace(
-                get_client=lambda provider: SimpleNamespace(
-                    aembedding=fake_aembedding,
-                )
-            )
+    def fake_build_embedding_client(model: str):
+        build_calls.append(model)
+        return (
+            model.split(":", 1)[1],
+            SimpleNamespace(aembedding=fake_aembedding),
         )
 
-    monkeypatch.setattr(agent_module, "_build_llm", fake_build_llm)
+    monkeypatch.setattr(
+        store_module,
+        "_build_embedding_client",
+        fake_build_embedding_client,
+    )
     return build_calls
+
+
+def test_build_embedding_client_uses_any_llm_public_api(monkeypatch) -> None:
+    client = object()
+    calls: list[object] = []
+
+    def fake_split_model_provider(model: str):
+        calls.append(model)
+        return "openai", "text-embedding-3-small"
+
+    def fake_create(provider: object):
+        calls.append(provider)
+        return client
+
+    monkeypatch.setattr(
+        store_module.AnyLLM,
+        "split_model_provider",
+        fake_split_model_provider,
+    )
+    monkeypatch.setattr(store_module.AnyLLM, "create", fake_create)
+
+    model_id, result = store_module._build_embedding_client(
+        "openai:text-embedding-3-small"
+    )
+
+    assert model_id == "text-embedding-3-small"
+    assert result is client
+    assert calls == ["openai:text-embedding-3-small", "openai"]
 
 
 def test_append_list_and_reset_tapes(tmp_path: Path) -> None:
@@ -171,7 +198,7 @@ def test_query_missing_anchor_matches_existing_error_shape(tmp_path: Path) -> No
         tape = "session__3"
         await store.append(tape, TapeEntry.message({"content": "hello"}))
 
-        with pytest.raises(RepublicError, match="Anchor 'missing' was not found."):
+        with pytest.raises(BubError, match="Anchor 'missing' was not found."):
             await TapeQuery(tape, store).after_anchor("missing").all()
 
         await store.close()

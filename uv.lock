@@ -344,11 +344,12 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.3.9.dev6+g10fa0150a"
-source = { git = "https://github.com/bubbuild/bub.git#10fa0150a1168abfe67449380f714ac9456b3b7b" }
+version = "0.3.10.dev16+g7769cd401"
+source = { git = "https://github.com/bubbuild/bub.git#7769cd401f02feeda0d78c1748bda6d9ea1f3c57" }
 dependencies = [
     { name = "aiohttp" },
     { name = "any-llm-sdk" },
+    { name = "authlib" },
     { name = "httpx", extra = ["socks"] },
     { name = "inquirer-textual" },
     { name = "loguru" },
@@ -359,9 +360,9 @@ dependencies = [
     { name = "python-telegram-bot" },
     { name = "pyyaml" },
     { name = "rapidfuzz" },
-    { name = "republic" },
     { name = "rich" },
     { name = "typer" },
+    { name = "typing-extensions" },
 ]
 
 [[package]]
@@ -651,7 +652,6 @@ version = "0.1.0"
 source = { editable = "packages/bub-schedule" }
 dependencies = [
     { name = "apscheduler" },
-    { name = "republic" },
 ]
 
 [package.dev-dependencies]
@@ -661,10 +661,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "apscheduler", specifier = ">=3.11.2" },
-    { name = "republic", specifier = ">=0.5.6" },
-]
+requires-dist = [{ name = "apscheduler", specifier = ">=3.11.2" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -706,7 +703,6 @@ dependencies = [
     { name = "bub" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
-    { name = "republic" },
 ]
 
 [package.metadata]
@@ -714,7 +710,6 @@ requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.39.0" },
-    { name = "republic", specifier = ">=0.5.7" },
 ]
 
 [[package]]
@@ -724,14 +719,12 @@ source = { editable = "packages/bub-tapestore-redis" }
 dependencies = [
     { name = "pydantic-settings" },
     { name = "redis" },
-    { name = "republic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "pydantic-settings" },
     { name = "redis", specifier = ">=6.0.0" },
-    { name = "republic", specifier = ">=0.5.7" },
 ]
 
 [[package]]
@@ -752,7 +745,6 @@ source = { editable = "packages/bub-tapestore-sqlite" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "any-llm-sdk" },
-    { name = "republic" },
     { name = "sqlite-vec" },
 ]
 
@@ -760,7 +752,6 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "any-llm-sdk" },
-    { name = "republic", specifier = ">=0.5.7" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
 ]
 
@@ -2812,21 +2803,6 @@ wheels = [
 ]
 
 [[package]]
-name = "republic"
-version = "0.5.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "any-llm-sdk" },
-    { name = "authlib" },
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/71/4766e21bd9aff9edc806556c92f208bc14aa7d708f8f4d3941bc5ebe6115/republic-0.5.8.tar.gz", hash = "sha256:4b8a3cad45080557c7d34b49cfd2d5d24d01aaba35d27ac19a3bf510674b77e5", size = 157246, upload-time = "2026-05-10T14:54:40.281Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/9c/c453a54b8678e5cd6d6db3d8730a4fad86e7cc558d0d9cd6b046ee61013b/republic-0.5.8-py3-none-any.whl", hash = "sha256:e323881df8239fb23b4cce3f7323aee88dae257fa4a47e625090d711545919a0", size = 62805, upload-time = "2026-05-10T14:54:38.895Z" },
-]
-
-[[package]]
 name = "requests"
 version = "2.34.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3141,9 +3117,9 @@ name = "tape-dataset-opendal"
 version = "0.1.0"
 source = { editable = "packages/tape-dataset-opendal" }
 dependencies = [
+    { name = "bub" },
     { name = "cel-python" },
     { name = "opendal" },
-    { name = "republic" },
     { name = "typer" },
 ]
 
@@ -3154,9 +3130,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "cel-python" },
     { name = "opendal", specifier = ">=0.46.0" },
-    { name = "republic", specifier = ">=0.5.6" },
     { name = "typer", specifier = ">=0.24.1" },
 ]
 

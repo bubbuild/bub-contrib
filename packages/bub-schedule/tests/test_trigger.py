@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from republic import ToolContext
+from bub.tools import ToolContext
 
 from bub_schedule import tools
 

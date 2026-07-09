@@ -18,7 +18,7 @@ from bub_web_search.config import (
 )
 
 if TYPE_CHECKING:
-    from republic import Tool
+    from bub.tools import Tool
 
 SEARCH_TOOL_NAME = "web.search"
 CONFIG_NAME = "web-search"

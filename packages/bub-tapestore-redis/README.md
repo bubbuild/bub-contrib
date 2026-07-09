@@ -7,7 +7,7 @@ Redis-backed async tape store plugin for `bub`.
 - Bub plugin entry point: `tapestore-redis`
 - A `provide_tape_store` hook implementation backed by Redis
 - Exported `RedisTapeStore` class for direct use
-- Query behavior aligned with `republic` tape queries
+- Query behavior aligned with Bub tape queries
 
 ## Installation
 
@@ -33,6 +33,7 @@ The plugin reads environment variables with prefix `BUB_TAPESTORE_REDIS_`:
     - TLS: `rediss://username:password@host:6379/0`
 - `BUB_TAPESTORE_REDIS_KEY_PREFIX` (optional)
   - Default: `republic:tape`
+  - The legacy default is retained to preserve existing Redis data.
 
 If the password contains reserved URL characters such as `@`, `:`, or `/`, it
 must be URL-encoded before putting it in `BUB_TAPESTORE_REDIS_URL`.
@@ -42,7 +43,7 @@ must be URL-encoded before putting it in `BUB_TAPESTORE_REDIS_URL`.
 - The plugin overrides Bub's builtin file-based tape store through `provide_tape_store`.
 - The store keeps per-tape entry IDs monotonic with Redis-side atomic allocation.
 - Anchor queries use a Redis sorted set so `after_anchor`, `last_anchor`, and
-  `between_anchors` stay consistent with Bub/Republic expectations.
+  `between_anchors` stay consistent with Bub expectations.
 - The package exposes an async `RedisTapeStore` for non-plugin usage.
 
 ## Redis Notes

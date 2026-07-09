@@ -1,6 +1,6 @@
 # tape-dataset-opendal
 
-`tape-dataset-opendal` exports standard Republic/Bub tapes to a backend-agnostic dataset layout through Apache OpenDAL.
+`tape-dataset-opendal` exports standard Bub tapes to a backend-agnostic dataset layout through Apache OpenDAL.
 
 The package is intentionally narrow:
 
@@ -89,8 +89,7 @@ Useful flags:
 
 ```python
 from opendal import Operator
-from republic.tape import InMemoryTapeStore
-from republic.tape.entries import TapeEntry
+from bub.tape import InMemoryTapeStore, TapeEntry
 
 from tape_dataset_opendal import ExportableTapeStore
 
@@ -111,8 +110,7 @@ print(report.manifest_path)
 import asyncio
 
 import opendal
-from republic.tape.entries import TapeEntry
-from republic.tape.store import AsyncTapeStoreAdapter, InMemoryTapeStore
+from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
 
 from tape_dataset_opendal import AsyncExportableTapeStore
 

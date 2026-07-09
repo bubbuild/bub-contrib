@@ -6,8 +6,8 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from bub.envelope import normalize_envelope
-from republic import StreamEvent, TapeEntry
-from republic.tape.entries import utc_now
+from bub.runtime import StreamEvent
+from bub.tape import TapeEntry, utc_now
 
 BUB_EXTISM_ABI_VERSION = "bub.extism.v1"
 _SKIP_JSON_VALUE = object()

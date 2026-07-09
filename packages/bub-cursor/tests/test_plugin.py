@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from bub.runtime import AsyncStreamEvents, StreamEvent
 from typer.testing import CliRunner
 
 from bub.builtin.auth import app as auth_app
@@ -16,15 +17,20 @@ class FakeAgent:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, object]]] = []
 
-    async def run(
+    async def run_stream(
         self,
         *,
         session_id: str,
         prompt: str,
         state: dict[str, object],
-    ) -> str:
+    ) -> AsyncStreamEvents:
         self.calls.append((session_id, prompt, state))
-        return "internal-command-result"
+
+        async def events():
+            yield StreamEvent("text", {"delta": "internal-command"})
+            yield StreamEvent("text", {"delta": "-result"})
+
+        return AsyncStreamEvents(events())
 
 
 async def _async_noop() -> None:

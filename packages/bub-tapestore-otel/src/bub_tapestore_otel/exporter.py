@@ -9,7 +9,7 @@ from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
-from republic import TapeEntry
+from bub.tape import TapeEntry
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
 DEFAULT_AGENT_NAME = "bub"

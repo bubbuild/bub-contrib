@@ -3,15 +3,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from opendal import AsyncOperator, Operator
-from republic.tape.entries import TapeEntry
-from republic.tape.query import TapeQuery
-from republic.tape.store import (
+from bub.tape import (
     AsyncTapeStore,
     AsyncTapeStoreAdapter,
+    TapeEntry,
+    TapeQuery,
     TapeStore,
     is_async_tape_store,
 )
+from opendal import AsyncOperator, Operator
 
 from tape_dataset_opendal.exporter import export_dataset, export_dataset_async
 from tape_dataset_opendal.filters import EntryFilter

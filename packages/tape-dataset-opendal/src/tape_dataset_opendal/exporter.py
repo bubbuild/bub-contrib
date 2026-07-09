@@ -7,15 +7,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
 
-from opendal import AsyncOperator, Operator
-from republic.tape.entries import TapeEntry
-from republic.tape.query import TapeQuery
-from republic.tape.store import (
+from bub.tape import (
     AsyncTapeStore,
     AsyncTapeStoreAdapter,
+    TapeEntry,
+    TapeQuery,
     TapeStore,
     is_async_tape_store,
 )
+from opendal import AsyncOperator, Operator
 
 from tape_dataset_opendal.filters import EntryFilter
 from tape_dataset_opendal.models import ExportLayout, ExportReport, utc_now

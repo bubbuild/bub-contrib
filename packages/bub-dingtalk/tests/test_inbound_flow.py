@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 from bub import configure
 from bub.channels.message import ChannelMessage
@@ -49,14 +48,11 @@ def test_dingtalk_inbound_message_format() -> None:
 
 
 def _stub_run_model(framework: BubFramework, output: str = "stub reply") -> None:
-    original_call_first = framework._hook_runtime.call_first
+    async def run_model(*args, **kwargs) -> str:
+        del args, kwargs
+        return output
 
-    async def call_first(hook_name: str, **kwargs: Any) -> Any:
-        if hook_name == "run_model":
-            return output
-        return await original_call_first(hook_name, **kwargs)
-
-    framework._hook_runtime.call_first = call_first  # type: ignore[method-assign]
+    framework._hook_runtime.run_model = run_model  # type: ignore[method-assign]
 
 
 def test_dingtalk_inbound_reaches_agent(tmp_path: Path, monkeypatch) -> None:

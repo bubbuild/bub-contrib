@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 import pytest
 from bub_tapestore_otel.store import OTelTapeStore
-from republic import TapeEntry, TapeQuery
+from bub.tape import TapeEntry, TapeQuery
 
 
 class MemoryStore:

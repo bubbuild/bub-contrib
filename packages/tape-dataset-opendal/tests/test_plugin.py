@@ -5,8 +5,7 @@ from pathlib import Path
 
 from bub import hookimpl
 from bub.framework import BubFramework
-from republic.tape.entries import TapeEntry
-from republic.tape.store import InMemoryTapeStore
+from bub.tape import InMemoryTapeStore, TapeEntry
 from typer.testing import CliRunner
 
 import tape_dataset_opendal.plugin as plugin

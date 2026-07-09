@@ -131,8 +131,14 @@ def _encode_json_value(value: Any) -> Any:
         return value
     if isinstance(value, Mapping):
         return mapping_to_json({str(key): item for key, item in value.items()})
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray | memoryview):
-        return [encoded for item in value if (encoded := _encode_or_skip(item)) is not _SKIP_JSON_VALUE]
+    if isinstance(value, Sequence) and not isinstance(
+        value, str | bytes | bytearray | memoryview
+    ):
+        return [
+            encoded
+            for item in value
+            if (encoded := _encode_or_skip(item)) is not _SKIP_JSON_VALUE
+        ]
     if isinstance(value, StreamEvent):
         return {
             "kind": value.kind,

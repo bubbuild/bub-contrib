@@ -15,7 +15,9 @@ from typing import Any
 from feishu_utils import get_tenant_access_token, request_json
 
 
-def edit_text_message(app_id: str, app_secret: str, message_id: str, text: str) -> dict[str, Any]:
+def edit_text_message(
+    app_id: str, app_secret: str, message_id: str, text: str
+) -> dict[str, Any]:
     token = get_tenant_access_token(app_id, app_secret)
     return request_json(
         "PATCH",
@@ -25,7 +27,9 @@ def edit_text_message(app_id: str, app_secret: str, message_id: str, text: str) 
     )
 
 
-def edit_message(app_id: str, app_secret: str, message_id: str, text: str) -> dict[str, Any]:
+def edit_message(
+    app_id: str, app_secret: str, message_id: str, text: str
+) -> dict[str, Any]:
     return edit_text_message(app_id, app_secret, message_id, text)
 
 

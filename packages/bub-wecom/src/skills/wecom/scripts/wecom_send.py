@@ -40,7 +40,11 @@ def _prepare_auth_waiter(client: WSClient) -> tuple[asyncio.Event, list[BaseExce
         authenticated.set()
 
     def on_disconnected(reason: str) -> None:
-        errors.append(RuntimeError(f"WeCom websocket disconnected before authentication: {reason}"))
+        errors.append(
+            RuntimeError(
+                f"WeCom websocket disconnected before authentication: {reason}"
+            )
+        )
         authenticated.set()
 
     _register_handler(client, "authenticated", on_authenticated)

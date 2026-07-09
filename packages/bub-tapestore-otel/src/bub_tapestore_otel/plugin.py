@@ -25,8 +25,12 @@ class OTelTapeStoreSettings(bub.Settings):
     )
 
     enabled: bool = Field(default=True, validation_alias="BUB_TAPESTORE_OTEL_ENABLED")
-    service_name: str = Field(default="bub", validation_alias="BUB_TAPESTORE_OTEL_SERVICE_NAME")
-    agent_name: str = Field(default="bub", validation_alias="BUB_TAPESTORE_OTEL_AGENT_NAME")
+    service_name: str = Field(
+        default="bub", validation_alias="BUB_TAPESTORE_OTEL_SERVICE_NAME"
+    )
+    agent_name: str = Field(
+        default="bub", validation_alias="BUB_TAPESTORE_OTEL_AGENT_NAME"
+    )
 
 
 class OTelTapeStorePlugin:

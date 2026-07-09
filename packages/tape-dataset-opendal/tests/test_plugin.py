@@ -26,7 +26,9 @@ def test_plugin_registers_bub_cli_export_command(tmp_path: Path) -> None:
 
     store = InMemoryTapeStore()
     store.append("ops__1", TapeEntry.anchor("triage"))
-    store.append("ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"}))
+    store.append(
+        "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
+    )
 
     framework._plugin_manager.register(_StorePlugin(store), name="test-store")
     framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
@@ -60,8 +62,12 @@ def test_plugin_cli_accepts_cel_filter_file(tmp_path: Path) -> None:
 
     store = InMemoryTapeStore()
     store.append("ops__1", TapeEntry.anchor("triage"))
-    store.append("ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"}))
-    store.append("ops__1", TapeEntry.message({"role": "assistant", "content": "Ignore me"}))
+    store.append(
+        "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
+    )
+    store.append(
+        "ops__1", TapeEntry.message({"role": "assistant", "content": "Ignore me"})
+    )
 
     filter_file = tmp_path / "filters.cel"
     filter_file.write_text(
@@ -93,10 +99,14 @@ def test_plugin_cli_accepts_cel_filter_file(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    manifest = json.loads((tmp_path / "dataset-filtered" / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (tmp_path / "dataset-filtered" / "manifest.json").read_text(encoding="utf-8")
+    )
     entries = [
         json.loads(line)
-        for line in (tmp_path / "dataset-filtered" / "entries.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / "dataset-filtered" / "entries.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     assert payload["entry_count"] == 1

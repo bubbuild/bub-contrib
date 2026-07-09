@@ -110,6 +110,7 @@ def test_runtime_registers_configured_hook_adapters(tmp_path: Path) -> None:
     assert report["build_prompt"] == ["extism:prompt"]
     assert report["run_model"] == ["extism:model"]
 
+
 def test_run_model_calls_configured_export_with_unified_request(
     tmp_path: Path,
 ) -> None:
@@ -567,4 +568,6 @@ def test_channel_proxy_rejects_invalid_wrapper_shape(tmp_path: Path) -> None:
         del message
 
     with pytest.raises(RuntimeError, match="list of channel descriptors"):
-        _runtime(config_path).call_many_sync("provide_channels", message_handler=handler)
+        _runtime(config_path).call_many_sync(
+            "provide_channels", message_handler=handler
+        )

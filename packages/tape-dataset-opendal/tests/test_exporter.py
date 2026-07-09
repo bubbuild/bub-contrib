@@ -33,7 +33,9 @@ def test_sync_wrapper_delegates_standard_tape_store_contract() -> None:
     store = ExportableTapeStore(inner)
 
     store.append("ops__1", TapeEntry.anchor("triage"))
-    store.append("ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"}))
+    store.append(
+        "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
+    )
 
     assert store.list_tapes() == ["ops__1"]
     entries = list(store.fetch_all(TapeQuery("ops__1", store)))
@@ -47,10 +49,17 @@ def test_sync_wrapper_delegates_standard_tape_store_contract() -> None:
 def test_sync_export_writes_manifest_entries_segments_and_raw_files(tmp_path) -> None:
     inner = InMemoryTapeStore()
     inner.append("ops__1", TapeEntry.anchor("triage", {"owner": "db"}))
-    inner.append("ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"}))
-    inner.append("ops__1", TapeEntry.message({"role": "assistant", "content": "Check pool saturation"}))
+    inner.append(
+        "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
+    )
+    inner.append(
+        "ops__1",
+        TapeEntry.message({"role": "assistant", "content": "Check pool saturation"}),
+    )
     inner.append("chat__2", TapeEntry.system("boot"))
-    inner.append("chat__2", TapeEntry.message({"role": "assistant", "content": "hello"}))
+    inner.append(
+        "chat__2", TapeEntry.message({"role": "assistant", "content": "hello"})
+    )
 
     store = ExportableTapeStore(inner)
     operator = opendal.Operator("fs", root=str(tmp_path))
@@ -81,11 +90,15 @@ def test_async_export_supports_async_tape_store_and_async_operator(tmp_path) -> 
         store = AsyncExportableTapeStore(inner)
 
         await store.append("agent__1", TapeEntry.anchor("task"))
-        await store.append("agent__1", TapeEntry.tool_call([{"id": "call_1", "name": "search"}]))
+        await store.append(
+            "agent__1", TapeEntry.tool_call([{"id": "call_1", "name": "search"}])
+        )
         await store.append("agent__1", TapeEntry.tool_result([{"ok": True}]))
 
         operator = opendal.AsyncOperator("fs", root=str(tmp_path))
-        report = await store.export_dataset_async(operator, layout=ExportLayout(root="dataset"))
+        report = await store.export_dataset_async(
+            operator, layout=ExportLayout(root="dataset")
+        )
 
         entries = list(await TapeQuery("agent__1", inner).all())
         manifest = _read_json(tmp_path / "dataset" / "manifest.json")
@@ -133,9 +146,16 @@ def test_async_export_supports_async_tape_store_and_async_operator(tmp_path) -> 
 def test_export_supports_cel_entry_filter_and_records_it_in_manifest(tmp_path) -> None:
     inner = InMemoryTapeStore()
     inner.append("ops__1", TapeEntry.anchor("triage", {"owner": "db"}))
-    inner.append("ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"}))
-    inner.append("ops__1", TapeEntry.message({"role": "assistant", "content": "Check pool saturation"}))
-    inner.append("chat__2", TapeEntry.message({"role": "assistant", "content": "hello"}))
+    inner.append(
+        "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
+    )
+    inner.append(
+        "ops__1",
+        TapeEntry.message({"role": "assistant", "content": "Check pool saturation"}),
+    )
+    inner.append(
+        "chat__2", TapeEntry.message({"role": "assistant", "content": "hello"})
+    )
 
     store = ExportableTapeStore(inner)
     operator = opendal.Operator("fs", root=str(tmp_path))
@@ -158,7 +178,13 @@ def test_export_supports_cel_entry_filter_and_records_it_in_manifest(tmp_path) -
     assert report.tape_count == 2
     assert report.entry_count == 2
     assert report.segment_count == 2
-    assert manifest["filters"] == ['kind == "message"', 'payload.role == "user" || text.contains("hello")']
+    assert manifest["filters"] == [
+        'kind == "message"',
+        'payload.role == "user" || text.contains("hello")',
+    ]
     assert [row["tape"] for row in tape_rows] == ["chat__2", "ops__1"]
-    assert [row["entry"]["payload"]["content"] for row in entry_rows] == ["hello", "Database timeout"]
+    assert [row["entry"]["payload"]["content"] for row in entry_rows] == [
+        "hello",
+        "Database timeout",
+    ]
     assert len(raw_files) == 2

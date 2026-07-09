@@ -1,2 +1,1 @@
 """Bub MCP plugin package."""
-

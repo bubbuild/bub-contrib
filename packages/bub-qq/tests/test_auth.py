@@ -74,12 +74,16 @@ class FakeTokenClient:
                 f"qq token request failed: http={response.status} reason={response.reason}"
             )
         if not isinstance(response.payload, dict):
-            raise RuntimeError(f"qq token response is not a JSON object: {response.payload!r}")
+            raise RuntimeError(
+                f"qq token response is not a JSON object: {response.payload!r}"
+            )
         return response.payload
 
 
 class FakeOpenAPIClient:
-    def __init__(self, handler: Callable[[OpenAPIRequest], Awaitable[FakeResponse]]) -> None:
+    def __init__(
+        self, handler: Callable[[OpenAPIRequest], Awaitable[FakeResponse]]
+    ) -> None:
         self._handler = handler
 
     async def request(

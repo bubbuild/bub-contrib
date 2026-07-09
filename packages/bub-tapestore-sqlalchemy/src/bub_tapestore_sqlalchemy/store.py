@@ -7,7 +7,17 @@ from dataclasses import replace
 
 from republic import TapeEntry, TapeQuery
 from republic.tape import InMemoryQueryMixin
-from sqlalchemy import Engine, Text, cast, create_engine, event, func, inspect, select, update
+from sqlalchemy import (
+    Engine,
+    Text,
+    cast,
+    create_engine,
+    event,
+    func,
+    inspect,
+    select,
+    update,
+)
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError, IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -83,7 +93,9 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
         entry_by_id = {entry.id: entry for entry in entries}
         filtered = [
             entry_by_id[entry_id]
-            for entry_id in self._matched_entry_ids(normalized_query.tape, normalized_query._query)
+            for entry_id in self._matched_entry_ids(
+                normalized_query.tape, normalized_query._query
+            )
             if entry_id in entry_by_id
         ]
         if normalized_query._limit is not None:
@@ -138,7 +150,9 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
             raise ValueError(f"Invalid SQLAlchemy URL: {url}") from exc
 
     @staticmethod
-    def _build_connect_args(url: URL, overrides: dict[str, object]) -> dict[str, object]:
+    def _build_connect_args(
+        url: URL, overrides: dict[str, object]
+    ) -> dict[str, object]:
         defaults: dict[str, object] = {}
         if url.get_backend_name() == "sqlite":
             defaults["check_same_thread"] = False
@@ -170,8 +184,16 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
         if "tapes" not in table_names or "tape_entries" not in table_names:
             raise RuntimeError("SQLAlchemy tape store schema is incomplete.")
         tape_columns = {column["name"] for column in inspector.get_columns("tapes")}
-        entry_columns = {column["name"] for column in inspector.get_columns("tape_entries")}
-        required_tape_columns = {"id", "name", "name_key", "last_entry_id", "created_at"}
+        entry_columns = {
+            column["name"] for column in inspector.get_columns("tape_entries")
+        }
+        required_tape_columns = {
+            "id",
+            "name",
+            "name_key",
+            "last_entry_id",
+            "created_at",
+        }
         required_entry_columns = {
             "tape_id",
             "entry_id",
@@ -231,7 +253,11 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
             statement = (
                 select(TapeEntryRecord.entry_id)
                 .where(TapeEntryRecord.tape_id == tape_id)
-                .where(func.lower(cast(TapeEntryRecord.payload, Text)).like(pattern, escape="\\"))
+                .where(
+                    func.lower(cast(TapeEntryRecord.payload, Text)).like(
+                        pattern, escape="\\"
+                    )
+                )
                 .order_by(TapeEntryRecord.entry_id.desc())
             )
             return list(session.scalars(statement).all())
@@ -318,4 +344,6 @@ class SQLAlchemyTapeStore(InMemoryQueryMixin):
                 .with_for_update()
             )
             if current_entry_id is None:
-                raise RuntimeError(f"Failed to allocate entry id for tape '{tape_record.name}'.")
+                raise RuntimeError(
+                    f"Failed to allocate entry id for tape '{tape_record.name}'."
+                )

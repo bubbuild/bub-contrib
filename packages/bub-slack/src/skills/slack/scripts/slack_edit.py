@@ -44,7 +44,10 @@ def edit_message(
     req = urllib.request.Request(  # noqa: S310 — Slack HTTPS endpoint is fixed
         SLACK_API,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
@@ -52,18 +55,39 @@ def edit_message(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Edit an existing Slack bot message via the Web API.")
-    parser.add_argument("--channel-id", "-c", required=True, help="Channel ID of the message to edit.")
-    parser.add_argument("--ts", required=True, help="Timestamp (ts) of the message to edit.")
-    parser.add_argument("--text", "-m", required=True, help='New message text (mrkdwn supported), or "-" to read from stdin.')
-    parser.add_argument("--blocks-file", "-b", help="Path to a JSON file with a Block Kit `blocks` array.")
-    parser.add_argument("--token", help="Bot token (defaults to BUB_SLACK_BOT_TOKEN env var).")
-    parser.add_argument("--plain", action="store_true", help="Disable mrkdwn formatting.")
+    parser = argparse.ArgumentParser(
+        description="Edit an existing Slack bot message via the Web API."
+    )
+    parser.add_argument(
+        "--channel-id", "-c", required=True, help="Channel ID of the message to edit."
+    )
+    parser.add_argument(
+        "--ts", required=True, help="Timestamp (ts) of the message to edit."
+    )
+    parser.add_argument(
+        "--text",
+        "-m",
+        required=True,
+        help='New message text (mrkdwn supported), or "-" to read from stdin.',
+    )
+    parser.add_argument(
+        "--blocks-file",
+        "-b",
+        help="Path to a JSON file with a Block Kit `blocks` array.",
+    )
+    parser.add_argument(
+        "--token", help="Bot token (defaults to BUB_SLACK_BOT_TOKEN env var)."
+    )
+    parser.add_argument(
+        "--plain", action="store_true", help="Disable mrkdwn formatting."
+    )
     args = parser.parse_args()
 
     token = args.token or os.environ.get("BUB_SLACK_BOT_TOKEN")
     if not token:
-        print("❌ Error: bot token required. Set BUB_SLACK_BOT_TOKEN env var or use --token")
+        print(
+            "❌ Error: bot token required. Set BUB_SLACK_BOT_TOKEN env var or use --token"
+        )
         sys.exit(1)
 
     text = _read_text(args.text)
@@ -83,7 +107,9 @@ def main() -> None:
             mrkdwn=not args.plain,
         )
     except urllib.error.HTTPError as exc:
-        print(f"❌ HTTP Error: {exc}\n   Response: {exc.read().decode('utf-8', 'replace')}")
+        print(
+            f"❌ HTTP Error: {exc}\n   Response: {exc.read().decode('utf-8', 'replace')}"
+        )
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001
         print(f"❌ Error: {exc}")

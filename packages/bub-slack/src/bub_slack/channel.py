@@ -74,10 +74,14 @@ class SlackChannel(Channel):
         self._bot_token = self._settings.bot_token
         self._app_token = self._settings.app_token
         self._allow_channels = {
-            c.strip() for c in (self._settings.allow_channels or "").split(",") if c.strip()
+            c.strip()
+            for c in (self._settings.allow_channels or "").split(",")
+            if c.strip()
         }
         self._allow_users = {
-            u.strip() for u in (self._settings.allow_users or "").split(",") if u.strip()
+            u.strip()
+            for u in (self._settings.allow_users or "").split(",")
+            if u.strip()
         }
 
         self._web_client: AsyncWebClient | None = None
@@ -126,7 +130,9 @@ class SlackChannel(Channel):
         # message-consumer loop. Blocking here would enqueue Slack events that
         # never get processed. start() must kick off the listener and return,
         # mirroring the Telegram channel; shutdown is handled by ``stop()``.
-        self._client = SocketModeClient(app_token=self._app_token, web_client=self._web_client)
+        self._client = SocketModeClient(
+            app_token=self._app_token, web_client=self._web_client
+        )
         self._client.socket_mode_request_listeners.append(self._on_slack_event)
         await self._client.connect()
         logger.info(
@@ -177,7 +183,9 @@ class SlackChannel(Channel):
         if self._web_client is None:
             return
         try:
-            await self._web_client.reactions_add(channel=channel_id, timestamp=ts, name=name)
+            await self._web_client.reactions_add(
+                channel=channel_id, timestamp=ts, name=name
+            )
         except Exception:  # noqa: BLE001 — reactions must never block the bot
             logger.opt(exception=True).debug("slack.reactions add {} failed", name)
 
@@ -186,14 +194,20 @@ class SlackChannel(Channel):
         if self._web_client is None:
             return
         try:
-            await self._web_client.reactions_remove(channel=channel_id, timestamp=ts, name=name)
+            await self._web_client.reactions_remove(
+                channel=channel_id, timestamp=ts, name=name
+            )
         except Exception:  # noqa: BLE001
             logger.opt(exception=True).debug("slack.reactions remove {} failed", name)
 
-    async def _on_slack_event(self, client: SocketModeClient, req: SocketModeRequest) -> None:
+    async def _on_slack_event(
+        self, client: SocketModeClient, req: SocketModeRequest
+    ) -> None:
         # Acknowledge the envelope immediately so Slack does not retry.
         with contextlib.suppress(Exception):
-            await client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+            await client.send_socket_mode_response(
+                SocketModeResponse(envelope_id=req.envelope_id)
+            )
         if req.type != "events_api":
             return
         event = (req.payload or {}).get("event") or {}
@@ -237,7 +251,11 @@ class SlackChannel(Channel):
         # always private to the user, so they're never filtered by it (the user
         # allow-list still applies). Otherwise setting BUB_SLACK_ALLOW_CHANNELS
         # to lock the bot to specific channels would silently drop every DM.
-        if channel_type != "im" and self._allow_channels and channel_id not in self._allow_channels:
+        if (
+            channel_type != "im"
+            and self._allow_channels
+            and channel_id not in self._allow_channels
+        ):
             return
         if self._allow_users and user_id not in self._allow_users:
             return
@@ -287,7 +305,9 @@ class SlackChannel(Channel):
         # get here. Recover it from the thread-scoped session_id
         # (``slack:{channel}:{thread_root}``) instead — that always reflects the
         # thread the inbound turn belongs to.
-        thread_ts = _thread_ts_from_context(message) or _thread_ts_from_session(message.session_id)
+        thread_ts = _thread_ts_from_context(message) or _thread_ts_from_session(
+            message.session_id
+        )
         if thread_ts:
             self._active_threads.add(thread_ts)
 

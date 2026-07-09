@@ -75,9 +75,13 @@ class QQTokenProvider:
         try:
             expires_in_seconds = int(expires_in)
         except (TypeError, ValueError) as exc:
-            raise QQAuthError(f"qq token response has invalid expires_in: {payload}") from exc
+            raise QQAuthError(
+                f"qq token response has invalid expires_in: {payload}"
+            ) from exc
 
-        refresh_after = max(expires_in_seconds - self._config.token_refresh_skew_seconds, 0)
+        refresh_after = max(
+            expires_in_seconds - self._config.token_refresh_skew_seconds, 0
+        )
         return QQAccessToken(
             value=access_token,
             expires_at=float(self._clock()) + refresh_after,
@@ -103,5 +107,7 @@ class QQTokenProvider:
                     )
                 payload = await response.json()
                 if not isinstance(payload, dict):
-                    raise QQAuthError(f"qq token response is not a JSON object: {payload!r}")
+                    raise QQAuthError(
+                        f"qq token response is not a JSON object: {payload!r}"
+                    )
                 return payload

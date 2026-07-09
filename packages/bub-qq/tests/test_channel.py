@@ -76,8 +76,12 @@ def test_channel_send_uses_latest_c2c_message_context() -> None:
         channel = QQChannel(lambda message: None)
         openapi = OpenAPIStub()
         _install_send_service(channel, openapi)
-        channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = (
+            "message-1"
+        )
+        channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
 
         await channel.send(
             ChannelMessage(
@@ -113,12 +117,18 @@ def test_channel_send_handles_reply_expired_error() -> None:
                 trace_id="trace-1",
                 error_code=304027,
                 error_message="reply expired",
-                known=QQKnownOpenAPIError(304027, "MSG_EXPIRE", "回复的消息过期", "reply", False),
+                known=QQKnownOpenAPIError(
+                    304027, "MSG_EXPIRE", "回复的消息过期", "reply", False
+                ),
             )
         )
         _install_send_service(channel, openapi)
-        channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = (
+            "message-1"
+        )
+        channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
 
         await channel.send(
             ChannelMessage(
@@ -147,12 +157,18 @@ def test_channel_send_handles_rate_limit_error() -> None:
                 trace_id="trace-2",
                 error_code=22009,
                 error_message="msg limit exceed",
-                known=QQKnownOpenAPIError(22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True),
+                known=QQKnownOpenAPIError(
+                    22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True
+                ),
             )
         )
         _install_send_service(channel, openapi)
-        channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        channel._c2c_state.latest_message_id_by_session["qq:c2c:user-openid"] = (
+            "message-1"
+        )
+        channel._c2c_state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
 
         await channel.send(
             ChannelMessage(

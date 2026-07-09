@@ -32,8 +32,13 @@ class CommandDescriptor:
 
     @classmethod
     def from_descriptor(cls, descriptor: Any) -> CommandDescriptor:
-        data = require_mapping(descriptor, message="Extism CLI command descriptor must be an object")
-        name = required_text(data.get("name"), message="Extism CLI command descriptor requires name and function")
+        data = require_mapping(
+            descriptor, message="Extism CLI command descriptor must be an object"
+        )
+        name = required_text(
+            data.get("name"),
+            message="Extism CLI command descriptor requires name and function",
+        )
         function = required_text(
             data.get("function"),
             message="Extism CLI command descriptor requires name and function",
@@ -66,13 +71,17 @@ def make_extism_command(settings: ExtismSettings, bridge: ExtismBridge) -> typer
         typer.echo(f"Config: {settings.config_path}")
 
     @app.command("show")
-    def show_plugin(name: str = typer.Argument(..., help="Configured adapter name.")) -> None:
+    def show_plugin(
+        name: str = typer.Argument(..., help="Configured adapter name."),
+    ) -> None:
         """Show one adapter configuration."""
         plugin = settings.read_config().plugins.get(name)
         if plugin is None:
             typer.echo(f"Extism plugin '{name}' does not exist.", err=True)
             raise typer.Exit(code=1)
-        typer.echo(json.dumps(plugin.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        typer.echo(
+            json.dumps(plugin.model_dump(mode="json"), ensure_ascii=False, indent=2)
+        )
 
     @app.command("add")
     def add_plugin(
@@ -88,13 +97,19 @@ def make_extism_command(settings: ExtismSettings, bridge: ExtismBridge) -> typer
             "--hook",
             help="Hook binding in HOOK=EXPORT format. Repeat to bind multiple Bub hooks.",
         ),
-        wasi: bool = typer.Option(False, "--wasi", help="Enable WASI for this adapter."),
-        replace: bool = typer.Option(False, "--replace", help="Replace an existing adapter with the same name."),
+        wasi: bool = typer.Option(
+            False, "--wasi", help="Enable WASI for this adapter."
+        ),
+        replace: bool = typer.Option(
+            False, "--replace", help="Replace an existing adapter with the same name."
+        ),
     ) -> None:
         """Add one Extism adapter."""
         config = settings.read_config()
         if name in config.plugins and not replace:
-            raise typer.BadParameter(f"Extism plugin '{name}' already exists. Use --replace to overwrite it.")
+            raise typer.BadParameter(
+                f"Extism plugin '{name}' already exists. Use --replace to overwrite it."
+            )
 
         config.plugins[name] = ExtismPluginConfig(
             manifest=_load_manifest(manifest_path),
@@ -124,7 +139,9 @@ def make_extism_command(settings: ExtismSettings, bridge: ExtismBridge) -> typer
     return app
 
 
-def _register_plugin_commands(app: typer.Typer, config: ExtismConfig, bridge: ExtismBridge) -> None:
+def _register_plugin_commands(
+    app: typer.Typer, config: ExtismConfig, bridge: ExtismBridge
+) -> None:
     registered_names = set(RESERVED_COMMAND_NAMES)
     for plugin_name, plugin_config in config.plugins.items():
         if CLI_HOOK_NAME not in plugin_config.hooks:
@@ -142,7 +159,10 @@ def _register_plugin_commands(app: typer.Typer, config: ExtismConfig, bridge: Ex
                 )
             registered_names.add(descriptor.name)
 
-            help_text = descriptor.help_text or f"Run the '{descriptor.name}' command from Extism plugin '{plugin_name}'."
+            help_text = (
+                descriptor.help_text
+                or f"Run the '{descriptor.name}' command from Extism plugin '{plugin_name}'."
+            )
             app.command(descriptor.name, help=help_text)(
                 _make_plugin_command(
                     bridge,
@@ -171,7 +191,9 @@ def _make_plugin_command(
     command_name: str,
     function_name: str,
 ):
-    def command(payload: str = typer.Argument("{}", help="JSON payload for the command.")) -> None:
+    def command(
+        payload: str = typer.Argument("{}", help="JSON payload for the command."),
+    ) -> None:
         try:
             args = json.loads(payload)
         except json.JSONDecodeError as exc:
@@ -201,7 +223,11 @@ def _format_plugin_list(config: ExtismConfig) -> str:
 
 def _format_single_plugin(name: str, plugin: ExtismPluginConfig) -> str:
     hooks = plugin.hooks
-    hook_text = ", ".join(f"{hook}->{export}" for hook, export in hooks.items()) if hooks else "No hooks"
+    hook_text = (
+        ", ".join(f"{hook}->{export}" for hook, export in hooks.items())
+        if hooks
+        else "No hooks"
+    )
     wasi_text = "enabled" if plugin.wasi else "disabled"
     return f"- {name}\n  WASI: {wasi_text}\n  Source: {_manifest_source(plugin.manifest)}\n  Hooks: {hook_text}"
 

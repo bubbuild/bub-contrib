@@ -79,7 +79,9 @@ def _payload(message_id: str = "message-1") -> dict[str, object]:
 
 def test_c2c_inbound_service_parses_and_remembers_session() -> None:
     state = _state()
-    service = QQC2CInboundService(channel_name="qq", deduper=QQC2CDeduper(16), state=state)
+    service = QQC2CInboundService(
+        channel_name="qq", deduper=QQC2CDeduper(16), state=state
+    )
 
     parsed = service.parse_inbound(_payload())
 
@@ -93,7 +95,9 @@ def test_c2c_inbound_service_parses_and_remembers_session() -> None:
 
 def test_c2c_inbound_service_dedupes_repeated_messages() -> None:
     state = _state()
-    service = QQC2CInboundService(channel_name="qq", deduper=QQC2CDeduper(16), state=state)
+    service = QQC2CInboundService(
+        channel_name="qq", deduper=QQC2CDeduper(16), state=state
+    )
 
     assert service.parse_inbound(_payload("message-1")) is not None
     assert service.parse_inbound(_payload("message-1")) is None
@@ -103,7 +107,9 @@ def test_c2c_send_service_sends_using_session_context() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
         openapi = OpenAPIStub()
         service = QQC2CSendService(
             channel_name="qq",
@@ -134,10 +140,14 @@ def test_c2c_send_service_sends_using_session_context() -> None:
     asyncio.run(_run())
 
 
-def test_c2c_send_service_starts_msg_seq_at_one_after_inbound_transport_sequence() -> None:
+def test_c2c_send_service_starts_msg_seq_at_one_after_inbound_transport_sequence() -> (
+    None
+):
     async def _run() -> None:
         state = _state()
-        inbound = QQC2CInboundService(channel_name="qq", deduper=QQC2CDeduper(16), state=state)
+        inbound = QQC2CInboundService(
+            channel_name="qq", deduper=QQC2CDeduper(16), state=state
+        )
         parsed = inbound.parse_inbound(_payload())
 
         assert parsed is not None
@@ -168,9 +178,12 @@ def test_c2c_send_service_starts_msg_seq_at_one_after_inbound_transport_sequence
                 "msg_seq": 1,
             }
         ]
-        assert state.latest_sequence_by_session_and_msg_id[
-            ("qq:c2c:user-openid", "message-1")
-        ] == 1
+        assert (
+            state.latest_sequence_by_session_and_msg_id[
+                ("qq:c2c:user-openid", "message-1")
+            ]
+            == 1
+        )
 
     asyncio.run(_run())
 
@@ -179,7 +192,9 @@ def test_c2c_send_service_resets_msg_seq_for_new_inbound_msg_id() -> None:
     async def _run() -> None:
         state = _state()
         openapi = OpenAPIStub()
-        inbound = QQC2CInboundService(channel_name="qq", deduper=QQC2CDeduper(16), state=state)
+        inbound = QQC2CInboundService(
+            channel_name="qq", deduper=QQC2CDeduper(16), state=state
+        )
         service = QQC2CSendService(
             channel_name="qq",
             receive_mode="webhook",
@@ -246,7 +261,9 @@ def test_c2c_send_service_strips_qq_wrapper_prefix_before_sending() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
         openapi = OpenAPIStub()
         service = QQC2CSendService(
             channel_name="qq",
@@ -281,7 +298,9 @@ def test_c2c_send_service_allows_multiple_replies_for_same_msg_id() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
         openapi = OpenAPIStub()
         service = QQC2CSendService(
             channel_name="qq",
@@ -321,7 +340,7 @@ def test_c2c_send_service_allows_multiple_replies_for_same_msg_id() -> None:
                 "content": "job finished",
                 "msg_id": "message-1",
                 "msg_seq": 2,
-            }
+            },
         ]
 
     asyncio.run(_run())
@@ -331,7 +350,9 @@ def test_c2c_send_service_skips_when_passive_reply_window_expired() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2000-01-01T00:00:00+00:00"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2000-01-01T00:00:00+00:00"
+        )
         openapi = OpenAPIStub()
         service = QQC2CSendService(
             channel_name="qq",
@@ -359,14 +380,18 @@ def test_c2c_send_service_swallows_openapi_errors() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
         openapi = FailingOpenAPIStub(
             QQOpenAPIError(
                 status_code=429,
                 trace_id="trace-1",
                 error_code=22009,
                 error_message="msg limit exceed",
-                known=QQKnownOpenAPIError(22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True),
+                known=QQKnownOpenAPIError(
+                    22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True
+                ),
             )
         )
         service = QQC2CSendService(
@@ -395,7 +420,9 @@ def test_c2c_send_service_treats_remote_duplicate_as_already_sent() -> None:
     async def _run() -> None:
         state = _state()
         state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
-        state.latest_timestamp_by_session["qq:c2c:user-openid"] = "2099-01-01T00:00:00+00:00"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
         openapi = FailingOpenAPIStub(
             QQOpenAPIError(
                 status_code=400,

@@ -1,4 +1,5 @@
 """Tests for scheduled task delivery through the live framework."""
+
 from __future__ import annotations
 
 import asyncio

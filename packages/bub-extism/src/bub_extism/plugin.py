@@ -6,7 +6,12 @@ from bub import hookimpl
 from bub_extism.bridge import ExtismBridge
 from bub_extism.channel import channels_from_value
 from bub_extism.cli import register_cli_commands
-from bub_extism.codec import error_to_json, mapping_to_json, message_to_json, state_to_json
+from bub_extism.codec import (
+    error_to_json,
+    mapping_to_json,
+    message_to_json,
+    state_to_json,
+)
 from bub_extism.config import ExtismPluginConfig, ExtismSettings, PLUGIN_HOOK_NAMES
 from bub_extism.stream import stream_events_from_value
 from bub_extism.tape_store import tape_store_from_value
@@ -36,7 +41,9 @@ def _state_args(state: State) -> dict[str, Any]:
     return {"state": state_to_json(state)}
 
 
-def _message_session_state_args(message: Envelope, session_id: str, state: State) -> dict[str, Any]:
+def _message_session_state_args(
+    message: Envelope, session_id: str, state: State
+) -> dict[str, Any]:
     return {
         **_message_session_args(message, session_id),
         **_state_args(state),
@@ -94,7 +101,9 @@ def _outbound_messages(value: Any) -> list[Envelope]:
         return [value]
     if isinstance(value, list):
         return value
-    raise RuntimeError("Extism render_outbound must return an envelope or envelope list")
+    raise RuntimeError(
+        "Extism render_outbound must return an envelope or envelope list"
+    )
 
 
 def _tape_context(value: Any) -> TapeContext | None:
@@ -110,7 +119,9 @@ def _tape_context(value: Any) -> TapeContext | None:
     else:
         anchor = str(anchor_value)
 
-    state = _require_mapping(data.get("state", {}), hook_name="build_tape_context state")
+    state = _require_mapping(
+        data.get("state", {}), hook_name="build_tape_context state"
+    )
     return TapeContext(anchor=anchor, state=state)
 
 
@@ -171,7 +182,9 @@ class ExtismHookAdapter:
 
     async def hook_load_state(self, message: Envelope, session_id: str) -> State | None:
         return _optional_mapping(
-            await self._call("load_state", **_message_session_args(message, session_id)),
+            await self._call(
+                "load_state", **_message_session_args(message, session_id)
+            ),
             hook_name="load_state",
         )
 
@@ -206,9 +219,13 @@ class ExtismHookAdapter:
     async def hook_dispatch_outbound(self, message: Envelope) -> bool:
         return bool(await self._call("dispatch_outbound", **_message_args(message)))
 
-    def hook_onboard_config(self, current_config: dict[str, Any]) -> dict[str, Any] | None:
+    def hook_onboard_config(
+        self, current_config: dict[str, Any]
+    ) -> dict[str, Any] | None:
         return _optional_mapping(
-            self._call_sync("onboard_config", current_config=mapping_to_json(current_config)),
+            self._call_sync(
+                "onboard_config", current_config=mapping_to_json(current_config)
+            ),
             hook_name="onboard_config",
         )
 
@@ -225,7 +242,9 @@ class ExtismHookAdapter:
             message=None if message is None else message_to_json(message),
         )
 
-    def hook_system_prompt(self, prompt: str | list[dict[str, Any]], state: State) -> str | None:
+    def hook_system_prompt(
+        self, prompt: str | list[dict[str, Any]], state: State
+    ) -> str | None:
         return _optional_string(
             self._call_sync("system_prompt", prompt=prompt, **_state_args(state)),
             hook_name="system_prompt",
@@ -282,9 +301,7 @@ def build_hook_adapter(
     config: ExtismPluginConfig,
 ) -> ExtismHookAdapter | None:
     enabled_hook_names = tuple(
-        hook_name
-        for hook_name in PLUGIN_HOOK_NAMES
-        if hook_name in config.hooks
+        hook_name for hook_name in PLUGIN_HOOK_NAMES if hook_name in config.hooks
     )
     if not enabled_hook_names:
         return None

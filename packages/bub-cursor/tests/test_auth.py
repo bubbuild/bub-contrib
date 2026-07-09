@@ -9,7 +9,9 @@ from bub_cursor import auth
 
 
 def test_resolve_cursor_cli_path_prefers_explicit_path() -> None:
-    assert auth.resolve_cursor_cli_path("/custom/cursor-agent") == "/custom/cursor-agent"
+    assert (
+        auth.resolve_cursor_cli_path("/custom/cursor-agent") == "/custom/cursor-agent"
+    )
 
 
 def test_resolve_cursor_cli_path_prefers_cursor_agent(
@@ -115,7 +117,9 @@ def test_ensure_cursor_authenticated_raises_when_status_fails(
         asyncio.run(auth.ensure_cursor_authenticated("agent"))
 
 
-def test_has_cursor_cli_login_runs_agent_status(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_has_cursor_cli_login_runs_agent_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[object, ...]] = []
 
     class FakeProcess:

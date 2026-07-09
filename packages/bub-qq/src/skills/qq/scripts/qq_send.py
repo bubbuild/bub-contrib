@@ -16,9 +16,13 @@ app = typer.Typer(add_completion=False)
 
 @app.command()
 def main(
-    openid: str = typer.Option(..., "--openid", help="QQ user_openid for the current C2C conversation"),
+    openid: str = typer.Option(
+        ..., "--openid", help="QQ user_openid for the current C2C conversation"
+    ),
     content: str = typer.Option(..., "--content", help="Reply text to send"),
-    msg_id: str = typer.Option(..., "--msg-id", help="Inbound QQ message id to reply to"),
+    msg_id: str = typer.Option(
+        ..., "--msg-id", help="Inbound QQ message id to reply to"
+    ),
 ) -> None:
     asyncio.run(_send(openid=openid, content=content, msg_id=msg_id))
 

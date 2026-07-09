@@ -80,7 +80,9 @@ def test_onboard_config_collects_sqlite_settings(monkeypatch) -> None:
             "NORMAL",
         ]
     )
-    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(
         plugin.bub_inquirer,
         "ask_text",
@@ -99,6 +101,8 @@ def test_onboard_config_collects_sqlite_settings(monkeypatch) -> None:
 
 
 def test_onboard_config_skips_sqlite_when_declined(monkeypatch) -> None:
-    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False
+    )
 
     assert plugin.onboard_config({}) is None

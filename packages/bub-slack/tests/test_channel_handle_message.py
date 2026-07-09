@@ -78,7 +78,9 @@ async def test_allow_channels_does_not_block_dms(on_receive, captured) -> None:
         ),
     )
     restricted._bot_user_id = "UBOT"
-    await restricted._handle_message(_event(channel_type="im", channel="CDM", text="hi"))
+    await restricted._handle_message(
+        _event(channel_type="im", channel="CDM", text="hi")
+    )
     assert len(captured) == 1
     assert captured[0].content == "hi"
 
@@ -92,7 +94,9 @@ async def test_allow_users_restriction(on_receive, captured) -> None:
     )
     restricted._bot_user_id = "UBOT"
     # user UZ not allowed, but channel is a DM so it's "addressed"; user filter drops it
-    await restricted._handle_message(_event(channel_type="im", channel="CDM", user="UZ", text="hi"))
+    await restricted._handle_message(
+        _event(channel_type="im", channel="CDM", user="UZ", text="hi")
+    )
     assert captured == []
 
 
@@ -141,10 +145,14 @@ async def test_top_level_mentions_isolated_by_ts(channel, captured) -> None:
     assert captured[1].session_id == "slack:C1:301.1"
 
 
-async def test_dm_session_stays_channel_scoped_even_in_thread(channel, captured) -> None:
+async def test_dm_session_stays_channel_scoped_even_in_thread(
+    channel, captured
+) -> None:
     """DMs keep continuous channel-scoped memory regardless of threading."""
     await channel._handle_message(
-        _event(channel_type="im", channel="CDM", text="hi", thread_ts="100.1", ts="101.1")
+        _event(
+            channel_type="im", channel="CDM", text="hi", thread_ts="100.1", ts="101.1"
+        )
     )
     assert captured[0].session_id == "slack:CDM"
 
@@ -212,6 +220,8 @@ async def test_allow_users_allows_listed() -> None:
         ),
     )
     ch._bot_user_id = "UBOT"
-    await ch._handle_message(_event(channel_type="im", channel="CDM", user="UA", text="hi"))
+    await ch._handle_message(
+        _event(channel_type="im", channel="CDM", user="UA", text="hi")
+    )
     assert len(received) == 1
     assert received[0].content == "hi"

@@ -192,7 +192,9 @@ def test_plugin_defined_commands_reject_invalid_wrapper_shape(tmp_path: Path) ->
         _make_app(tmp_path)
 
 
-def test_plugin_defined_commands_reject_invalid_descriptor_shape(tmp_path: Path) -> None:
+def test_plugin_defined_commands_reject_invalid_descriptor_shape(
+    tmp_path: Path,
+) -> None:
     manifest_path = tmp_path / "plugin.manifest.json"
     _write_manifest(manifest_path, wasm_path="./cli.wasm")
     tmp_path.joinpath("extism.json").write_text(

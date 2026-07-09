@@ -84,8 +84,8 @@ class SQLAlchemyTapeStoreSettings(bub.Settings):
 
 
 def _build_store(
-    settings_factory: Callable[[], SQLAlchemyTapeStoreSettings] = lambda: bub.ensure_config(
-        SQLAlchemyTapeStoreSettings
+    settings_factory: Callable[[], SQLAlchemyTapeStoreSettings] = lambda: (
+        bub.ensure_config(SQLAlchemyTapeStoreSettings)
     ),
 ) -> SQLAlchemyTapeStore:
     settings = settings_factory()

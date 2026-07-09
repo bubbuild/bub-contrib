@@ -46,7 +46,9 @@ def test_run_model_uses_codex_for_normal_prompt(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-2", state=state))
@@ -75,7 +77,9 @@ def test_run_model_saves_session_id_from_stderr(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-3", state=state))

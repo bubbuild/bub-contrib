@@ -141,7 +141,9 @@ class QQOpenAPI:
                 payload=await _maybe_json(response),
             )
 
-    async def get(self, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def get(
+        self, path: str, *, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         return await self.request("GET", path, params=params)
 
     async def post(

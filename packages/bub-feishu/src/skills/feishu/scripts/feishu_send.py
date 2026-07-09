@@ -77,9 +77,7 @@ def send_message(
     reply_to_message_id: str | None = None,
 ) -> dict[str, Any]:
     if message_format == "card":
-        return send_card_message(
-            app_id, app_secret, chat_id, title or "Bub", content
-        )
+        return send_card_message(app_id, app_secret, chat_id, title or "Bub", content)
     return send_text_message(
         app_id,
         app_secret,

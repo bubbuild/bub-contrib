@@ -29,7 +29,10 @@ def add_reaction(token: str, channel_id: str, ts: str, name: str) -> dict:
     req = urllib.request.Request(  # noqa: S310 — Slack HTTPS endpoint is fixed
         SLACK_API,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
@@ -37,23 +40,40 @@ def add_reaction(token: str, channel_id: str, ts: str, name: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Add an emoji reaction to a Slack message.")
-    parser.add_argument("--channel-id", "-c", required=True, help="Channel ID of the message.")
+    parser = argparse.ArgumentParser(
+        description="Add an emoji reaction to a Slack message."
+    )
+    parser.add_argument(
+        "--channel-id", "-c", required=True, help="Channel ID of the message."
+    )
     parser.add_argument("--ts", required=True, help="Timestamp (ts) of the message.")
-    parser.add_argument("--reaction", "-r", required=True, help="Emoji name without colons (e.g. white_check_mark).")
-    parser.add_argument("--token", help="Bot token (defaults to BUB_SLACK_BOT_TOKEN env var).")
+    parser.add_argument(
+        "--reaction",
+        "-r",
+        required=True,
+        help="Emoji name without colons (e.g. white_check_mark).",
+    )
+    parser.add_argument(
+        "--token", help="Bot token (defaults to BUB_SLACK_BOT_TOKEN env var)."
+    )
     args = parser.parse_args()
 
     token = args.token or os.environ.get("BUB_SLACK_BOT_TOKEN")
     if not token:
-        print("❌ Error: bot token required. Set BUB_SLACK_BOT_TOKEN env var or use --token")
+        print(
+            "❌ Error: bot token required. Set BUB_SLACK_BOT_TOKEN env var or use --token"
+        )
         sys.exit(1)
 
     name = args.reaction.strip().strip(":")
     try:
-        result = add_reaction(token=token, channel_id=args.channel_id, ts=args.ts, name=name)
+        result = add_reaction(
+            token=token, channel_id=args.channel_id, ts=args.ts, name=name
+        )
     except urllib.error.HTTPError as exc:
-        print(f"❌ HTTP Error: {exc}\n   Response: {exc.read().decode('utf-8', 'replace')}")
+        print(
+            f"❌ HTTP Error: {exc}\n   Response: {exc.read().decode('utf-8', 'replace')}"
+        )
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001
         print(f"❌ Error: {exc}")

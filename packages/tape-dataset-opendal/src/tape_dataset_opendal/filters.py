@@ -59,7 +59,9 @@ class EntryFilterContext:
 
 class EntryFilter:
     def __init__(self, expressions: Sequence[str] | None = None) -> None:
-        normalized = [expression.strip() for expression in expressions or [] if expression.strip()]
+        normalized = [
+            expression.strip() for expression in expressions or [] if expression.strip()
+        ]
         self._expressions = tuple(normalized)
         self._programs = tuple(self._compile(expression) for expression in normalized)
 
@@ -73,12 +75,16 @@ class EntryFilter:
     def matches(self, tape: str, entry: TapeEntry) -> bool:
         if not self._programs:
             return True
-        activation = json_to_cel(EntryFilterContext(tape=tape, entry=entry).to_mapping())
+        activation = json_to_cel(
+            EntryFilterContext(tape=tape, entry=entry).to_mapping()
+        )
         for expression, program in zip(self._expressions, self._programs, strict=True):
             try:
                 result = program.evaluate(activation)
             except CELEvalError as exc:
-                raise ValueError(f"Failed to evaluate CEL filter '{expression}': {exc}") from exc
+                raise ValueError(
+                    f"Failed to evaluate CEL filter '{expression}': {exc}"
+                ) from exc
             if not isinstance(result, bool | BoolType):
                 raise ValueError(
                     f"CEL filter '{expression}' must evaluate to bool, got {type(result).__name__}."

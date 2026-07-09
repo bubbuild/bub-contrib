@@ -160,7 +160,12 @@ async def test_send_swaps_ack_reaction() -> None:
     ch, web = _channel_with_web()
     _ACK_PENDING["slack:C1"] = ("C1", "9.9")
     await ch.send(_msg("done"))
-    assert {"op": "remove", "channel": "C1", "timestamp": "9.9", "name": "hourglass"} in web.reactions
+    assert {
+        "op": "remove",
+        "channel": "C1",
+        "timestamp": "9.9",
+        "name": "hourglass",
+    } in web.reactions
     assert {
         "op": "add",
         "channel": "C1",

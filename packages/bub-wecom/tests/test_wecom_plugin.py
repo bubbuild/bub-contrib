@@ -4,7 +4,9 @@ from bub_wecom import plugin
 
 
 def test_onboard_config_collects_wecom_settings(monkeypatch) -> None:
-    text_answers = iter(["bot-id", "wss://openws.work.weixin.qq.com", "alice", "room-1"])
+    text_answers = iter(
+        ["bot-id", "wss://openws.work.weixin.qq.com", "alice", "room-1"]
+    )
     secret_answers = iter(["secret"])
     select_answers = iter(["allowlist", "allowlist"])
     monkeypatch.setattr(

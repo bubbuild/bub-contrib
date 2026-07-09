@@ -63,12 +63,18 @@ if TYPE_CHECKING:
     from bub.framework import BubFramework
 
 type ACPPromptBlock = (
-    TextContentBlock | ImageContentBlock | AudioContentBlock | ResourceContentBlock | EmbeddedResourceContentBlock
+    TextContentBlock
+    | ImageContentBlock
+    | AudioContentBlock
+    | ResourceContentBlock
+    | EmbeddedResourceContentBlock
 )
 type ACPMcpServer = HttpMcpServer | SseMcpServer | McpServerStdio
 type StreamPayload = Mapping[str, object]
 
-_BUB_PROMPT_CONTEXT = re.compile(r"^acp_session_id=[^\n]+\n---Date: [^\n]+---\n", re.MULTILINE)
+_BUB_PROMPT_CONTEXT = re.compile(
+    r"^acp_session_id=[^\n]+\n---Date: [^\n]+---\n", re.MULTILINE
+)
 _CONTINUATION_PROMPT_PREFIX = "Continue the task until all targets are completed."
 
 
@@ -119,7 +125,9 @@ class ACPSession:
         return cls(
             session_id=session_id,
             cwd=Path(cwd).expanduser().resolve(),
-            additional_directories=[str(item) for item in additional_directories if isinstance(item, str)],
+            additional_directories=[
+                str(item) for item in additional_directories if isinstance(item, str)
+            ],
             title=title if isinstance(title, str) else None,
             updated_at=updated_at if isinstance(updated_at, str) else None,
         )
@@ -136,7 +144,9 @@ class ACPStreamRouter:
     def sent_text(self) -> bool:
         return self._sent_text
 
-    def wrap_stream(self, message: Envelope, stream: AsyncIterable[StreamEvent]) -> AsyncIterable[StreamEvent]:
+    def wrap_stream(
+        self, message: Envelope, stream: AsyncIterable[StreamEvent]
+    ) -> AsyncIterable[StreamEvent]:
         del message
 
         async def iterator() -> AsyncIterator[StreamEvent]:
@@ -169,18 +179,24 @@ class ACPStreamRouter:
         elif event.kind == "tool_result":
             await self._send_tool_result(event.data)
         elif event.kind == "error":
-            message = event.data.get("message") or event.data.get("error") or "unknown error"
+            message = (
+                event.data.get("message") or event.data.get("error") or "unknown error"
+            )
             await self._send_agent_text(f"\nError: {message}")
 
     async def _send_agent_text(self, text: str) -> None:
         if not text:
             return
-        await self._client.session_update(self._session_id, update_agent_message_text(text))
+        await self._client.session_update(
+            self._session_id, update_agent_message_text(text)
+        )
 
     async def _send_user_text(self, text: str) -> None:
         if not text:
             return
-        await self._client.session_update(self._session_id, update_user_message_text(text))
+        await self._client.session_update(
+            self._session_id, update_user_message_text(text)
+        )
 
     async def _send_tool_call(self, data: StreamPayload) -> None:
         index = _int_value(data.get("index"), default=len(self._tool_ids))
@@ -243,7 +259,7 @@ class BubACPAgent:
                     close=SessionCloseCapabilities(),
                     list=SessionListCapabilities(),
                     resume=SessionResumeCapabilities(),
-                )
+                ),
             ),
         )
 
@@ -308,10 +324,16 @@ class BubACPAgent:
     ) -> ListSessionsResponse:
         del additional_directories, cursor, cwd, kwargs
         self._sessions = self._load_sessions()
-        sessions = sorted(self._sessions.values(), key=lambda item: item.updated_at or "", reverse=True)
+        sessions = sorted(
+            self._sessions.values(),
+            key=lambda item: item.updated_at or "",
+            reverse=True,
+        )
         return ListSessionsResponse(sessions=[session.info() for session in sessions])
 
-    async def close_session(self, session_id: str, **kwargs: Any) -> CloseSessionResponse | None:
+    async def close_session(
+        self, session_id: str, **kwargs: Any
+    ) -> CloseSessionResponse | None:
         del kwargs
         self._sessions.pop(session_id, None)
         self._save_sessions()
@@ -408,7 +430,9 @@ class BubACPAgent:
         self._session_store_path.parent.mkdir(parents=True, exist_ok=True)
         payload = [session.to_json() for session in self._sessions.values()]
         temp_path = self._session_store_path.with_suffix(".json.tmp")
-        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
         temp_path.replace(self._session_store_path)
 
     async def _attach_session_history(self, session: ACPSession) -> None:
@@ -423,10 +447,14 @@ class BubACPAgent:
             kind="normal",
             context={"acp_session_id": session.session_id},
         )
-        async for _ in router.wrap_stream(inbound, self._session_history_stream(session)):
+        async for _ in router.wrap_stream(
+            inbound, self._session_history_stream(session)
+        ):
             pass
 
-    async def _session_history_stream(self, session: ACPSession) -> AsyncIterator[StreamEvent]:
+    async def _session_history_stream(
+        self, session: ACPSession
+    ) -> AsyncIterator[StreamEvent]:
         entries = await self._load_tape_entries(session)
         pending_tool_indices: list[int] = []
         next_tool_index = 0
@@ -447,11 +475,24 @@ class BubACPAgent:
             elif entry.kind == "tool_result":
                 results = _list_payload(entry.payload.get("results"))
                 for index, result in enumerate(results):
-                    tool_index = pending_tool_indices[index] if index < len(pending_tool_indices) else index
-                    yield StreamEvent("tool_result", {"index": tool_index, "result": result})
+                    tool_index = (
+                        pending_tool_indices[index]
+                        if index < len(pending_tool_indices)
+                        else index
+                    )
+                    yield StreamEvent(
+                        "tool_result", {"index": tool_index, "result": result}
+                    )
                 pending_tool_indices = []
             elif entry.kind == "error":
-                yield StreamEvent("error", {"message": _stringify(entry.payload.get("message") or entry.payload)})
+                yield StreamEvent(
+                    "error",
+                    {
+                        "message": _stringify(
+                            entry.payload.get("message") or entry.payload
+                        )
+                    },
+                )
 
     async def _load_tape_entries(self, session: ACPSession) -> list[TapeEntry]:
         tape_name = _session_tape_name(session.session_id, session.cwd)
@@ -463,9 +504,13 @@ class BubACPAgent:
                 if inspect.isawaitable(result):
                     result = await result
                 return list(cast(Iterable[TapeEntry], result))
-        return _load_tape_entries_from_file(bub.home.expanduser() / "tapes" / f"{tape_name}.jsonl")
+        return _load_tape_entries_from_file(
+            bub.home.expanduser() / "tapes" / f"{tape_name}.jsonl"
+        )
 
-    async def _send_user_message_updates(self, prompt: list[ACPPromptBlock], session_id: str) -> None:
+    async def _send_user_message_updates(
+        self, prompt: list[ACPPromptBlock], session_id: str
+    ) -> None:
         client = self._require_client()
         for block in prompt:
             if _block_type(block) == "text":
@@ -487,18 +532,26 @@ class BubACPAgent:
             self.framework.workspace = session.cwd
             self.framework.bind_outbound_router(router)
             try:
-                result = await self.framework.process_inbound(inbound, stream_output=True)
+                result = await self.framework.process_inbound(
+                    inbound, stream_output=True
+                )
             finally:
                 self.framework.bind_outbound_router(previous_router)
                 self.framework.workspace = previous_workspace
             if result.model_output and not router.sent_text:
-                await client.session_update(session.session_id, update_agent_message_text(result.model_output))
+                await client.session_update(
+                    session.session_id, update_agent_message_text(result.model_output)
+                )
             return result
 
 
-async def run_acp_agent(framework: BubFramework, *, use_unstable_protocol: bool = True) -> None:
+async def run_acp_agent(
+    framework: BubFramework, *, use_unstable_protocol: bool = True
+) -> None:
     async with framework.running():
-        await run_agent(BubACPAgent(framework), use_unstable_protocol=use_unstable_protocol)
+        await run_agent(
+            BubACPAgent(framework), use_unstable_protocol=use_unstable_protocol
+        )
 
 
 class ACPServerPlugin:
@@ -507,7 +560,9 @@ class ACPServerPlugin:
 
     @hookimpl
     def register_cli_commands(self, app: typer.Typer) -> None:
-        acp_app = typer.Typer(name="acp", help="Run Bub as an ACP agent.", add_completion=False)
+        acp_app = typer.Typer(
+            name="acp", help="Run Bub as an ACP agent.", add_completion=False
+        )
 
         @acp_app.command("serve")
         def serve() -> None:
@@ -578,7 +633,9 @@ def _block_value(block: object, name: str, default: object = None) -> object:
 
 
 def _tool_call_id(index: int, call: object) -> str:
-    candidate = _block_value(call, "id", None) or _block_value(call, "tool_call_id", None)
+    candidate = _block_value(call, "id", None) or _block_value(
+        call, "tool_call_id", None
+    )
     return str(candidate or f"tool-{index}")
 
 
@@ -620,8 +677,12 @@ def _framework_tape_store(framework: BubFramework) -> object | None:
 
 
 def _session_tape_name(session_id: str, workspace: Path) -> str:
-    workspace_hash = hashlib.md5(str(workspace.resolve()).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
-    session_hash = hashlib.md5(session_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+    workspace_hash = hashlib.md5(
+        str(workspace.resolve()).encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:16]
+    session_hash = hashlib.md5(
+        session_id.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:16]
     return f"{workspace_hash}__{session_hash}"
 
 
@@ -654,7 +715,11 @@ def _tape_entry_from_json_line(line: str) -> TapeEntry | None:
     entry_payload = payload.get("payload")
     meta = payload.get("meta")
     date = payload.get("date")
-    if not isinstance(entry_id, int) or not isinstance(kind, str) or not isinstance(entry_payload, dict):
+    if (
+        not isinstance(entry_id, int)
+        or not isinstance(kind, str)
+        or not isinstance(entry_payload, dict)
+    ):
         return None
     if not isinstance(meta, dict):
         meta = {}

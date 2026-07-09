@@ -213,7 +213,9 @@ def test_query_search_respects_anchor_bounds(tmp_path: Path) -> None:
     store.append(tape, TapeEntry.anchor("phase-2"))
     store.append(tape, TapeEntry.message({"role": "user", "content": "new timeout"}))
 
-    entries = list(TapeQuery(tape, store).after_anchor("phase-2").query("timeout").all())
+    entries = list(
+        TapeQuery(tape, store).after_anchor("phase-2").query("timeout").all()
+    )
 
     assert [entry.payload["content"] for entry in entries] == ["new timeout"]
 

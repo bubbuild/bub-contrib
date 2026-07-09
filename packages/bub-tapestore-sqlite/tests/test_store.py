@@ -104,9 +104,7 @@ def test_persists_text_lookup_field(tmp_path: Path) -> None:
 
     database = sqlite3.connect(tmp_path / "tapes.sqlite3")
     try:
-        rows = database.execute(
-            "SELECT text FROM tape_entries ORDER BY id"
-        ).fetchall()
+        rows = database.execute("SELECT text FROM tape_entries ORDER BY id").fetchall()
     finally:
         database.close()
 

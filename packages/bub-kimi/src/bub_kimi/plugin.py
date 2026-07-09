@@ -74,7 +74,9 @@ def _runtime_agent_from_state(state: State) -> Agent | None:
     return cast("Agent", agent)
 
 
-async def _run_internal_command(prompt: str, session_id: str, state: State) -> str | None:
+async def _run_internal_command(
+    prompt: str, session_id: str, state: State
+) -> str | None:
     if not prompt.strip().startswith(","):
         return None
     agent = _runtime_agent_from_state(state)

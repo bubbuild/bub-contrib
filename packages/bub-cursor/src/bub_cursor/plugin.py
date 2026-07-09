@@ -200,7 +200,9 @@ async def run_model(
         except TimeoutError:
             process.kill()
             await process.communicate()
-            return f"Cursor process timed out after {settings.timeout_seconds:g} seconds."
+            return (
+                f"Cursor process timed out after {settings.timeout_seconds:g} seconds."
+            )
 
     stdout_text = stdout.decode() if stdout else ""
     stderr_text = stderr.decode() if stderr else ""

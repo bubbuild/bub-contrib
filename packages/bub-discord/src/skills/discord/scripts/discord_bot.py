@@ -76,7 +76,9 @@ def register_events(bot: commands.Bot) -> None:
         await bot.process_commands(message)
 
     @bot.event
-    async def on_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
+    async def on_command_error(
+        ctx: commands.Context, error: commands.CommandError
+    ) -> None:
         """Handle command errors."""
         if isinstance(error, commands.CommandNotFound):
             await ctx.send(f"Command not found: {ctx.invoked_with}")
@@ -108,9 +110,15 @@ def register_commands(bot: commands.Bot) -> None:
     @bot.command(name="info")
     async def info(ctx: commands.Context) -> None:
         """Bot info command."""
-        embed = discord.Embed(title="🤖 Bot Info", description="Bub's Discord Bot", color=discord.Color.blue())
+        embed = discord.Embed(
+            title="🤖 Bot Info",
+            description="Bub's Discord Bot",
+            color=discord.Color.blue(),
+        )
         embed.add_field(
-            name="Commands", value="!ping - ping\n!hello - hello\n!echo <text> - echo\n!info - this", inline=False
+            name="Commands",
+            value="!ping - ping\n!hello - hello\n!echo <text> - echo\n!info - this",
+            inline=False,
         )
         await ctx.send(embed=embed)
 

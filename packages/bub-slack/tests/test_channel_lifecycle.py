@@ -54,7 +54,9 @@ async def test_stop_closes_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_returns_fast_and_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_start_returns_fast_and_does_not_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Regression test for the critical blocking bug: ``start()`` must NOT await
     ``stop_event.wait()`` — the ChannelManager runs ``start()`` sequentially
     before the consumer loop, so blocking here deadlocks message processing.

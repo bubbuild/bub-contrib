@@ -13,7 +13,9 @@ class OpenAPIStub:
         self.payloads = payloads or {}
         self.calls: list[str] = []
 
-    async def get(self, path: str, *, params: dict[str, object] | None = None) -> dict[str, object]:
+    async def get(
+        self, path: str, *, params: dict[str, object] | None = None
+    ) -> dict[str, object]:
         del params
         self.calls.append(path)
         return self.payloads[path]

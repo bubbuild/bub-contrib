@@ -69,12 +69,16 @@ class QQC2COpenAPI(Protocol):
 
 
 class QQC2CInboundService:
-    def __init__(self, *, channel_name: str, deduper: QQC2CDeduper, state: QQC2CSessionState) -> None:
+    def __init__(
+        self, *, channel_name: str, deduper: QQC2CDeduper, state: QQC2CSessionState
+    ) -> None:
         self._channel_name = channel_name
         self._deduper = deduper
         self._state = state
 
-    def parse_inbound(self, payload: dict[str, Any]) -> tuple[QQC2CMessage, ChannelMessage] | None:
+    def parse_inbound(
+        self, payload: dict[str, Any]
+    ) -> tuple[QQC2CMessage, ChannelMessage] | None:
         try:
             message = QQC2CMessage.from_event(payload)
         except ValueError as exc:
@@ -196,7 +200,9 @@ class QQC2CSendService:
                     msg_seq=msg_seq,
                     result={},
                 )
-                self._state.send_record_by_session_msg_id_and_seq[(session_id, msg_id, msg_seq)] = duplicate_record
+                self._state.send_record_by_session_msg_id_and_seq[
+                    (session_id, msg_id, msg_seq)
+                ] = duplicate_record
                 return build_already_sent_result(duplicate_record)
             log_send_error(
                 exc,
@@ -214,7 +220,9 @@ class QQC2CSendService:
             msg_seq=msg_seq,
             result=dict(result),
         )
-        self._state.send_record_by_session_msg_id_and_seq[(session_id, msg_id, msg_seq)] = send_record
+        self._state.send_record_by_session_msg_id_and_seq[
+            (session_id, msg_id, msg_seq)
+        ] = send_record
         logger.info(
             "qq.send success session_id={} openid={} msg_id={} msg_seq={} response_id={}",
             session_id,
@@ -226,7 +234,9 @@ class QQC2CSendService:
         return result
 
 
-def build_c2c_channel_message(channel_name: str, message: QQC2CMessage) -> ChannelMessage:
+def build_c2c_channel_message(
+    channel_name: str, message: QQC2CMessage
+) -> ChannelMessage:
     session_id = f"{channel_name}:c2c:{message.user_openid}"
     chat_id = f"c2c:{message.user_openid}"
     text = message.content.strip()
@@ -284,7 +294,9 @@ def remember_c2c_session(
         state.latest_timestamp_by_session[session_id] = timestamp
 
 
-def resolve_c2c_openid(*, channel_name: str, session_id: str, chat_id: str) -> str | None:
+def resolve_c2c_openid(
+    *, channel_name: str, session_id: str, chat_id: str
+) -> str | None:
     if chat_id.startswith("c2c:"):
         openid = chat_id.removeprefix("c2c:").strip()
         return openid or None

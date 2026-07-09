@@ -37,11 +37,15 @@ async def get_shard_gateway(openapi: QQOpenAPI) -> QQGatewayInfo:
     return QQGatewayInfo(
         url=str(payload["url"]),
         shards=int(payload["shards"]) if payload.get("shards") is not None else None,
-        session_start_limit=_parse_session_start_limit(payload.get("session_start_limit")),
+        session_start_limit=_parse_session_start_limit(
+            payload.get("session_start_limit")
+        ),
     )
 
 
-def identify_payload(*, token: str, intents: int, shard: tuple[int, int] | None = None) -> dict[str, Any]:
+def identify_payload(
+    *, token: str, intents: int, shard: tuple[int, int] | None = None
+) -> dict[str, Any]:
     data: dict[str, Any] = {
         "token": f"QQBot {token}",
         "intents": intents,

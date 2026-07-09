@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from bub import hookimpl
+from bub.runtime import AsyncStreamEvents
+from bub.tape import LAST_ANCHOR, TapeContext
 from bub_extism.bridge import ExtismBridge
 from bub_extism.channel import channels_from_value
 from bub_extism.cli import register_cli_commands
@@ -15,15 +17,13 @@ from bub_extism.codec import (
 from bub_extism.config import ExtismPluginConfig, ExtismSettings, PLUGIN_HOOK_NAMES
 from bub_extism.stream import stream_events_from_value
 from bub_extism.tape_store import tape_store_from_value
-from republic import AsyncStreamEvents, TapeContext
-from republic.tape.context import LAST_ANCHOR
 
 if TYPE_CHECKING:
     import typer
     from bub.channels import Channel
     from bub.framework import BubFramework
     from bub.types import Envelope, MessageHandler, State
-    from republic.tape import TapeStore
+    from bub.tape import TapeStore
 
 
 def _message_args(message: Envelope) -> dict[str, Any]:

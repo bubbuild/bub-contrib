@@ -2,8 +2,8 @@ import typer
 from bub import BubFramework, hookimpl, tool
 from bub.builtin.auth import app as auth_app
 from bub.channels import Channel
+from bub.tools import ToolContext
 from bub.types import MessageHandler
-from republic import ToolContext
 
 from bub_wechat.channel import TOKEN_PATH, OutgoingMessage, WeChatChannel
 

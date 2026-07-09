@@ -28,9 +28,9 @@ ALLOWED_HOOK_NAMES = frozenset((*PLUGIN_HOOK_NAMES, CLI_HOOK_NAME))
 
 
 def default_config_path() -> Path:
-    from bub.builtin.settings import load_settings
+    import bub
 
-    return load_settings().home / "extism.json"
+    return bub.home / "extism.json"
 
 
 def normalize_hook_bindings(hooks: dict[str, str]) -> dict[str, str]:

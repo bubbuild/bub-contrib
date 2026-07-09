@@ -6,7 +6,8 @@ from typing import Any
 import pytest
 from acp.schema import TextContentBlock
 from bub.types import TurnResult
-from republic import StreamEvent, TapeEntry, TapeQuery
+from bub.runtime import StreamEvent
+from bub.tape import TapeEntry, TapeQuery
 
 from bub_acp_server import plugin
 from bub_acp_server.plugin import BubACPAgent

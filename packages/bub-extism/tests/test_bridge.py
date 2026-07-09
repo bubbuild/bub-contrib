@@ -9,7 +9,7 @@ from typing import Any
 
 import pluggy
 import pytest
-from republic import TapeEntry, TapeQuery
+from bub.tape import TapeEntry, TapeQuery
 
 from bub.hook_runtime import HookRuntime
 from bub.hookspecs import BUB_HOOK_NAMESPACE, BubHookSpecs

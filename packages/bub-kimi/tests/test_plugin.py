@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from bub.runtime import AsyncStreamEvents, StreamEvent
 
 from bub_kimi import plugin
 
@@ -14,11 +15,16 @@ class FakeAgent:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, object]]] = []
 
-    async def run(
+    async def run_stream(
         self, *, session_id: str, prompt: str, state: dict[str, object]
-    ) -> str:
+    ) -> AsyncStreamEvents:
         self.calls.append((session_id, prompt, state))
-        return "internal-command-result"
+
+        async def events():
+            yield StreamEvent("text", {"delta": "internal-command"})
+            yield StreamEvent("text", {"delta": "-result"})
+
+        return AsyncStreamEvents(events())
 
 
 def test_run_model_delegates_internal_commands_to_runtime_agent() -> None:

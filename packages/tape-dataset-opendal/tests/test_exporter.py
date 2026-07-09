@@ -4,9 +4,7 @@ import asyncio
 import json
 
 import opendal
-from republic.tape.entries import TapeEntry
-from republic.tape.query import TapeQuery
-from republic.tape.store import AsyncTapeStoreAdapter, InMemoryTapeStore
+from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry, TapeQuery
 
 from tape_dataset_opendal import (
     AsyncExportableTapeStore,

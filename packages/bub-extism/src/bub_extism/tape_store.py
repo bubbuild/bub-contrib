@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from republic import TapeEntry
+from bub.tape import TapeEntry
 
 from bub_extism.bridge import ExtismBridge
 from bub_extism.codec import tape_entry_from_dict, tape_entry_to_dict
@@ -11,7 +11,7 @@ from bub_extism.config import ExtismPluginConfig
 from bub_extism.descriptors import normalize_function_bindings, require_mapping
 
 if TYPE_CHECKING:
-    from republic import TapeQuery
+    from bub.tape import TapeQuery
 
 
 class ExtismTapeStore:

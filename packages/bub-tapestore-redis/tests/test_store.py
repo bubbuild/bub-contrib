@@ -5,12 +5,11 @@ from datetime import date
 
 import pytest
 import pytest_asyncio
+from bub.runtime import BubError, ErrorKind
+from bub.tape import LAST_ANCHOR, TapeContext, TapeEntry, TapeQuery, build_messages
 from bub_tapestore_redis import RedisTapeStore
 from fakeredis import FakeAsyncRedis
 from redis.crc import key_slot
-from republic import AsyncTapeManager, RepublicError, TapeContext, TapeEntry, TapeQuery
-from republic.core.errors import ErrorKind
-from republic.tape.context import LAST_ANCHOR
 
 
 def _unique_prefix() -> str:
@@ -119,7 +118,7 @@ async def test_append_assigns_incrementing_ids_and_reset_restarts(
 
 
 @pytest.mark.asyncio
-async def test_fetch_all_matches_republic_query_contract(store: RedisTapeStore) -> None:
+async def test_fetch_all_matches_bub_query_contract(store: RedisTapeStore) -> None:
     tape = "contract"
     for entry in _seed_entries():
         await store.append(tape, entry)
@@ -259,10 +258,10 @@ async def test_query_combines_anchor_date_and_text_filters(
 
 
 @pytest.mark.asyncio
-async def test_missing_anchor_and_invalid_date_raise_republic_error(
+async def test_missing_anchor_and_invalid_date_raise_bub_error(
     store: RedisTapeStore,
 ) -> None:
-    with pytest.raises(RepublicError) as missing_anchor:
+    with pytest.raises(BubError) as missing_anchor:
         list(await TapeQuery(tape="empty", store=store).after_anchor("missing").all())
     assert missing_anchor.value.kind == ErrorKind.NOT_FOUND
 
@@ -275,7 +274,7 @@ async def test_missing_anchor_and_invalid_date_raise_republic_error(
             date="2026-03-03T00:00:00+00:00",
         ),
     )
-    with pytest.raises(RepublicError) as invalid_range:
+    with pytest.raises(BubError) as invalid_range:
         list(
             await TapeQuery(tape="dated", store=store)
             .between_dates("2026-03-05", "2026-03-01")
@@ -325,7 +324,7 @@ async def test_reset_clears_anchor_indexes(store: RedisTapeStore) -> None:
         "session", TapeEntry.message({"role": "user", "content": "fresh"})
     )
 
-    with pytest.raises(RepublicError) as exc_info:
+    with pytest.raises(BubError) as exc_info:
         list(await TapeQuery(tape="session", store=store).after_anchor("a1").all())
     assert exc_info.value.kind == ErrorKind.NOT_FOUND
 
@@ -349,8 +348,7 @@ async def test_tapemanager_reads_last_anchor_slice(store: RedisTapeStore) -> Non
     for entry in _seed_entries():
         await store.append("test_tape", entry)
 
-    manager = AsyncTapeManager(store=store)
-    messages = await manager.read_messages(
-        "test_tape", context=TapeContext(anchor=LAST_ANCHOR)
-    )
+    context = TapeContext(anchor=LAST_ANCHOR)
+    entries = await context.build_query(TapeQuery("test_tape", store)).all()
+    messages = build_messages(entries, context)
     assert [message["content"] for message in messages] == ["task 2"]

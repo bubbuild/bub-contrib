@@ -11,7 +11,7 @@ GitHub Copilot SDK-backed `run_model` plugin for `bub`.
 
 ## Why This Package Uses The SDK
 
-This package intentionally uses `github-copilot-sdk` instead of wiring `republic` into Bub.
+This package intentionally uses `github-copilot-sdk` instead of Bub's builtin model runner.
 
 That keeps the plugin close to `bub-codex`:
 

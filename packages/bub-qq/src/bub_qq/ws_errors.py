@@ -20,7 +20,9 @@ def raise_for_close_code(close_code: int | None) -> None:
         raise RuntimeError(
             f"qq websocket reconnect required code={close_code} {close_code_message(close_code)}"
         )
-    raise RuntimeError(f"qq websocket closed code={close_code} {close_code_message(close_code)}")
+    raise RuntimeError(
+        f"qq websocket closed code={close_code} {close_code_message(close_code)}"
+    )
 
 
 def close_code_message(code: int) -> str:

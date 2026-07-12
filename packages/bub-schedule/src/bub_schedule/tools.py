@@ -8,8 +8,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from bub import tool
+from bub.tools import ToolContext
 from pydantic import BaseModel, Field
-from republic import ToolContext
 
 from bub_schedule.jobs import run_scheduled_reminder
 
@@ -114,29 +114,29 @@ def schedule_list(context: ToolContext) -> str:
 @tool(name="schedule.trigger", context=True)
 async def schedule_trigger(job_id: str, context: ToolContext) -> str:
     """Manually trigger a scheduled job to run immediately.
-    
+
     Executes the job function directly without modifying the schedule.
     The next scheduled run remains unchanged.
     """
     import inspect
-    
+
     scheduler = _ensure_scheduler(context.state)
     try:
         job = scheduler.get_job(job_id)
         if job is None:
             raise RuntimeError(f"job not found: {job_id}")
-        
+
         # Execute job function directly, preserving original schedule
         result = job.func(*job.args, **job.kwargs)
-        
+
         # Handle async job functions
         if inspect.iscoroutine(result):
             await result
-        
+
         next_run = "-"
         if isinstance(job.next_run_time, datetime):
             next_run = job.next_run_time.isoformat()
-        
+
         return f"triggered: {job_id} (next scheduled run: {next_run})"
     except JobLookupError as exc:
         raise RuntimeError(f"job not found: {job_id}") from exc

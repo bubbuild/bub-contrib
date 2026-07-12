@@ -7,10 +7,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
 
+from bub.tape import (
+    AsyncTapeStore,
+    AsyncTapeStoreAdapter,
+    TapeEntry,
+    TapeQuery,
+    TapeStore,
+    is_async_tape_store,
+)
 from opendal import AsyncOperator, Operator
-from republic.tape.entries import TapeEntry
-from republic.tape.query import TapeQuery
-from republic.tape.store import AsyncTapeStore, AsyncTapeStoreAdapter, TapeStore, is_async_tape_store
 
 from tape_dataset_opendal.filters import EntryFilter
 from tape_dataset_opendal.models import ExportLayout, ExportReport, utc_now
@@ -26,10 +31,14 @@ def export_dataset(
     export_layout = layout or ExportLayout()
     compiled_filter = entry_filter or EntryFilter()
     entries_by_tape = {
-        tape: _filter_entries(tape, list(TapeQuery(tape=tape, store=store).all()), compiled_filter)
+        tape: _filter_entries(
+            tape, list(TapeQuery(tape=tape, store=store).all()), compiled_filter
+        )
         for tape in store.list_tapes()
     }
-    files, report = _build_export(entries_by_tape, layout=export_layout, entry_filter=compiled_filter)
+    files, report = _build_export(
+        entries_by_tape, layout=export_layout, entry_filter=compiled_filter
+    )
     _prepare_directories(operator, export_layout)
     for path, payload in files.items():
         operator.write(path, payload)
@@ -52,8 +61,14 @@ async def export_dataset_async(
         entries = list(await TapeQuery(tape=tape, store=async_store).all())
         entries_by_tape[tape] = _filter_entries(tape, entries, compiled_filter)
 
-    files, report = _build_export(entries_by_tape, layout=export_layout, entry_filter=compiled_filter)
-    async_operator = operator if isinstance(operator, AsyncOperator) else operator.to_async_operator()
+    files, report = _build_export(
+        entries_by_tape, layout=export_layout, entry_filter=compiled_filter
+    )
+    async_operator = (
+        operator
+        if isinstance(operator, AsyncOperator)
+        else operator.to_async_operator()
+    )
     await _prepare_directories_async(async_operator, export_layout)
     for path, payload in files.items():
         await async_operator.write(path, payload)
@@ -80,7 +95,9 @@ def _build_export(
         raw_path = ""
         if layout.include_raw_tapes:
             raw_path = _path(layout, layout.raw_dir, f"{_encode_tape_name(tape)}.jsonl")
-            files[raw_path] = _jsonl_bytes(_raw_entry_record(entry) for entry in entries)
+            files[raw_path] = _jsonl_bytes(
+                _raw_entry_record(entry) for entry in entries
+            )
         segments = _segment_rows(tape, entries) if layout.include_segments else []
         segment_rows.extend(segments)
         tape_rows.append(
@@ -121,8 +138,12 @@ def _build_export(
             "manifest": manifest_path,
             "tapes": tapes_path,
             "entries": entries_path,
-            "segments": _path(layout, layout.segments_name) if layout.include_segments else None,
-            "raw_dir": _path(layout, layout.raw_dir) if layout.include_raw_tapes else None,
+            "segments": _path(layout, layout.segments_name)
+            if layout.include_segments
+            else None,
+            "raw_dir": _path(layout, layout.raw_dir)
+            if layout.include_raw_tapes
+            else None,
         },
         "filters": list(entry_filter.expressions),
     }
@@ -246,7 +267,9 @@ def _encode_tape_name(tape: str) -> str:
 
 
 def _json_bytes(payload: Any) -> bytes:
-    return (json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+    return (json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n").encode(
+        "utf-8"
+    )
 
 
 def _jsonl_bytes(rows: Sequence[dict[str, Any]] | Any) -> bytes:
@@ -265,7 +288,9 @@ def _prepare_directories(operator: Operator, layout: ExportLayout) -> None:
         operator.create_dir(directory)
 
 
-async def _prepare_directories_async(operator: AsyncOperator, layout: ExportLayout) -> None:
+async def _prepare_directories_async(
+    operator: AsyncOperator, layout: ExportLayout
+) -> None:
     for directory in _directories(layout):
         await operator.create_dir(directory)
 
@@ -279,5 +304,7 @@ def _directories(layout: ExportLayout) -> list[str]:
     return directories
 
 
-def _filter_entries(tape: str, entries: Sequence[TapeEntry], entry_filter: EntryFilter) -> list[TapeEntry]:
+def _filter_entries(
+    tape: str, entries: Sequence[TapeEntry], entry_filter: EntryFilter
+) -> list[TapeEntry]:
     return [entry.copy() for entry in entries if entry_filter.matches(tape, entry)]

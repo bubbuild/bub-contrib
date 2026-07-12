@@ -3,21 +3,26 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import AsyncIterable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import Protocol, cast
 
 import bub
 from bub import hookimpl
+from bub.runtime import StreamEvent
 from bub.types import State
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
 from bub_codex.utils import with_bub_skills
 
-if TYPE_CHECKING:
-    from bub.builtin.agent import Agent
-
 THREADS_FILE = ".bub-codex-threads.json"
+
+
+class RuntimeAgent(Protocol):
+    async def run_stream(
+        self, *, session_id: str, prompt: str | list[dict], state: State
+    ) -> AsyncIterable[StreamEvent]: ...
 
 
 def _load_thread_id(session_id: str, state: State) -> str | None:
@@ -64,20 +69,27 @@ def _settings() -> CodexSettings:
     return bub.ensure_config(CodexSettings)
 
 
-def _runtime_agent_from_state(state: State) -> Agent | None:
+def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
     agent = state.get("_runtime_agent")
     if agent is None:
         return None
-    return cast("Agent", agent)
+    return cast("RuntimeAgent", agent)
 
 
-async def _run_internal_command(prompt: str, session_id: str, state: State) -> str | None:
+async def _run_internal_command(
+    prompt: str, session_id: str, state: State
+) -> str | None:
     if not prompt.strip().startswith(","):
         return None
     agent = _runtime_agent_from_state(state)
     if agent is None:
         return None
-    return await agent.run(session_id=session_id, prompt=prompt, state=state)
+    stream = await agent.run_stream(session_id=session_id, prompt=prompt, state=state)
+    parts: list[str] = []
+    async for event in stream:
+        if event.kind == "text":
+            parts.append(str(event.data.get("delta", "")))
+    return "".join(parts)
 
 
 @hookimpl

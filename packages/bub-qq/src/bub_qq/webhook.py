@@ -86,8 +86,12 @@ class QQWebhookServer:
             self._write_json(handler, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
-        if self._config.verify_signature and not self._is_signature_valid(handler, body):
-            self._write_json(handler, HTTPStatus.UNAUTHORIZED, {"error": "invalid signature"})
+        if self._config.verify_signature and not self._is_signature_valid(
+            handler, body
+        ):
+            self._write_json(
+                handler, HTTPStatus.UNAUTHORIZED, {"error": "invalid signature"}
+            )
             return
 
         try:
@@ -102,7 +106,9 @@ class QQWebhookServer:
             return
 
         if self._loop is None:
-            self._write_json(handler, HTTPStatus.SERVICE_UNAVAILABLE, {"error": "loop not ready"})
+            self._write_json(
+                handler, HTTPStatus.SERVICE_UNAVAILABLE, {"error": "loop not ready"}
+            )
             return
 
         self._schedule_payload(payload)
@@ -115,13 +121,21 @@ class QQWebhookServer:
     ) -> None:
         data = payload.get("d")
         if not isinstance(data, dict):
-            self._write_json(handler, HTTPStatus.BAD_REQUEST, {"error": "payload.d must be an object"})
+            self._write_json(
+                handler,
+                HTTPStatus.BAD_REQUEST,
+                {"error": "payload.d must be an object"},
+            )
             return
 
         plain_token = str(data.get("plain_token") or "")
         event_ts = str(data.get("event_ts") or "")
         if not plain_token or not event_ts:
-            self._write_json(handler, HTTPStatus.BAD_REQUEST, {"error": "validation payload incomplete"})
+            self._write_json(
+                handler,
+                HTTPStatus.BAD_REQUEST,
+                {"error": "validation payload incomplete"},
+            )
             return
 
         signature = sign_validation_payload(

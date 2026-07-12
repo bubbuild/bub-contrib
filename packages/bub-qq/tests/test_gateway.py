@@ -35,7 +35,9 @@ class OpenAPIClientStub:
         headers: dict[str, str],
     ) -> object:
         del method, params, json, headers
-        return _Response(status=200, payload=self.payload if url.startswith("/gateway") else {})
+        return _Response(
+            status=200, payload=self.payload if url.startswith("/gateway") else {}
+        )
 
 
 class _Response:
@@ -143,7 +145,13 @@ def test_websocket_non_retryable_openapi_errors_are_treated_as_permanent() -> No
         trace_id="trace-1",
         error_code=11253,
         error_message="permission denied",
-        known=QQKnownOpenAPIError(11253, "ErrorCheckAppPrivilegeNotPass", "应用未获得调用接口权限", "permission", False),
+        known=QQKnownOpenAPIError(
+            11253,
+            "ErrorCheckAppPrivilegeNotPass",
+            "应用未获得调用接口权限",
+            "permission",
+            False,
+        ),
     )
 
     assert _is_permanent_connect_error(error) is True
@@ -155,7 +163,9 @@ def test_websocket_retryable_openapi_errors_are_not_treated_as_permanent() -> No
         trace_id="trace-2",
         error_code=22009,
         error_message="msg limit exceed",
-        known=QQKnownOpenAPIError(22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True),
+        known=QQKnownOpenAPIError(
+            22009, "MsgLimitExceed", "消息发送超频", "rate_limit", True
+        ),
     )
 
     assert _is_permanent_connect_error(error) is False

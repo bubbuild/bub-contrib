@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from acp.schema import TextContentBlock
+from bub import RuntimeChoice, RuntimeOptions
 from bub.types import TurnResult
-from republic import StreamEvent, TapeEntry, TapeQuery
+from bub.runtime import StreamEvent
+from bub.tape import TapeEntry, TapeQuery
 
 from bub_acp_server import plugin
 from bub_acp_server.plugin import BubACPAgent
@@ -22,7 +23,9 @@ class FakeClient:
     def __init__(self) -> None:
         self.updates: list[tuple[str, object]] = []
 
-    async def session_update(self, session_id: str, update: object, **kwargs: Any) -> None:
+    async def session_update(
+        self, session_id: str, update: object, **kwargs: Any
+    ) -> None:
         self.updates.append((session_id, update))
 
 
@@ -41,16 +44,22 @@ class FakeFramework:
     async def quit_via_router(self, session_id: str) -> None:
         return None
 
-    async def get_runtime_options(self, *, session_id: str, workspace: Path) -> object:
-        return SimpleNamespace(models=[], current_model=None)
+    async def get_runtime_options(
+        self, *, session_id: str, workspace: Path
+    ) -> RuntimeOptions:
+        return RuntimeOptions()
 
-    async def process_inbound(self, inbound: object, stream_output: bool = False) -> TurnResult:
+    async def process_inbound(
+        self, inbound: object, stream_output: bool = False
+    ) -> TurnResult:
         self.messages.append(inbound)
         self.stream_output_values.append(stream_output)
 
         async def stream():
             yield StreamEvent("text", {"delta": "hello"})
-            yield StreamEvent("tool_call", {"index": 0, "call": {"id": "call-1", "name": "bash"}})
+            yield StreamEvent(
+                "tool_call", {"index": 0, "call": {"id": "call-1", "name": "bash"}}
+            )
             yield StreamEvent("tool_result", {"index": 0, "result": "ok"})
             yield StreamEvent("text", {"delta": " world"})
             yield StreamEvent("final", {"text": "hello world", "ok": True})
@@ -84,7 +93,9 @@ class TapeFramework(FakeFramework):
 
 
 class NoTextFramework(FakeFramework):
-    async def process_inbound(self, inbound: object, stream_output: bool = False) -> TurnResult:
+    async def process_inbound(
+        self, inbound: object, stream_output: bool = False
+    ) -> TurnResult:
         self.messages.append(inbound)
         self.stream_output_values.append(stream_output)
 
@@ -93,7 +104,11 @@ class NoTextFramework(FakeFramework):
 
         async for _ in self.router.wrap_stream(inbound, stream()):
             pass
-        return TurnResult(session_id=inbound.session_id, prompt=inbound.content, model_output="late text")
+        return TurnResult(
+            session_id=inbound.session_id,
+            prompt=inbound.content,
+            model_output="late text",
+        )
 
 
 class ConfigFramework(FakeFramework):
@@ -101,12 +116,21 @@ class ConfigFramework(FakeFramework):
         super().__init__()
         self.runtime_queries: list[tuple[str, Path]] = []
 
-    async def get_runtime_options(self, *, session_id: str, workspace: Path) -> object:
+    async def get_runtime_options(
+        self, *, session_id: str, workspace: Path
+    ) -> RuntimeOptions:
         self.runtime_queries.append((session_id, workspace))
-        return SimpleNamespace(
+        return RuntimeOptions(
             models=[
-                SimpleNamespace(id="openai:gpt-5", name="GPT-5", description="OpenAI model"),
-                SimpleNamespace(id="anthropic:claude-sonnet-4-5", name="Claude Sonnet"),
+                RuntimeChoice(
+                    id="openai:gpt-5",
+                    name="GPT-5",
+                    description="OpenAI model",
+                ),
+                RuntimeChoice(
+                    id="anthropic:claude-sonnet-4-5",
+                    name="Claude Sonnet",
+                ),
             ],
             current_model="openai:gpt-5",
         )
@@ -132,7 +156,9 @@ async def test_initialize_advertises_session_capabilities() -> None:
 async def test_resume_adopts_existing_editor_session_ids(tmp_path: Path) -> None:
     agent = BubACPAgent(FakeFramework())
 
-    resume_response = await agent.resume_session(cwd=str(tmp_path), session_id="zed-session")
+    resume_response = await agent.resume_session(
+        cwd=str(tmp_path), session_id="zed-session"
+    )
     sessions = await agent.list_sessions(cwd=str(tmp_path))
 
     assert resume_response is not None
@@ -141,7 +167,9 @@ async def test_resume_adopts_existing_editor_session_ids(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_load_session_attaches_tape_history_through_streaming_router(tmp_path: Path) -> None:
+async def test_load_session_attaches_tape_history_through_streaming_router(
+    tmp_path: Path,
+) -> None:
     session_id = "zed-session"
     entries = [
         TapeEntry(
@@ -176,7 +204,9 @@ async def test_load_session_attaches_tape_history_through_streaming_router(tmp_p
     response = await agent.load_session(cwd=str(tmp_path), session_id=session_id)
 
     assert response is not None
-    assert framework.tape_store.queries == [plugin._session_tape_name(session_id, tmp_path)]
+    assert framework.tape_store.queries == [
+        plugin._session_tape_name(session_id, tmp_path)
+    ]
     update_names = [update.session_update for _, update in client.updates]
     assert update_names == [
         "user_message_chunk",
@@ -209,7 +239,9 @@ async def test_session_lifecycle_returns_config_options(tmp_path: Path) -> None:
 
     created = await agent.new_session(cwd=str(tmp_path))
     loaded = await agent.load_session(cwd=str(tmp_path), session_id=created.session_id)
-    resumed = await agent.resume_session(cwd=str(tmp_path), session_id=created.session_id)
+    resumed = await agent.resume_session(
+        cwd=str(tmp_path), session_id=created.session_id
+    )
 
     assert created.config_options is not None
     assert created.config_options[0].id == "model"
@@ -229,7 +261,9 @@ async def test_session_lifecycle_returns_config_options(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_config_option_updates_session_runtime_and_returns_config_options(tmp_path: Path) -> None:
+async def test_set_config_option_updates_session_runtime_and_returns_config_options(
+    tmp_path: Path,
+) -> None:
     framework = ConfigFramework()
     agent = BubACPAgent(framework)
     created = await agent.new_session(cwd=str(tmp_path))
@@ -240,13 +274,33 @@ async def test_set_config_option_updates_session_runtime_and_returns_config_opti
         value="anthropic:claude-sonnet-4-5",
     )
 
-    assert agent._sessions[created.session_id].runtime == {"model": "anthropic:claude-sonnet-4-5"}
+    assert agent._sessions[created.session_id].runtime == {
+        "model": "anthropic:claude-sonnet-4-5"
+    }
     assert response.config_options[0].id == "model"
     assert response.config_options[0].current_value == "anthropic:claude-sonnet-4-5"
     assert framework.runtime_queries == [
         (created.session_id, tmp_path),
         (created.session_id, tmp_path),
     ]
+
+
+def test_runtime_options_fall_back_when_persisted_model_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    session = plugin.ACPSession(
+        session_id="session",
+        cwd=tmp_path,
+        runtime={"model": "removed:model"},
+    )
+    options = RuntimeOptions(
+        models=[RuntimeChoice(id="available:model")],
+        current_model="available:model",
+    )
+
+    config_options = plugin._runtime_options_to_acp_config_options(options, session)
+
+    assert config_options[0].current_value == "available:model"
 
 
 @pytest.mark.asyncio
@@ -262,14 +316,19 @@ async def test_prompt_passes_model_selection_to_bub_context(tmp_path: Path) -> N
         value="anthropic:claude-sonnet-4-5",
     )
 
-    await agent.prompt([TextContentBlock(type="text", text="hello")], session_id=created.session_id)
+    await agent.prompt(
+        [TextContentBlock(type="text", text="hello")],
+        session_id=created.session_id,
+    )
 
     assert framework.messages[0].context["model"] == "anthropic:claude-sonnet-4-5"
     assert not hasattr(framework.messages[0], "runtime")
 
 
 @pytest.mark.asyncio
-async def test_session_store_expands_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_session_store_expands_user_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("BUB_HOME", "~/.custom-bub")
 
@@ -280,7 +339,9 @@ async def test_session_store_expands_user_home(tmp_path: Path, monkeypatch: pyte
 
 
 @pytest.mark.asyncio
-async def test_run_acp_agent_registers_resume_routes_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_acp_agent_registers_resume_routes_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     class RunningFramework(FakeFramework):
@@ -294,7 +355,9 @@ async def test_run_acp_agent_registers_resume_routes_by_default(monkeypatch: pyt
 
             return Context()
 
-    async def fake_run_agent(agent: object, *, use_unstable_protocol: bool = False) -> None:
+    async def fake_run_agent(
+        agent: object, *, use_unstable_protocol: bool = False
+    ) -> None:
         captured["agent"] = agent
         captured["use_unstable_protocol"] = use_unstable_protocol
 
@@ -346,6 +409,8 @@ async def test_prompt_sends_complete_output_when_stream_has_no_text_chunks() -> 
     agent.on_connect(client)
     session = await agent.new_session(cwd=str(Path.cwd()))
 
-    await agent.prompt([TextContentBlock(type="text", text="hello")], session_id=session.session_id)
+    await agent.prompt(
+        [TextContentBlock(type="text", text="hello")], session_id=session.session_id
+    )
 
     assert [update.content.text for _, update in client.updates] == ["late text"]

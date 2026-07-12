@@ -6,8 +6,8 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from bub.envelope import normalize_envelope
-from republic import StreamEvent, TapeEntry
-from republic.tape.entries import utc_now
+from bub.runtime import StreamEvent
+from bub.tape import TapeEntry, utc_now
 
 BUB_EXTISM_ABI_VERSION = "bub.extism.v1"
 _SKIP_JSON_VALUE = object()
@@ -131,8 +131,14 @@ def _encode_json_value(value: Any) -> Any:
         return value
     if isinstance(value, Mapping):
         return mapping_to_json({str(key): item for key, item in value.items()})
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray | memoryview):
-        return [encoded for item in value if (encoded := _encode_or_skip(item)) is not _SKIP_JSON_VALUE]
+    if isinstance(value, Sequence) and not isinstance(
+        value, str | bytes | bytearray | memoryview
+    ):
+        return [
+            encoded
+            for item in value
+            if (encoded := _encode_or_skip(item)) is not _SKIP_JSON_VALUE
+        ]
     if isinstance(value, StreamEvent):
         return {
             "kind": value.kind,

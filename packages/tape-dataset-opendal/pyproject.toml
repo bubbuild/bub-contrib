@@ -1,14 +1,14 @@
 [project]
 name = "tape-dataset-opendal"
 version = "0.1.0"
-description = "Backend-agnostic tape dataset export over the standard Republic tape store interface"
+description = "Backend-agnostic tape dataset export over the standard Bub tape store interface"
 readme = "README.md"
 authors = [{ name = "Chojan Shang", email = "psiace@apache.org" }]
 requires-python = ">=3.12"
 dependencies = [
+    "bub",
     "cel-python",
     "opendal>=0.46.0",
-    "republic>=0.5.6",
     "typer>=0.24.1",
 ]
 

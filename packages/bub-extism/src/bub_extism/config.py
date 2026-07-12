@@ -28,9 +28,9 @@ ALLOWED_HOOK_NAMES = frozenset((*PLUGIN_HOOK_NAMES, CLI_HOOK_NAME))
 
 
 def default_config_path() -> Path:
-    from bub.builtin.settings import load_settings
+    import bub
 
-    return load_settings().home / "extism.json"
+    return bub.home / "extism.json"
 
 
 def normalize_hook_bindings(hooks: dict[str, str]) -> dict[str, str]:
@@ -40,7 +40,9 @@ def normalize_hook_bindings(hooks: dict[str, str]) -> dict[str, str]:
         export_text = str(export_name).strip()
         if hook_text not in ALLOWED_HOOK_NAMES:
             supported = ", ".join(sorted(ALLOWED_HOOK_NAMES))
-            raise ValueError(f"unsupported hook '{hook_text}'; expected one of: {supported}")
+            raise ValueError(
+                f"unsupported hook '{hook_text}'; expected one of: {supported}"
+            )
         if not export_text:
             raise ValueError(f"hook '{hook_text}' requires a non-empty export name")
         normalized[hook_text] = export_text

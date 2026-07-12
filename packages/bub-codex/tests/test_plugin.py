@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from bub.runtime import AsyncStreamEvents, StreamEvent
 
 from bub_codex import plugin
 
@@ -14,11 +15,16 @@ class FakeAgent:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, object]]] = []
 
-    async def run(
+    async def run_stream(
         self, *, session_id: str, prompt: str, state: dict[str, object]
-    ) -> str:
+    ) -> AsyncStreamEvents:
         self.calls.append((session_id, prompt, state))
-        return "internal-command-result"
+
+        async def events():
+            yield StreamEvent("text", {"delta": "internal-command"})
+            yield StreamEvent("text", {"delta": "-result"})
+
+        return AsyncStreamEvents(events())
 
 
 def test_run_model_delegates_internal_commands_to_runtime_agent() -> None:
@@ -46,7 +52,9 @@ def test_run_model_uses_codex_for_normal_prompt(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-2", state=state))
@@ -75,7 +83,9 @@ def test_run_model_saves_session_id_from_stderr(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-3", state=state))

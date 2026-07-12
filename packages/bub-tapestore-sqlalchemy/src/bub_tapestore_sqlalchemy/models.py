@@ -13,9 +13,7 @@ class Base(DeclarativeBase):
 
 class TapeRecord(Base):
     __tablename__ = "tapes"
-    __table_args__ = (
-        Index("uq_tapes_name_key", "name_key", unique=True),
-    )
+    __table_args__ = (Index("uq_tapes_name_key", "name_key", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -32,7 +30,9 @@ class TapeEntryRecord(Base):
     __tablename__ = "tape_entries"
     __table_args__ = (
         Index("idx_tape_entries_kind", "tape_id", "kind", "entry_id"),
-        Index("idx_tape_entries_anchor_name_key", "tape_id", "anchor_name_key", "entry_id"),
+        Index(
+            "idx_tape_entries_anchor_name_key", "tape_id", "anchor_name_key", "entry_id"
+        ),
     )
 
     tape_id: Mapped[int] = mapped_column(

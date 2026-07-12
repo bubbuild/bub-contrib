@@ -3,8 +3,13 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import bub_tapestore_otel.exporter as exporter
-from bub_tapestore_otel.exporter import OTelTapeExporter, _instrument_trace, _should_flush_batch, build_tape_trace
-from republic import TapeEntry
+from bub_tapestore_otel.exporter import (
+    OTelTapeExporter,
+    _instrument_trace,
+    _should_flush_batch,
+    build_tape_trace,
+)
+from bub.tape import TapeEntry
 
 
 def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> None:
@@ -17,7 +22,11 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
             data={
                 "provider": "openai",
                 "model": "gpt-5-mini",
-                "usage": {"prompt_tokens": 11, "completion_tokens": 3, "total_tokens": 14},
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 3,
+                    "total_tokens": 14,
+                },
             },
         ),
         TapeEntry.event("loop.step", data={"status": "ok", "elapsed_ms": 125}),
@@ -31,7 +40,9 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
     assert trace.agent_attributes["gen_ai.provider.name"] == "openai"
     assert trace.agent_attributes["gen_ai.request.model"] == "gpt-5-mini"
     assert trace.agent_attributes["gen_ai.conversation.id"] == "chat__1"
-    assert trace.agent_attributes["input.value"] == "system: system rules\nuser: say hello"
+    assert (
+        trace.agent_attributes["input.value"] == "system: system rules\nuser: say hello"
+    )
     assert trace.agent_attributes["output.value"] == "hello"
 
     assert trace.llm_attributes["openinference.span.kind"] == "LLM"
@@ -42,7 +53,9 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
     assert trace.llm_attributes["gen_ai.usage.output_tokens"] == 3
     assert trace.llm_attributes["llm.token_count.total"] == 14
     assert trace.llm_attributes["llm.input_messages.0.message.role"] == "system"
-    assert trace.llm_attributes["llm.input_messages.0.message.content"] == "system rules"
+    assert (
+        trace.llm_attributes["llm.input_messages.0.message.content"] == "system rules"
+    )
     assert trace.llm_attributes["llm.input_messages.1.message.role"] == "user"
     assert trace.llm_attributes["llm.input_messages.1.message.content"] == "say hello"
     assert trace.llm_attributes["llm.output_messages.0.message.role"] == "assistant"
@@ -54,7 +67,9 @@ def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> No
 def test_build_tape_trace_exports_tool_calls_and_results() -> None:
     entries = [
         TapeEntry.message({"role": "user", "content": "search docs"}),
-        TapeEntry.tool_call([{"id": "call_1", "name": "search", "arguments": {"query": "otel genai"}}]),
+        TapeEntry.tool_call(
+            [{"id": "call_1", "name": "search", "arguments": {"query": "otel genai"}}]
+        ),
         TapeEntry.tool_result([{"title": "OpenTelemetry GenAI"}]),
         TapeEntry.event("loop.step", data={"status": "ok"}),
     ]
@@ -65,10 +80,20 @@ def test_build_tape_trace_exports_tool_calls_and_results() -> None:
     assert trace.tool_calls[0].name == "search"
     assert trace.tool_calls[0].arguments == '{"query":"otel genai"}'
     assert trace.tool_calls[0].result == '{"title":"OpenTelemetry GenAI"}'
-    assert trace.llm_attributes["llm.output_messages.0.message.tool_calls.0.tool_call.id"] == "call_1"
-    assert trace.llm_attributes["llm.output_messages.0.message.tool_calls.0.tool_call.function.name"] == "search"
     assert (
-        trace.llm_attributes["llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"]
+        trace.llm_attributes["llm.output_messages.0.message.tool_calls.0.tool_call.id"]
+        == "call_1"
+    )
+    assert (
+        trace.llm_attributes[
+            "llm.output_messages.0.message.tool_calls.0.tool_call.function.name"
+        ]
+        == "search"
+    )
+    assert (
+        trace.llm_attributes[
+            "llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"
+        ]
         == '{"query":"otel genai"}'
     )
     assert trace.steps[0].tool_calls[0].name == "search"
@@ -79,17 +104,25 @@ def test_build_tape_trace_groups_a_turn_into_steps() -> None:
     entries = [
         TapeEntry.event("loop.step.start", data={"step": 1, "prompt": "first"}),
         TapeEntry.message({"role": "user", "content": "first"}),
-        TapeEntry.tool_call([{"id": "call_1", "name": "search", "arguments": {"query": "otel"}}]),
+        TapeEntry.tool_call(
+            [{"id": "call_1", "name": "search", "arguments": {"query": "otel"}}]
+        ),
         TapeEntry.tool_result(["result"]),
         TapeEntry.event(
             "run",
             data={
                 "provider": "openai",
                 "model": "gpt-5-mini",
-                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "total_tokens": 12,
+                },
             },
         ),
-        TapeEntry.event("loop.step", data={"step": 1, "status": "continue", "elapsed_ms": 100}),
+        TapeEntry.event(
+            "loop.step", data={"step": 1, "status": "continue", "elapsed_ms": 100}
+        ),
         TapeEntry.event("loop.step.start", data={"step": 2, "prompt": "second"}),
         TapeEntry.message({"role": "assistant", "content": "done"}),
         TapeEntry.event(
@@ -97,10 +130,16 @@ def test_build_tape_trace_groups_a_turn_into_steps() -> None:
             data={
                 "provider": "openai",
                 "model": "gpt-5-mini",
-                "usage": {"prompt_tokens": 20, "completion_tokens": 4, "total_tokens": 24},
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 4,
+                    "total_tokens": 24,
+                },
             },
         ),
-        TapeEntry.event("loop.step", data={"step": 2, "status": "ok", "elapsed_ms": 200}),
+        TapeEntry.event(
+            "loop.step", data={"step": 2, "status": "ok", "elapsed_ms": 200}
+        ),
     ]
 
     trace = build_tape_trace("agent__steps", entries)
@@ -126,14 +165,18 @@ def test_build_tape_trace_falls_back_to_prompt_when_messages_are_missing() -> No
 
     assert trace.input_messages[0].role == "user"
     assert trace.input_messages[0].content == "plain prompt"
-    assert trace.llm_attributes["llm.input_messages.0.message.content"] == "plain prompt"
+    assert (
+        trace.llm_attributes["llm.input_messages.0.message.content"] == "plain prompt"
+    )
 
 
 def test_batch_flushes_on_completed_tape_turn_markers() -> None:
     assert _should_flush_batch(TapeEntry.event("loop.step", data={"status": "ok"}))
     assert _should_flush_batch(TapeEntry.event("loop.step", data={"status": "error"}))
     assert _should_flush_batch(TapeEntry.event("command", data={}))
-    assert not _should_flush_batch(TapeEntry.event("loop.step", data={"status": "continue"}))
+    assert not _should_flush_batch(
+        TapeEntry.event("loop.step", data={"status": "continue"})
+    )
     assert not _should_flush_batch(TapeEntry.event("loop.step.start", data={}))
 
 
@@ -155,7 +198,9 @@ def test_instrument_trace_nests_steps_and_tools_under_agent(monkeypatch) -> None
         "agent__nested",
         [
             TapeEntry.message({"role": "user", "content": "search docs"}),
-            TapeEntry.tool_call([{"id": "call_1", "name": "search", "arguments": {"query": "otel"}}]),
+            TapeEntry.tool_call(
+                [{"id": "call_1", "name": "search", "arguments": {"query": "otel"}}]
+            ),
             TapeEntry.tool_result(["result"]),
             TapeEntry.event("run", data={"provider": "openai", "model": "gpt-5-mini"}),
             TapeEntry.event("loop.step", data={"step": 1, "status": "ok"}),
@@ -166,12 +211,18 @@ def test_instrument_trace_nests_steps_and_tools_under_agent(monkeypatch) -> None
 
     assert spans == [
         ("invoke_agent bub", None, trace.agent_attributes),
-        ("bub.agent.step", "invoke_agent bub", exporter._step_span_attributes(trace.steps[0])),
+        (
+            "bub.agent.step",
+            "invoke_agent bub",
+            exporter._step_span_attributes(trace.steps[0]),
+        ),
         ("chat gpt-5-mini", "bub.agent.step", trace.steps[0].llm_attributes),
         (
             "execute_tool search",
             "bub.agent.step",
-            exporter._tool_span_attributes(trace.steps[0], trace.steps[0].tool_calls[0]),
+            exporter._tool_span_attributes(
+                trace.steps[0], trace.steps[0].tool_calls[0]
+            ),
         ),
     ]
     assert spans[1][2]["bub.agent.step"] == 1
@@ -189,17 +240,27 @@ def test_exporter_uses_span_processor_without_shutdown(monkeypatch) -> None:
         def force_flush(self, *, timeout_millis: int) -> None:
             calls.append(f"force_flush:{timeout_millis}")
 
-    fake_runtime = exporter.OTelExporterRuntime(provider=FakeProvider(), tracer=object())
+    fake_runtime = exporter.OTelExporterRuntime(
+        provider=FakeProvider(), tracer=object()
+    )
 
-    monkeypatch.setattr(exporter, "_build_otel_exporter_runtime", lambda _service_name: calls.append("build_runtime") or fake_runtime)
+    monkeypatch.setattr(
+        exporter,
+        "_build_otel_exporter_runtime",
+        lambda _service_name: calls.append("build_runtime") or fake_runtime,
+    )
     monkeypatch.setattr(
         exporter,
         "_instrument_trace",
-        lambda _trace, *, tracer: calls.append(f"instrument_trace:{tracer is fake_runtime.tracer}"),
+        lambda _trace, *, tracer: calls.append(
+            f"instrument_trace:{tracer is fake_runtime.tracer}"
+        ),
     )
 
     tape_exporter = OTelTapeExporter()
-    tape_exporter.append("tape-1", TapeEntry.message({"role": "user", "content": "hello"}))
+    tape_exporter.append(
+        "tape-1", TapeEntry.message({"role": "user", "content": "hello"})
+    )
     tape_exporter.append("tape-1", TapeEntry.event("loop.step", data={"status": "ok"}))
     tape_exporter.append("tape-2", TapeEntry.event("command", data={}))
 

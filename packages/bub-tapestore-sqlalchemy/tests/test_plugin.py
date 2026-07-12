@@ -19,7 +19,9 @@ def test_config_defaults_to_bub_home(monkeypatch, tmp_path: Path) -> None:
     assert str(tmp_path) in settings.resolved_url
 
 
-def test_config_reads_workspace_dotenv_without_bub_home(monkeypatch, tmp_path: Path) -> None:
+def test_config_reads_workspace_dotenv_without_bub_home(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "runtime-home"))
     monkeypatch.delenv("BUB_TAPESTORE_SQLALCHEMY_URL", raising=False)
@@ -62,7 +64,9 @@ def test_tape_store_from_env_returns_fresh_store(monkeypatch, tmp_path: Path) ->
 
 
 def test_onboard_config_collects_sqlalchemy_settings(monkeypatch) -> None:
-    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(
         plugin.bub_inquirer,
         "ask_text",
@@ -78,7 +82,9 @@ def test_onboard_config_collects_sqlalchemy_settings(monkeypatch) -> None:
 
 
 def test_onboard_config_skips_sqlalchemy_when_declined(monkeypatch) -> None:
-    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False
+    )
 
     assert plugin.onboard_config({}) is None
 

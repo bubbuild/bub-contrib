@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-from republic import AsyncStreamEvents, StreamEvent, StreamState
+from bub.runtime import AsyncStreamEvents, StreamEvent, StreamState
 
 
 def stream_events_from_value(value: Any) -> AsyncStreamEvents | None:
@@ -27,11 +27,15 @@ def _stream_payload(value: Any) -> tuple[list[StreamEvent], StreamState]:
         usage = value.get("usage")
         if usage is not None:
             if not isinstance(usage, dict):
-                raise RuntimeError("Extism run_model_stream usage must be a JSON object")
+                raise RuntimeError(
+                    "Extism run_model_stream usage must be a JSON object"
+                )
             state.usage = usage
 
     if not isinstance(events_value, list):
-        raise RuntimeError("Extism run_model_stream must return a list of stream events")
+        raise RuntimeError(
+            "Extism run_model_stream must return a list of stream events"
+        )
     return ([_stream_event_from_dict(item) for item in events_value], state)
 
 

@@ -65,7 +65,9 @@ def test_plugin_provides_singleton_store(monkeypatch) -> None:
     try:
         assert isinstance(first, RedisTapeStore)
         assert first is second
-        assert first._client.connection_pool.connection_kwargs["host"] == "cached.example"
+        assert (
+            first._client.connection_pool.connection_kwargs["host"] == "cached.example"
+        )
         assert first._client.connection_pool.connection_kwargs["db"] == 4
     finally:
         plugin._store.cache_clear()
@@ -75,7 +77,9 @@ def test_plugin_provides_singleton_store(monkeypatch) -> None:
 
 def test_onboard_config_collects_redis_settings(monkeypatch) -> None:
     text_answers = iter(["redis://cache.example:6379/5", "custom:tapes"])
-    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(
         plugin.bub_inquirer,
         "ask_text",
@@ -91,6 +95,8 @@ def test_onboard_config_collects_redis_settings(monkeypatch) -> None:
 
 
 def test_onboard_config_skips_redis_when_declined(monkeypatch) -> None:
-    monkeypatch.setattr(plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_confirm", lambda *args, **kwargs: False
+    )
 
     assert plugin.onboard_config({}) is None

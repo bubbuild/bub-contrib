@@ -84,7 +84,10 @@ def _build_go_example(tmp_path: Path) -> Path:
     return wasm_path
 
 
-@pytest.mark.skipif(not _has_rust_wasm_target(), reason="cargo or wasm32-unknown-unknown target is not installed")
+@pytest.mark.skipif(
+    not _has_rust_wasm_target(),
+    reason="cargo or wasm32-unknown-unknown target is not installed",
+)
 def test_rust_run_model_example_builds_and_runs(tmp_path: Path) -> None:
     wasm_path = _build_rust_example()
     config_path = _write_config(

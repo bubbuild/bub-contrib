@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from republic import TapeEntry
+from bub.tape import TapeEntry
 
 from bub_extism.bridge import ExtismBridge
 from bub_extism.codec import tape_entry_from_dict, tape_entry_to_dict
@@ -11,7 +11,7 @@ from bub_extism.config import ExtismPluginConfig
 from bub_extism.descriptors import normalize_function_bindings, require_mapping
 
 if TYPE_CHECKING:
-    from republic import TapeQuery
+    from bub.tape import TapeQuery
 
 
 class ExtismTapeStore:
@@ -56,7 +56,12 @@ class ExtismTapeStore:
             return []
         if not isinstance(value, list):
             raise RuntimeError("Extism tape fetch_all must return a list")
-        return [tape_entry_from_dict(require_mapping(item, message="Extism tape entry must be an object")) for item in value]
+        return [
+            tape_entry_from_dict(
+                require_mapping(item, message="Extism tape entry must be an object")
+            )
+            for item in value
+        ]
 
     def append(self, tape: str, entry: TapeEntry) -> None:
         self._call("append", {"tape": tape, "entry": tape_entry_to_dict(entry)})
@@ -97,8 +102,12 @@ def _query_to_dict(query: TapeQuery) -> dict[str, Any]:
         "query": query._query,
         "after_anchor": query._after_anchor,
         "after_last": query._after_last,
-        "between_anchors": list(query._between_anchors) if query._between_anchors is not None else None,
-        "between_dates": list(query._between_dates) if query._between_dates is not None else None,
+        "between_anchors": list(query._between_anchors)
+        if query._between_anchors is not None
+        else None,
+        "between_dates": list(query._between_dates)
+        if query._between_dates is not None
+        else None,
         "kinds": list(query._kinds),
         "limit": query._limit,
     }

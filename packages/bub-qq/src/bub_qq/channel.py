@@ -33,7 +33,9 @@ class QQChannel(Channel):
         self._token_provider = QQTokenProvider(self._config)
         self._openapi = QQOpenAPI(self._config, self._token_provider)
         self._webhook = QQWebhookServer(self._config, self._handle_transport_payload)
-        self._websocket = QQWebSocketClient(self._config, self._openapi, self._handle_transport_payload)
+        self._websocket = QQWebSocketClient(
+            self._config, self._openapi, self._handle_transport_payload
+        )
         self._c2c_deduper = QQC2CDeduper(self._config.inbound_dedupe_size)
         self._c2c_state = QQC2CSessionState(
             latest_message_id_by_session={},

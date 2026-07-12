@@ -4,9 +4,7 @@ from collections.abc import Iterable
 from typing import Protocol
 
 from loguru import logger
-from republic import AsyncTapeStore, TapeEntry, TapeQuery
-from republic.tape import TapeStore
-from republic.tape.store import is_async_tape_store
+from bub.tape import AsyncTapeStore, TapeEntry, TapeQuery, TapeStore, is_async_tape_store
 
 
 class TapeExporter(Protocol):
@@ -18,7 +16,9 @@ class TapeExporter(Protocol):
 class OTelTapeStore:
     """Transparent async tape-store decorator that observes committed writes."""
 
-    def __init__(self, inner: TapeStore | AsyncTapeStore, exporter: TapeExporter) -> None:
+    def __init__(
+        self, inner: TapeStore | AsyncTapeStore, exporter: TapeExporter
+    ) -> None:
         self._inner = inner
         self._exporter = exporter
 
@@ -40,7 +40,9 @@ class OTelTapeStore:
         try:
             self._exporter.append(tape, entry)
         except Exception:
-            logger.opt(exception=True).warning("tapestore.otel.export_failed action=append tape={}", tape)
+            logger.opt(exception=True).warning(
+                "tapestore.otel.export_failed action=append tape={}", tape
+            )
 
     async def reset(self, tape: str) -> None:
         if is_async_tape_store(self._inner):
@@ -50,4 +52,6 @@ class OTelTapeStore:
         try:
             self._exporter.reset(tape)
         except Exception:
-            logger.opt(exception=True).warning("tapestore.otel.export_failed action=reset tape={}", tape)
+            logger.opt(exception=True).warning(
+                "tapestore.otel.export_failed action=reset tape={}", tape
+            )

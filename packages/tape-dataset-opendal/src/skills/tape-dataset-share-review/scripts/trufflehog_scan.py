@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -48,7 +47,9 @@ def main() -> int:
     report = build_report(target, findings, command)
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     print(
         json.dumps(
@@ -67,7 +68,9 @@ def main() -> int:
     return 0
 
 
-def resolve_command(target: Path, *, forced_runtime: str | None) -> tuple[list[str], str]:
+def resolve_command(
+    target: Path, *, forced_runtime: str | None
+) -> tuple[list[str], str]:
     binary = shutil.which("trufflehog")
     if binary:
         return ([binary, "filesystem"], str(target))
@@ -84,7 +87,18 @@ def resolve_command(target: Path, *, forced_runtime: str | None) -> tuple[list[s
     if runtime.endswith("podman"):
         volume_flag = f"{parent}:{mount_target}:ro,z"
     scan_path = f"{mount_target}/{target.name}"
-    return ([runtime, "run", "--rm", "-v", volume_flag, "docker.io/trufflesecurity/trufflehog:latest", "filesystem"], scan_path)
+    return (
+        [
+            runtime,
+            "run",
+            "--rm",
+            "-v",
+            volume_flag,
+            "docker.io/trufflesecurity/trufflehog:latest",
+            "filesystem",
+        ],
+        scan_path,
+    )
 
 
 def trufflehog_args(scan_path: str) -> list[str]:
@@ -100,7 +114,9 @@ def trufflehog_args(scan_path: str) -> list[str]:
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(command, text=True, capture_output=True, check=False)
     if result.returncode != 0:
-        raise SystemExit(result.stderr.strip() or result.stdout.strip() or "trufflehog scan failed")
+        raise SystemExit(
+            result.stderr.strip() or result.stdout.strip() or "trufflehog scan failed"
+        )
     return result
 
 
@@ -153,7 +169,9 @@ def parse_finding(payload: Any) -> dict[str, Any] | None:
     status = parse_status(payload)
     return {
         "detector": detector,
-        "decoder": payload.get("DecoderName") if isinstance(payload.get("DecoderName"), str) else None,
+        "decoder": payload.get("DecoderName")
+        if isinstance(payload.get("DecoderName"), str)
+        else None,
         "status": status,
         "file": filesystem.get("file"),
         "line": filesystem.get("line"),
@@ -193,7 +211,9 @@ def read_filesystem_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def build_report(target: Path, findings: list[dict[str, Any]], command: list[str]) -> dict[str, Any]:
+def build_report(
+    target: Path, findings: list[dict[str, Any]], command: list[str]
+) -> dict[str, Any]:
     counter = Counter(finding["status"] for finding in findings)
     detectors = Counter(finding["detector"] for finding in findings)
     return {

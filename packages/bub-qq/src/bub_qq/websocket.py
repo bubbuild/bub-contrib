@@ -223,10 +223,14 @@ class QQWebSocketClient:
 
     async def _connect_once(self, spec: _ShardSpec) -> None:
         state = self._shard_states[spec.index]
-        timeout = aiohttp.ClientTimeout(total=None, sock_connect=self._config.timeout_seconds)
+        timeout = aiohttp.ClientTimeout(
+            total=None, sock_connect=self._config.timeout_seconds
+        )
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.ws_connect(spec.url, heartbeat=None) as ws:
-                logger.info("qq.websocket.connected shard={} url={}", spec.label, spec.url)
+                logger.info(
+                    "qq.websocket.connected shard={} url={}", spec.label, spec.url
+                )
                 heartbeat_interval = await self._await_hello(ws)
                 await self._identify_or_resume(ws, spec, state)
                 state.heartbeat_task = asyncio.create_task(
@@ -237,8 +241,13 @@ class QQWebSocketClient:
                         if message.type == aiohttp.WSMsgType.TEXT:
                             await self._handle_text_frame(ws, spec, state, message.data)
                         elif message.type == aiohttp.WSMsgType.ERROR:
-                            raise RuntimeError(f"qq websocket error frame: {ws.exception()}")
-                        elif message.type in {aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED}:
+                            raise RuntimeError(
+                                f"qq websocket error frame: {ws.exception()}"
+                            )
+                        elif message.type in {
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSED,
+                        }:
                             break
                 finally:
                     if state.heartbeat_task is not None:
@@ -252,7 +261,9 @@ class QQWebSocketClient:
         while True:
             message = await ws.receive()
             if message.type != aiohttp.WSMsgType.TEXT:
-                raise RuntimeError(f"qq websocket expected hello text frame, got {message.type}")
+                raise RuntimeError(
+                    f"qq websocket expected hello text frame, got {message.type}"
+                )
             payload = _parse_payload(message.data)
             op = payload.get("op")
             if op != 10:
@@ -302,7 +313,9 @@ class QQWebSocketClient:
             lock = self._get_identify_lock()
             async with lock:
                 now = self._monotonic()
-                while self._identify_attempts and now - self._identify_attempts[0] >= 5.0:
+                while (
+                    self._identify_attempts and now - self._identify_attempts[0] >= 5.0
+                ):
                     self._identify_attempts.popleft()
                 if len(self._identify_attempts) < max_concurrency:
                     self._identify_attempts.append(now)

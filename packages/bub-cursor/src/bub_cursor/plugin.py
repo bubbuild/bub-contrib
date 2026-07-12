@@ -4,13 +4,15 @@ import asyncio
 import contextlib
 import json
 import os
+from collections.abc import AsyncIterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import Annotated, Any, Protocol, cast
 
 import bub
 import typer
 from bub import BubFramework, hookimpl
 from bub.builtin.auth import app as auth_app
+from bub.runtime import StreamEvent
 from bub.types import State
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
@@ -23,9 +25,6 @@ from bub_cursor.auth import (
 )
 from bub_cursor.utils import with_bub_skills
 
-if TYPE_CHECKING:
-    from bub.builtin.agent import Agent
-
 THREADS_FILE = ".bub-cursor-threads.json"
 CliPathOption = Annotated[
     str | None,
@@ -34,6 +33,12 @@ CliPathOption = Annotated[
         help="Cursor CLI executable path. Defaults to BUB_CURSOR_CLI_PATH or auto-detection.",
     ),
 ]
+
+
+class RuntimeAgent(Protocol):
+    async def run_stream(
+        self, *, session_id: str, prompt: str | list[dict], state: State
+    ) -> AsyncIterable[StreamEvent]: ...
 
 
 @bub.config(name="cursor")
@@ -85,11 +90,11 @@ def _save_thread_id(session_id: str, thread_id: str, state: State) -> None:
         json.dump(threads, f, indent=2)
 
 
-def _runtime_agent_from_state(state: State) -> Agent | None:
+def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
     agent = state.get("_runtime_agent")
     if agent is None:
         return None
-    return cast("Agent", agent)
+    return cast("RuntimeAgent", agent)
 
 
 def _prompt_to_text(prompt: str | list[dict[str, Any]]) -> str:
@@ -110,7 +115,12 @@ async def _run_internal_command(
     agent = _runtime_agent_from_state(state)
     if agent is None:
         return None
-    return await agent.run(session_id=session_id, prompt=prompt, state=state)
+    stream = await agent.run_stream(session_id=session_id, prompt=prompt, state=state)
+    parts: list[str] = []
+    async for event in stream:
+        if event.kind == "text":
+            parts.append(str(event.data.get("delta", "")))
+    return "".join(parts)
 
 
 @auth_app.command(name="cursor")
@@ -200,7 +210,9 @@ async def run_model(
         except TimeoutError:
             process.kill()
             await process.communicate()
-            return f"Cursor process timed out after {settings.timeout_seconds:g} seconds."
+            return (
+                f"Cursor process timed out after {settings.timeout_seconds:g} seconds."
+            )
 
     stdout_text = stdout.decode() if stdout else ""
     stderr_text = stderr.decode() if stderr else ""

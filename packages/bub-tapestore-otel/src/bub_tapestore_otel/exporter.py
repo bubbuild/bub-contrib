@@ -9,7 +9,7 @@ from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
-from republic import TapeEntry
+from bub.tape import TapeEntry
 
 FORCE_FLUSH_TIMEOUT_MS = 3_000
 DEFAULT_AGENT_NAME = "bub"
@@ -87,18 +87,24 @@ class OTelTapeExporter:
         try:
             self._append(tape, entry)
         except Exception:
-            logger.opt(exception=True).warning("tapestore.otel.export_failed action=append tape={}", tape)
+            logger.opt(exception=True).warning(
+                "tapestore.otel.export_failed action=append tape={}", tape
+            )
 
     def reset(self, tape: str) -> None:
         try:
             self._reset(tape)
         except Exception:
-            logger.opt(exception=True).warning("tapestore.otel.export_failed action=reset tape={}", tape)
+            logger.opt(exception=True).warning(
+                "tapestore.otel.export_failed action=reset tape={}", tape
+            )
 
     def _ensure_exporter(self) -> OTelExporterRuntime:
         with self._lock:
             if self._runtime is None:
-                self._runtime = _build_otel_exporter_runtime(self._settings.service_name)
+                self._runtime = _build_otel_exporter_runtime(
+                    self._settings.service_name
+                )
             return self._runtime
 
     def _flush(self, runtime: OTelExporterRuntime) -> None:
@@ -109,14 +115,20 @@ class OTelTapeExporter:
         batch = self._record_entry(tape, entry)
         if batch is None:
             return
-        _instrument_trace(build_tape_trace(tape, batch, agent_name=self._settings.agent_name), tracer=runtime.tracer)
+        _instrument_trace(
+            build_tape_trace(tape, batch, agent_name=self._settings.agent_name),
+            tracer=runtime.tracer,
+        )
         self._flush(runtime)
 
     def _reset(self, tape: str) -> None:
         runtime = self._ensure_exporter()
         batch = self._pop_pending(tape)
         if batch:
-            _instrument_trace(build_tape_trace(tape, batch, agent_name=self._settings.agent_name), tracer=runtime.tracer)
+            _instrument_trace(
+                build_tape_trace(tape, batch, agent_name=self._settings.agent_name),
+                tracer=runtime.tracer,
+            )
         _instrument_reset(tape, tracer=runtime.tracer)
         self._flush(runtime)
 
@@ -139,7 +151,9 @@ def _build_otel_exporter_runtime(service_name: str) -> OTelExporterRuntime:
 
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     provider.add_span_processor(_build_otel_span_processor())
-    return OTelExporterRuntime(provider=provider, tracer=provider.get_tracer(TRACER_NAME))
+    return OTelExporterRuntime(
+        provider=provider, tracer=provider.get_tracer(TRACER_NAME)
+    )
 
 
 def _build_otel_span_processor() -> object:
@@ -149,8 +163,13 @@ def _build_otel_span_processor() -> object:
     return BatchSpanProcessor(OTLPSpanExporter())
 
 
-def build_tape_trace(tape: str, entries: list[TapeEntry], *, agent_name: str = DEFAULT_AGENT_NAME) -> TapeTrace:
-    steps = [_build_step_trace(tape, step, index) for index, step in enumerate(_split_step_entries(entries), start=1)]
+def build_tape_trace(
+    tape: str, entries: list[TapeEntry], *, agent_name: str = DEFAULT_AGENT_NAME
+) -> TapeTrace:
+    steps = [
+        _build_step_trace(tape, step, index)
+        for index, step in enumerate(_split_step_entries(entries), start=1)
+    ]
     prompt_tokens, completion_tokens, total_tokens = _combined_usage(entries)
     fields = _trace_projection_fields(tape, entries)
     fields.update(
@@ -173,7 +192,9 @@ def _build_step_trace(tape: str, entries: list[TapeEntry], index: int) -> StepTr
         **_trace_projection_fields(tape, entries),
         step=_step_number(step_data, index),
     )
-    return step.model_copy(update={"llm_attributes": _llm_attributes(step) | _step_attributes(step)})
+    return step.model_copy(
+        update={"llm_attributes": _llm_attributes(step) | _step_attributes(step)}
+    )
 
 
 def _trace_projection_fields(tape: str, entries: list[TapeEntry]) -> dict[str, Any]:
@@ -211,18 +232,29 @@ def _with_trace_attributes(trace: TapeTrace) -> TapeTrace:
     if trace.status:
         agent_attributes["bub.tape.status"] = trace.status
 
-    return trace.model_copy(update={"agent_attributes": agent_attributes, "llm_attributes": _llm_attributes(trace)})
+    return trace.model_copy(
+        update={
+            "agent_attributes": agent_attributes,
+            "llm_attributes": _llm_attributes(trace),
+        }
+    )
 
 
 def _llm_attributes(projection: TraceProjection) -> dict[str, Any]:
     attributes = _genai_span_attributes(projection, operation_name="chat")
     attributes.update(_openinference_span_attributes(projection, span_kind="LLM"))
-    attributes.update(_openinference_messages("llm.input_messages", projection.input_messages))
-    attributes.update(_openinference_messages("llm.output_messages", projection.output_messages))
+    attributes.update(
+        _openinference_messages("llm.input_messages", projection.input_messages)
+    )
+    attributes.update(
+        _openinference_messages("llm.output_messages", projection.output_messages)
+    )
     return attributes
 
 
-def _genai_span_attributes(projection: TraceProjection, *, operation_name: str) -> dict[str, Any]:
+def _genai_span_attributes(
+    projection: TraceProjection, *, operation_name: str
+) -> dict[str, Any]:
     attributes = _genai_conversation_attributes(projection.tape) | {
         "gen_ai.operation.name": operation_name,
     }
@@ -247,7 +279,9 @@ def _genai_usage_attributes(projection: TraceProjection) -> dict[str, int]:
     return {name: value for name, value in attributes.items() if value is not None}
 
 
-def _openinference_span_attributes(projection: TraceProjection, *, span_kind: str) -> dict[str, Any]:
+def _openinference_span_attributes(
+    projection: TraceProjection, *, span_kind: str
+) -> dict[str, Any]:
     attributes = {
         "openinference.span.kind": span_kind,
         "input.value": _messages_text(projection.input_messages),
@@ -301,7 +335,9 @@ def _split_step_entries(entries: list[TapeEntry]) -> list[list[TapeEntry]]:
     return steps
 
 
-def _extract_messages_and_tools(entries: list[TapeEntry]) -> tuple[list[TraceMessage], list[ToolCall]]:
+def _extract_messages_and_tools(
+    entries: list[TapeEntry],
+) -> tuple[list[TraceMessage], list[ToolCall]]:
     messages: list[TraceMessage] = []
     pending_calls: list[ToolCall] = []
 
@@ -315,7 +351,10 @@ def _extract_messages_and_tools(entries: list[TapeEntry]) -> tuple[list[TraceMes
             if message is not None:
                 messages.append(message)
         elif entry.kind == "tool_call":
-            calls = [_tool_call(call, index) for index, call in enumerate(_payload_list(entry, "calls"))]
+            calls = [
+                _tool_call(call, index)
+                for index, call in enumerate(_payload_list(entry, "calls"))
+            ]
             pending_calls.extend(calls)
             if calls:
                 messages.append(TraceMessage(role="assistant", tool_calls=tuple(calls)))
@@ -343,19 +382,31 @@ def _message_entry(entry: TapeEntry) -> TraceMessage | None:
     raw_tool_calls = entry.payload.get("tool_calls")
     tool_calls = ()
     if isinstance(raw_tool_calls, list):
-        tool_calls = tuple(_tool_call(call, index) for index, call in enumerate(raw_tool_calls))
+        tool_calls = tuple(
+            _tool_call(call, index) for index, call in enumerate(raw_tool_calls)
+        )
     if not content and not tool_calls:
         return None
-    return TraceMessage(role=role, content=content, name=name, tool_call_id=tool_call_id, tool_calls=tool_calls)
+    return TraceMessage(
+        role=role,
+        content=content,
+        name=name,
+        tool_call_id=tool_call_id,
+        tool_calls=tool_calls,
+    )
 
 
 def _split_input_output(
     messages: list[TraceMessage], prompt: str | None, tool_calls: list[ToolCall]
 ) -> tuple[list[TraceMessage], list[TraceMessage]]:
-    if (last_assistant_index := _last_message_index(messages, _has_assistant_content)) is not None:
+    if (
+        last_assistant_index := _last_message_index(messages, _has_assistant_content)
+    ) is not None:
         return messages[:last_assistant_index], [messages[last_assistant_index]]
 
-    if (last_tool_call_index := _last_message_index(messages, _has_assistant_tool_call)) is not None:
+    if (
+        last_tool_call_index := _last_message_index(messages, _has_assistant_tool_call)
+    ) is not None:
         return messages[:last_tool_call_index], [messages[last_tool_call_index]]
 
     if messages:
@@ -368,7 +419,9 @@ def _split_input_output(
     return [], []
 
 
-def _last_message_index(messages: list[TraceMessage], predicate: Callable[[TraceMessage], bool]) -> int | None:
+def _last_message_index(
+    messages: list[TraceMessage], predicate: Callable[[TraceMessage], bool]
+) -> int | None:
     for index in range(len(messages) - 1, -1, -1):
         if predicate(messages[index]):
             return index
@@ -388,7 +441,9 @@ def _tool_call(raw: Any, index: int) -> ToolCall:
     function = call.get("function")
     if isinstance(function, dict):
         name = function.get("name") or call.get("name") or f"tool_{index}"
-        arguments = function.get("arguments") or call.get("arguments") or call.get("args") or {}
+        arguments = (
+            function.get("arguments") or call.get("arguments") or call.get("args") or {}
+        )
     else:
         name = call.get("name") or call.get("tool_name") or f"tool_{index}"
         arguments = call.get("arguments") or call.get("args") or call.get("input") or {}
@@ -399,13 +454,21 @@ def _tool_call(raw: Any, index: int) -> ToolCall:
     )
 
 
-def _attach_tool_results(tool_calls: list[ToolCall], results: list[Any]) -> list[ToolCall]:
+def _attach_tool_results(
+    tool_calls: list[ToolCall], results: list[Any]
+) -> list[ToolCall]:
     if not tool_calls:
         return []
     updated: list[ToolCall] = []
     for index, call in enumerate(tool_calls):
-        result = _attribute_text(results[index]) if index < len(results) else call.result
-        updated.append(ToolCall(id=call.id, name=call.name, arguments=call.arguments, result=result))
+        result = (
+            _attribute_text(results[index]) if index < len(results) else call.result
+        )
+        updated.append(
+            ToolCall(
+                id=call.id, name=call.name, arguments=call.arguments, result=result
+            )
+        )
     return updated
 
 
@@ -415,12 +478,14 @@ def _bub_tape_attributes(tape: str, entries: list[TapeEntry]) -> dict[str, Any]:
         "bub.session.hash": _session_hash(tape),
     }
     if entries:
-        attributes.update({
-            "bub.tape.entry.first_id": entries[0].id,
-            "bub.tape.entry.last_id": entries[-1].id,
-            "bub.tape.entry.first_date": entries[0].date,
-            "bub.tape.entry.last_date": entries[-1].date,
-        })
+        attributes.update(
+            {
+                "bub.tape.entry.first_id": entries[0].id,
+                "bub.tape.entry.last_id": entries[-1].id,
+                "bub.tape.entry.first_date": entries[0].date,
+                "bub.tape.entry.last_date": entries[-1].date,
+            }
+        )
     return attributes
 
 
@@ -428,7 +493,9 @@ def _common_attributes(tape: str, entries: list[TapeEntry]) -> dict[str, Any]:
     return _genai_conversation_attributes(tape) | _bub_tape_attributes(tape, entries)
 
 
-def _openinference_messages(prefix: str, messages: list[TraceMessage]) -> dict[str, Any]:
+def _openinference_messages(
+    prefix: str, messages: list[TraceMessage]
+) -> dict[str, Any]:
     attributes: dict[str, Any] = {}
     for index, message in enumerate(messages):
         base = f"{prefix}.{index}.message"
@@ -448,21 +515,25 @@ def _openinference_messages(prefix: str, messages: list[TraceMessage]) -> dict[s
 
 
 def _tool_span_attributes(step: StepTrace, call: ToolCall) -> dict[str, Any]:
-    attributes = _genai_conversation_attributes(step.tape) | _bub_tape_attributes(step.tape, step.entries)
+    attributes = _genai_conversation_attributes(step.tape) | _bub_tape_attributes(
+        step.tape, step.entries
+    )
     attributes.update(_step_attributes(step))
-    attributes.update({
-        "openinference.span.kind": "TOOL",
-        "gen_ai.operation.name": "execute_tool",
-        "gen_ai.tool.name": call.name,
-        "gen_ai.tool.call.id": call.id,
-        "gen_ai.tool.type": "function",
-        "gen_ai.tool.call.arguments": call.arguments,
-        "bub.tool.name": call.name,
-        "bub.tool.call.id": call.id,
-        "input.mime_type": "application/json",
-        "input.value": call.arguments,
-        "output.value": call.result or "",
-    })
+    attributes.update(
+        {
+            "openinference.span.kind": "TOOL",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": call.name,
+            "gen_ai.tool.call.id": call.id,
+            "gen_ai.tool.type": "function",
+            "gen_ai.tool.call.arguments": call.arguments,
+            "bub.tool.name": call.name,
+            "bub.tool.call.id": call.id,
+            "input.mime_type": "application/json",
+            "input.value": call.arguments,
+            "output.value": call.result or "",
+        }
+    )
     if call.result is not None:
         attributes["gen_ai.tool.call.result"] = call.result
         attributes["output.mime_type"] = "application/json"
@@ -475,7 +546,9 @@ def _payload_list(entry: TapeEntry, key: str) -> list[Any]:
 
 
 def _messages_text(messages: list[TraceMessage]) -> str:
-    return "\n".join(f"{message.role}: {message.content}" for message in messages if message.content)
+    return "\n".join(
+        f"{message.role}: {message.content}" for message in messages if message.content
+    )
 
 
 def _first_message_content(messages: list[TraceMessage], role: str) -> str | None:
@@ -485,13 +558,20 @@ def _first_message_content(messages: list[TraceMessage], role: str) -> str | Non
     return None
 
 
-def _output_value(messages: list[TraceMessage], tool_calls: list[ToolCall]) -> str | None:
+def _output_value(
+    messages: list[TraceMessage], tool_calls: list[ToolCall]
+) -> str | None:
     content = "\n".join(message.content for message in messages if message.content)
     if content:
         return content
     calls = [call for message in messages for call in message.tool_calls] or tool_calls
     if calls:
-        return _compact_json([{"id": call.id, "name": call.name, "arguments": call.arguments} for call in calls])
+        return _compact_json(
+            [
+                {"id": call.id, "name": call.name, "arguments": call.arguments}
+                for call in calls
+            ]
+        )
     return None
 
 
@@ -524,7 +604,9 @@ def _usage(data: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
     )
 
 
-def _combined_usage(entries: list[TapeEntry]) -> tuple[int | None, int | None, int | None]:
+def _combined_usage(
+    entries: list[TapeEntry],
+) -> tuple[int | None, int | None, int | None]:
     totals = [0, 0, 0]
     saw_usage = False
     for entry in entries:
@@ -556,7 +638,11 @@ def _combined_duration_ms(entries: list[TapeEntry]) -> int | float | None:
 
 
 def _valid_duration_ms(value: object) -> int | float | None:
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
 
 
 def _step_number(data: dict[str, Any], fallback: int) -> int:
@@ -624,10 +710,25 @@ def _compact_json(value: Any) -> str:
 def _instrument_trace(trace: TapeTrace, *, tracer: Any) -> None:
     from opentelemetry.trace import SpanKind
 
-    with _otel_span(tracer, _agent_span_name(trace), kind=SpanKind.INTERNAL, attributes=trace.agent_attributes):
+    with _otel_span(
+        tracer,
+        _agent_span_name(trace),
+        kind=SpanKind.INTERNAL,
+        attributes=trace.agent_attributes,
+    ):
         for step in trace.steps:
-            with _otel_span(tracer, "bub.agent.step", kind=SpanKind.INTERNAL, attributes=_step_span_attributes(step)):
-                with _otel_span(tracer, _llm_span_name(step), kind=SpanKind.CLIENT, attributes=step.llm_attributes):
+            with _otel_span(
+                tracer,
+                "bub.agent.step",
+                kind=SpanKind.INTERNAL,
+                attributes=_step_span_attributes(step),
+            ):
+                with _otel_span(
+                    tracer,
+                    _llm_span_name(step),
+                    kind=SpanKind.CLIENT,
+                    attributes=step.llm_attributes,
+                ):
                     pass
 
                 for call in step.tool_calls:
@@ -669,10 +770,20 @@ def _instrument_reset(tape: str, *, tracer: Any) -> None:
 
 
 @contextmanager
-def _otel_span(tracer: Any, name: str, *, kind: object, attributes: Mapping[str, Any]) -> Iterator[None]:
-    with tracer.start_as_current_span(name, kind=kind, attributes=_otel_attributes(attributes)):
+def _otel_span(
+    tracer: Any, name: str, *, kind: object, attributes: Mapping[str, Any]
+) -> Iterator[None]:
+    with tracer.start_as_current_span(
+        name, kind=kind, attributes=_otel_attributes(attributes)
+    ):
         yield
 
 
-def _otel_attributes(attributes: Mapping[str, Any]) -> dict[str, str | bool | int | float]:
-    return {name: value for name, value in attributes.items() if isinstance(value, (str, bool, int, float))}
+def _otel_attributes(
+    attributes: Mapping[str, Any],
+) -> dict[str, str | bool | int | float]:
+    return {
+        name: value
+        for name, value in attributes.items()
+        if isinstance(value, (str, bool, int, float))
+    }

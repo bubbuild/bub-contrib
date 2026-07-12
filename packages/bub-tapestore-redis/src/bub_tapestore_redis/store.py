@@ -11,9 +11,9 @@ from datetime import date as date_type
 from typing import Any
 
 import redis.asyncio as redis
+from bub.runtime import BubError, ErrorKind
+from bub.tape import TapeEntry, TapeQuery
 from redis.exceptions import ResponseError
-from republic import RepublicError, TapeEntry, TapeQuery
-from republic.core.errors import ErrorKind
 
 DEFAULT_KEY_PREFIX = "republic:tape"
 _ANCHOR_SEPARATOR = ":"
@@ -252,7 +252,7 @@ async def _resolve_slice_bounds(
     if query._after_last:
         anchor_id = await _last_anchor_id(client, anchor_key)
         if anchor_id < 0:
-            raise RepublicError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
+            raise BubError(ErrorKind.NOT_FOUND, "No anchors found in tape.")
         return anchor_id, -1
 
     if query._after_anchor is not None:
@@ -263,7 +263,7 @@ async def _resolve_slice_bounds(
             default=-1,
         )
         if anchor_id < 0:
-            raise RepublicError(
+            raise BubError(
                 ErrorKind.NOT_FOUND, f"Anchor '{query._after_anchor}' was not found."
             )
         return anchor_id, -1
@@ -282,7 +282,7 @@ async def _resolve_between_anchor_bounds(
     )
     start_id = max(start_ids, default=-1)
     if start_id < 0:
-        raise RepublicError(
+        raise BubError(
             ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
         )
 
@@ -292,7 +292,7 @@ async def _resolve_between_anchor_bounds(
     end_candidates = [entry_id for entry_id in end_ids if entry_id > start_id]
     end_id = min(end_candidates, default=-1)
     if end_id < 0:
-        raise RepublicError(ErrorKind.NOT_FOUND, f"Anchor '{end_name}' was not found.")
+        raise BubError(ErrorKind.NOT_FOUND, f"Anchor '{end_name}' was not found.")
     return start_id, end_id - 2
 
 
@@ -315,7 +315,7 @@ def _apply_query(
     entries: Sequence[TapeEntry], query: TapeQuery[Any]
 ) -> list[TapeEntry]:
     # Anchor boundaries are resolved in Redis before loading entries. The remaining
-    # Republic query contract still runs in Python for date/text/kind/limit filters.
+    # The remaining Bub query contract runs in Python for date/text/kind/limit filters.
     sliced = list(entries)
 
     if query._between_dates is not None:
@@ -323,7 +323,7 @@ def _apply_query(
         start_dt = _parse_datetime_boundary(start_date, is_end=False)
         end_dt = _parse_datetime_boundary(end_date, is_end=True)
         if start_dt > end_dt:
-            raise RepublicError(
+            raise BubError(
                 ErrorKind.INVALID_INPUT,
                 "Start date must be earlier than or equal to end date.",
             )
@@ -363,7 +363,7 @@ def _parse_datetime_boundary(value: str, *, is_end: bool) -> datetime:
         try:
             parsed_date = date_type.fromisoformat(value)
         except ValueError as exc:
-            raise RepublicError(
+            raise BubError(
                 ErrorKind.INVALID_INPUT, f"Invalid ISO date or datetime: '{value}'."
             ) from exc
         boundary_time = time.max if is_end else time.min

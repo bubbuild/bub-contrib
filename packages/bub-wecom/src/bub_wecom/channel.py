@@ -30,7 +30,9 @@ class WeComSettings(bub.Settings):
         default="wss://openws.work.weixin.qq.com",
         description="WeCom websocket URL",
     )
-    dm_policy: str = Field(default="open", description="DM policy: open|disabled|allowlist")
+    dm_policy: str = Field(
+        default="open", description="DM policy: open|disabled|allowlist"
+    )
     allow_from: str | None = Field(
         default=None,
         description="Comma separated DM user allowlist",
@@ -42,6 +44,7 @@ class WeComSettings(bub.Settings):
         default=None,
         description="Comma separated group allowlist",
     )
+
     @property
     def enabled(self) -> bool:
         return bool(self.bot_id.strip() and self.secret.strip())
@@ -88,7 +91,8 @@ def _extract_text(body: dict[str, Any], msg_type: str) -> str:
             return "\n".join(
                 str(item.get("text", {}).get("content") or "").strip()
                 for item in items
-                if isinstance(item, dict) and str(item.get("msgtype") or "").lower() == "text"
+                if isinstance(item, dict)
+                and str(item.get("msgtype") or "").lower() == "text"
             ).strip()
     return ""
 
@@ -132,7 +136,9 @@ def _frame_type(frame: dict[str, Any]) -> str:
     msg_type = str(body.get("msgtype") or "").strip().lower()
     if msg_type:
         return f"message.{msg_type}"
-    event_type = str(body.get("eventtype") or body.get("event_type") or "").strip().lower()
+    event_type = (
+        str(body.get("eventtype") or body.get("event_type") or "").strip().lower()
+    )
     if event_type:
         return f"event.{event_type}"
     return "message"
@@ -147,7 +153,9 @@ def frame_to_message(frame: dict[str, Any]) -> ChannelMessage | None:
     if not chat_id:
         return None
 
-    chat_type = "group" if str(body.get("chattype") or "").strip().lower() == "group" else "dm"
+    chat_type = (
+        "group" if str(body.get("chattype") or "").strip().lower() == "group" else "dm"
+    )
     msg_type = str(body.get("msgtype") or "text").strip().lower()
     message_id = str(body.get("msgid") or _frame_req_id(frame)).strip()
     text = _extract_text(body, msg_type)
@@ -212,7 +220,9 @@ class _SdkClient(Protocol):
 
     async def send_message(self, chatid: str, body: dict[str, Any]) -> Any: ...
 
-    async def reply_stream(self, frame: dict[str, Any], stream_id: str, content: str, finish: bool = False) -> Any: ...
+    async def reply_stream(
+        self, frame: dict[str, Any], stream_id: str, content: str, finish: bool = False
+    ) -> Any: ...
 
 
 def _build_sdk_client(settings: WeComSettings) -> _SdkClient:
@@ -295,10 +305,15 @@ class WeComChannel(Channel):
 
         chat_id = message.chat_id or self._session_chat_id(message.session_id)
         if not chat_id:
-            logger.warning("wecom.outbound missing chat_id session_id={}", message.session_id)
+            logger.warning(
+                "wecom.outbound missing chat_id session_id={}", message.session_id
+            )
             return
         if not content:
-            logger.warning("wecom.outbound skipping empty content session_id={}", message.session_id)
+            logger.warning(
+                "wecom.outbound skipping empty content session_id={}",
+                message.session_id,
+            )
             return
 
         logger.info(
@@ -308,7 +323,9 @@ class WeComChannel(Channel):
             len(content),
         )
         try:
-            from skills.wecom.scripts.wecom_send import send_message as send_proactive_message
+            from skills.wecom.scripts.wecom_send import (
+                send_message as send_proactive_message,
+            )
 
             await send_proactive_message(
                 self._settings.bot_id,
@@ -320,16 +337,26 @@ class WeComChannel(Channel):
             )
             logger.info("wecom.outbound proactive_send success chat_id={}", chat_id)
         except Exception as e:
-            logger.error("wecom.outbound proactive_send failed chat_id={} error={}", chat_id, e)
+            logger.error(
+                "wecom.outbound proactive_send failed chat_id={} error={}", chat_id, e
+            )
             raise
 
     def _register_handlers(self) -> None:
         if self._client is None:
             return
-        for event in ("message.text", "message.image", "message.mixed", "message.voice", "message.file"):
+        for event in (
+            "message.text",
+            "message.image",
+            "message.mixed",
+            "message.voice",
+            "message.file",
+        ):
             self._register_handler(event, self._handle_frame)
 
-    def _register_handler(self, event: str, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+    def _register_handler(
+        self, event: str, handler: Callable[[dict[str, Any]], Awaitable[None]]
+    ) -> None:
         if self._client is None:
             return
         registration = getattr(self._client, "on")
@@ -353,7 +380,9 @@ class WeComChannel(Channel):
         sender_id = str(message.context.get("sender_id") or "")
         chat_type = str(message.context.get("chat_type") or "dm")
         if chat_type == "group":
-            return _is_allowed(self._settings.group_policy, self._allow_groups, message.chat_id)
+            return _is_allowed(
+                self._settings.group_policy, self._allow_groups, message.chat_id
+            )
         return _is_allowed(self._settings.dm_policy, self._allow_users, sender_id)
 
     def _is_active(self, message: ChannelMessage) -> bool:

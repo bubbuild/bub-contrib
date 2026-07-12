@@ -52,9 +52,13 @@ class ExtismBridge:
         extism = _import_extism()
         request = build_request(hook_name, args)
         with extism.Plugin(config.manifest, wasi=config.wasi, config=None) as plugin:
-            if hasattr(plugin, "function_exists") and not plugin.function_exists(function_name):
+            if hasattr(plugin, "function_exists") and not plugin.function_exists(
+                function_name
+            ):
                 raise ExtismHookSkip
-            raw_result = plugin.call(function_name, json.dumps(request, ensure_ascii=False))
+            raw_result = plugin.call(
+                function_name, json.dumps(request, ensure_ascii=False)
+            )
         return decode_response(raw_result)
 
 

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from bub.runtime import AsyncStreamEvents, StreamEvent
 
 from bub_kimi import plugin
 
@@ -14,11 +15,16 @@ class FakeAgent:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, object]]] = []
 
-    async def run(
+    async def run_stream(
         self, *, session_id: str, prompt: str, state: dict[str, object]
-    ) -> str:
+    ) -> AsyncStreamEvents:
         self.calls.append((session_id, prompt, state))
-        return "internal-command-result"
+
+        async def events():
+            yield StreamEvent("text", {"delta": "internal-command"})
+            yield StreamEvent("text", {"delta": "-result"})
+
+        return AsyncStreamEvents(events())
 
 
 def test_run_model_delegates_internal_commands_to_runtime_agent() -> None:
@@ -48,7 +54,9 @@ def test_run_model_uses_kimi_for_normal_prompt(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-2", state=state))
@@ -80,7 +88,9 @@ def test_run_model_forwards_api_key_to_kimi_env(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
     monkeypatch.setattr(
         plugin,
         "_settings",
@@ -111,7 +121,9 @@ def test_run_model_forwards_model_name_to_kimi_env(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
     monkeypatch.setattr(
         plugin,
         "_settings",
@@ -142,7 +154,9 @@ def test_run_model_forwards_base_url_to_kimi_env(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
     monkeypatch.setattr(
         plugin,
         "_settings",
@@ -173,14 +187,18 @@ def test_run_model_omits_api_key_when_not_configured(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
     monkeypatch.setattr(plugin, "_settings", lambda: plugin.KimiSettings())
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_BASE_URL", raising=False)
     monkeypatch.delenv("KIMI_MODEL_NAME", raising=False)
 
     state = {"_runtime_workspace": str(tmp_path)}
-    asyncio.run(plugin.run_model("hello", session_id="session-api-missing", state=state))
+    asyncio.run(
+        plugin.run_model("hello", session_id="session-api-missing", state=state)
+    )
 
     _, kwargs = calls[0]
     assert "KIMI_API_KEY" not in kwargs["env"]
@@ -204,7 +222,9 @@ def test_run_model_saves_session_id_from_stderr(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-3", state=state))
@@ -233,7 +253,9 @@ def test_run_model_resumes_thread_when_present(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     asyncio.run(plugin.run_model("again", session_id="session-4", state=state))
@@ -257,7 +279,9 @@ def test_run_model_surfaces_stderr_on_non_zero_exit(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-5", state=state))
@@ -282,7 +306,9 @@ def test_run_model_filters_resume_line_on_non_zero_exit(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
 
     state = {"_runtime_workspace": str(tmp_path)}
     result = asyncio.run(plugin.run_model("hello", session_id="session-6", state=state))

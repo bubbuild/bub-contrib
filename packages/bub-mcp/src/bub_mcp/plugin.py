@@ -12,10 +12,9 @@ import typer
 import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
-from bub.tools import REGISTRY
+from bub.tools import REGISTRY, Tool, ToolContext
 from bub.types import Envelope, MessageHandler, State
 from loguru import logger
-from republic import Tool, ToolContext
 
 from bub_mcp.config import MCPSettings
 

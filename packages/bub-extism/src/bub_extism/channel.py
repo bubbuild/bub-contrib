@@ -5,13 +5,17 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from bub.channels import Channel
+from bub.runtime import StreamEvent
 from bub.types import Envelope, MessageHandler
-from republic import StreamEvent
 
 from bub_extism.bridge import ExtismBridge
 from bub_extism.codec import message_to_json
 from bub_extism.config import ExtismPluginConfig
-from bub_extism.descriptors import normalize_function_bindings, require_mapping, required_text
+from bub_extism.descriptors import (
+    normalize_function_bindings,
+    require_mapping,
+    required_text,
+)
 
 
 class ExtismChannel(Channel):
@@ -44,8 +48,12 @@ class ExtismChannel(Channel):
         descriptor: Any,
         message_handler: MessageHandler,
     ) -> ExtismChannel:
-        data = require_mapping(descriptor, message="Extism channel descriptor must be an object")
-        name = required_text(data.get("name"), message="Extism channel descriptor must include a name")
+        data = require_mapping(
+            descriptor, message="Extism channel descriptor must be an object"
+        )
+        name = required_text(
+            data.get("name"), message="Extism channel descriptor must include a name"
+        )
         return cls(
             bridge,
             config,
@@ -76,7 +84,9 @@ class ExtismChannel(Channel):
             for message in _messages_from_value(messages):
                 await self._message_handler(message)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=self._poll_interval_seconds)
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=self._poll_interval_seconds
+                )
             except TimeoutError:
                 continue
 
@@ -116,8 +126,13 @@ def channels_from_value(
     if isinstance(value, dict):
         value = value.get("channels", [])
     if not isinstance(value, list):
-        raise RuntimeError("Extism provide_channels must return a list of channel descriptors")
-    return [ExtismChannel.from_descriptor(bridge, config, descriptor, message_handler) for descriptor in value]
+        raise RuntimeError(
+            "Extism provide_channels must return a list of channel descriptors"
+        )
+    return [
+        ExtismChannel.from_descriptor(bridge, config, descriptor, message_handler)
+        for descriptor in value
+    ]
 
 
 def _messages_from_value(value: Any) -> list[Envelope]:

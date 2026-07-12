@@ -87,8 +87,8 @@ uv run --directory ./bub \
 import os
 from collections import Counter
 
+from bub.tape import TapeQuery
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
-from republic.tape.query import TapeQuery
 
 store = SQLAlchemyTapeStore(f"sqlite+pysqlite:///{os.environ['DB_PATH']}")
 tapes = sorted(store.list_tapes())

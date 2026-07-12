@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from bub.runtime import AsyncStreamEvents, StreamEvent
 from typer.testing import CliRunner
 
 from bub.builtin.auth import app as auth_app
@@ -16,15 +17,20 @@ class FakeAgent:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, object]]] = []
 
-    async def run(
+    async def run_stream(
         self,
         *,
         session_id: str,
         prompt: str,
         state: dict[str, object],
-    ) -> str:
+    ) -> AsyncStreamEvents:
         self.calls.append((session_id, prompt, state))
-        return "internal-command-result"
+
+        async def events():
+            yield StreamEvent("text", {"delta": "internal-command"})
+            yield StreamEvent("text", {"delta": "-result"})
+
+        return AsyncStreamEvents(events())
 
 
 async def _async_noop() -> None:
@@ -77,9 +83,17 @@ def test_run_model_uses_cursor_cli(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop())
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
+    monkeypatch.setattr(
+        plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop()
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(
         plugin,
         "_settings",
@@ -133,9 +147,17 @@ def test_run_model_resumes_previous_cursor_session(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop())
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
+    monkeypatch.setattr(
+        plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop()
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(plugin, "_settings", lambda: plugin.CursorSettings())
 
     state = {"_runtime_workspace": str(tmp_path)}
@@ -160,9 +182,17 @@ def test_run_model_returns_process_error(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop())
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
+    monkeypatch.setattr(
+        plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop()
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(plugin, "_settings", lambda: plugin.CursorSettings())
 
     state = {"_runtime_workspace": str(tmp_path)}
@@ -187,9 +217,17 @@ def test_run_model_returns_plain_stdout_when_json_parse_fails(
         return FakeProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext())
-    monkeypatch.setattr(plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop())
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
+    monkeypatch.setattr(
+        plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop()
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(plugin, "_settings", lambda: plugin.CursorSettings())
 
     state = {"_runtime_workspace": str(tmp_path)}
@@ -225,8 +263,14 @@ def test_run_model_wraps_cursor_cli_with_bub_skills(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(plugin, "with_bub_skills", fake_with_bub_skills)
-    monkeypatch.setattr(plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop())
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin, "ensure_cursor_authenticated", lambda cli_path: _async_noop()
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(plugin, "_settings", lambda: plugin.CursorSettings())
 
     state = {"_runtime_workspace": str(tmp_path)}
@@ -249,13 +293,21 @@ def test_run_model_checks_cursor_auth_before_spawning(
 
     async def fake_ensure_cursor_authenticated(cli_path: str) -> None:
         calls.append(cli_path)
-        raise RuntimeError("No Cursor authentication found. Run `bub login cursor` first.")
+        raise RuntimeError(
+            "No Cursor authentication found. Run `bub login cursor` first."
+        )
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         raise AssertionError("Cursor CLI should not be spawned when auth is missing")
 
-    monkeypatch.setattr(plugin, "ensure_cursor_authenticated", fake_ensure_cursor_authenticated)
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin, "ensure_cursor_authenticated", fake_ensure_cursor_authenticated
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(
         plugin,
@@ -278,7 +330,11 @@ def test_cursor_login_command_runs_agent_login(monkeypatch: pytest.MonkeyPatch) 
         return 0
 
     monkeypatch.setattr(plugin, "run_cursor_login", fake_run_cursor_login)
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
     monkeypatch.setattr(
         plugin,
         "_settings",
@@ -302,7 +358,11 @@ def test_cursor_login_command_accepts_cli_path_override(
         return 0
 
     monkeypatch.setattr(plugin, "run_cursor_login", fake_run_cursor_login)
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
 
     result = CliRunner().invoke(auth_app, ["cursor", "--cli-path", "custom-agent"])
 
@@ -317,7 +377,11 @@ def test_cursor_login_command_returns_cli_exit_code(
         return 3
 
     monkeypatch.setattr(plugin, "run_cursor_login", fake_run_cursor_login)
-    monkeypatch.setattr(plugin, "resolve_cursor_cli_path", lambda cli_path=None: cli_path or "cursor-agent")
+    monkeypatch.setattr(
+        plugin,
+        "resolve_cursor_cli_path",
+        lambda cli_path=None: cli_path or "cursor-agent",
+    )
 
     result = CliRunner().invoke(auth_app, ["cursor", "--cli-path", "agent"])
 

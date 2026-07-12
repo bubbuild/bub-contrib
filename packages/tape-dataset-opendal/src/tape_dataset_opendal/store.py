@@ -3,10 +3,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from bub.tape import (
+    AsyncTapeStore,
+    AsyncTapeStoreAdapter,
+    TapeEntry,
+    TapeQuery,
+    TapeStore,
+    is_async_tape_store,
+)
 from opendal import AsyncOperator, Operator
-from republic.tape.entries import TapeEntry
-from republic.tape.query import TapeQuery
-from republic.tape.store import AsyncTapeStore, AsyncTapeStoreAdapter, TapeStore, is_async_tape_store
 
 from tape_dataset_opendal.exporter import export_dataset, export_dataset_async
 from tape_dataset_opendal.filters import EntryFilter
@@ -38,14 +43,18 @@ class ExportableTapeStore:
         layout: ExportLayout | None = None,
         entry_filter: EntryFilter | None = None,
     ) -> ExportReport:
-        return export_dataset(self._store, operator, layout=layout, entry_filter=entry_filter)
+        return export_dataset(
+            self._store, operator, layout=layout, entry_filter=entry_filter
+        )
 
 
 class AsyncExportableTapeStore:
     """Async TapeStore wrapper with OpenDAL dataset export helpers."""
 
     def __init__(self, store: TapeStore | AsyncTapeStore) -> None:
-        self._store = store if is_async_tape_store(store) else AsyncTapeStoreAdapter(store)
+        self._store = (
+            store if is_async_tape_store(store) else AsyncTapeStoreAdapter(store)
+        )
 
     async def list_tapes(self) -> list[str]:
         return await self._store.list_tapes()
@@ -66,4 +75,6 @@ class AsyncExportableTapeStore:
         layout: ExportLayout | None = None,
         entry_filter: EntryFilter | None = None,
     ) -> ExportReport:
-        return await export_dataset_async(self._store, operator, layout=layout, entry_filter=entry_filter)
+        return await export_dataset_async(
+            self._store, operator, layout=layout, entry_filter=entry_filter
+        )

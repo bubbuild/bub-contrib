@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import AsyncIterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 
 import typer
 import bub
 from bub import BubFramework, hookimpl
 from bub.builtin.auth import app as auth_app
+from bub.runtime import StreamEvent
 from bub.types import State
 from copilot import CopilotClient, SubprocessConfig
 from copilot.session import PermissionHandler
@@ -26,7 +28,6 @@ from bub_github_copilot.utils import with_bub_skills
 
 if TYPE_CHECKING:
     from copilot.session import Attachment
-    from bub.builtin.agent import Agent
 
 DATA_URL_PATTERN = re.compile(r"^data:(?P<mime>[^;,]+);base64,(?P<data>.+)$", re.DOTALL)
 OpenBrowserOption = Annotated[
@@ -47,6 +48,12 @@ TimeoutOption = Annotated[
     float,
     typer.Option("--timeout", help="OAuth wait timeout in seconds"),
 ]
+
+
+class RuntimeAgent(Protocol):
+    async def run_stream(
+        self, *, session_id: str, prompt: str | list[dict], state: State
+    ) -> AsyncIterable[StreamEvent]: ...
 
 
 @bub.config(name="github-copilot")
@@ -77,11 +84,11 @@ def workspace_from_state(state: State) -> Path:
     return Path.cwd().resolve()
 
 
-def _runtime_agent_from_state(state: State) -> Agent | None:
+def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
     agent = state.get("_runtime_agent")
     if agent is None:
         return None
-    return cast("Agent", agent)
+    return cast("RuntimeAgent", agent)
 
 
 def _prompt_to_text(prompt: str | list[dict]) -> str:
@@ -192,7 +199,12 @@ async def _run_internal_command(
     agent = _runtime_agent_from_state(state)
     if agent is None:
         return None
-    return await agent.run(session_id=session_id, prompt=prompt, state=state)
+    stream = await agent.run_stream(session_id=session_id, prompt=prompt, state=state)
+    parts: list[str] = []
+    async for event in stream:
+        if event.kind == "text":
+            parts.append(str(event.data.get("delta", "")))
+    return "".join(parts)
 
 
 async def _run_with_copilot_sdk(

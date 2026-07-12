@@ -31,6 +31,9 @@ Login to WeChat using the provided CLI tool:
 bub login wechat
 ```
 
+The login token is stored at `$BUB_HOME/wechat_token.json`. If `BUB_HOME` is
+not set, it defaults to `~/.bub/wechat_token.json`.
+
 ## Development
 
 - Requires Python 3.12+

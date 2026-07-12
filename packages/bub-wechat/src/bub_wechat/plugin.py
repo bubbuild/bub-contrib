@@ -5,7 +5,7 @@ from bub.channels import Channel
 from bub.tools import ToolContext
 from bub.types import MessageHandler
 
-from bub_wechat.channel import TOKEN_PATH, OutgoingMessage, WeChatChannel
+from bub_wechat.channel import OutgoingMessage, WeChatChannel, get_token_path
 
 
 @auth_app.command()
@@ -13,7 +13,7 @@ def wechat():
     """Login to WeChat agent account."""
     from weixin_bot import WeixinBot
 
-    bot = WeixinBot(token_path=str(TOKEN_PATH))
+    bot = WeixinBot(token_path=str(get_token_path()))
     bot.login()
     typer.echo("Login successful! You can now start the Bub agent with WeChat channel.")
 

@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from acp.schema import TextContentBlock
+from bub import RuntimeChoice, RuntimeOptions
 from bub.types import TurnResult
 from bub.runtime import StreamEvent
 from bub.tape import TapeEntry, TapeQuery
@@ -42,6 +43,11 @@ class FakeFramework:
 
     async def quit_via_router(self, session_id: str) -> None:
         return None
+
+    async def get_runtime_options(
+        self, *, session_id: str, workspace: Path
+    ) -> RuntimeOptions:
+        return RuntimeOptions()
 
     async def process_inbound(
         self, inbound: object, stream_output: bool = False
@@ -102,6 +108,31 @@ class NoTextFramework(FakeFramework):
             session_id=inbound.session_id,
             prompt=inbound.content,
             model_output="late text",
+        )
+
+
+class ConfigFramework(FakeFramework):
+    def __init__(self) -> None:
+        super().__init__()
+        self.runtime_queries: list[tuple[str, Path]] = []
+
+    async def get_runtime_options(
+        self, *, session_id: str, workspace: Path
+    ) -> RuntimeOptions:
+        self.runtime_queries.append((session_id, workspace))
+        return RuntimeOptions(
+            models=[
+                RuntimeChoice(
+                    id="openai:gpt-5",
+                    name="GPT-5",
+                    description="OpenAI model",
+                ),
+                RuntimeChoice(
+                    id="anthropic:claude-sonnet-4-5",
+                    name="Claude Sonnet",
+                ),
+            ],
+            current_model="openai:gpt-5",
         )
 
 
@@ -197,6 +228,101 @@ async def test_sessions_survive_agent_restart(tmp_path: Path) -> None:
 
     assert [session.session_id for session in sessions.sessions] == [created.session_id]
     assert sessions.sessions[0].cwd == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_session_lifecycle_returns_config_options(tmp_path: Path) -> None:
+    framework = ConfigFramework()
+    client = FakeClient()
+    agent = BubACPAgent(framework)
+    agent.on_connect(client)
+
+    created = await agent.new_session(cwd=str(tmp_path))
+    loaded = await agent.load_session(cwd=str(tmp_path), session_id=created.session_id)
+    resumed = await agent.resume_session(
+        cwd=str(tmp_path), session_id=created.session_id
+    )
+
+    assert created.config_options is not None
+    assert created.config_options[0].id == "model"
+    assert created.config_options[0].name == "Model"
+    assert created.config_options[0].current_value == "openai:gpt-5"
+    assert created.config_options[0].options[0].value == "openai:gpt-5"
+    assert len(created.config_options) == 1
+    assert loaded.config_options is not None
+    assert loaded.config_options[0].id == "model"
+    assert resumed.config_options is not None
+    assert resumed.config_options[0].id == "model"
+    assert framework.runtime_queries == [
+        (created.session_id, tmp_path),
+        (created.session_id, tmp_path),
+        (created.session_id, tmp_path),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_set_config_option_updates_session_runtime_and_returns_config_options(
+    tmp_path: Path,
+) -> None:
+    framework = ConfigFramework()
+    agent = BubACPAgent(framework)
+    created = await agent.new_session(cwd=str(tmp_path))
+
+    response = await agent.set_config_option(
+        config_id="model",
+        session_id=created.session_id,
+        value="anthropic:claude-sonnet-4-5",
+    )
+
+    assert agent._sessions[created.session_id].runtime == {
+        "model": "anthropic:claude-sonnet-4-5"
+    }
+    assert response.config_options[0].id == "model"
+    assert response.config_options[0].current_value == "anthropic:claude-sonnet-4-5"
+    assert framework.runtime_queries == [
+        (created.session_id, tmp_path),
+        (created.session_id, tmp_path),
+    ]
+
+
+def test_runtime_options_fall_back_when_persisted_model_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    session = plugin.ACPSession(
+        session_id="session",
+        cwd=tmp_path,
+        runtime={"model": "removed:model"},
+    )
+    options = RuntimeOptions(
+        models=[RuntimeChoice(id="available:model")],
+        current_model="available:model",
+    )
+
+    config_options = plugin._runtime_options_to_acp_config_options(options, session)
+
+    assert config_options[0].current_value == "available:model"
+
+
+@pytest.mark.asyncio
+async def test_prompt_passes_model_selection_to_bub_context(tmp_path: Path) -> None:
+    framework = ConfigFramework()
+    client = FakeClient()
+    agent = BubACPAgent(framework)
+    agent.on_connect(client)
+    created = await agent.new_session(cwd=str(tmp_path))
+    await agent.set_config_option(
+        config_id="model",
+        session_id=created.session_id,
+        value="anthropic:claude-sonnet-4-5",
+    )
+
+    await agent.prompt(
+        [TextContentBlock(type="text", text="hello")],
+        session_id=created.session_id,
+    )
+
+    assert framework.messages[0].context["model"] == "anthropic:claude-sonnet-4-5"
+    assert not hasattr(framework.messages[0], "runtime")
 
 
 @pytest.mark.asyncio

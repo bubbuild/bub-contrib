@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
+import bub
 from bub.channels import Channel, ChannelMessage
 from bub.channels.message import MediaItem
 from bub.types import MessageHandler
@@ -16,7 +17,10 @@ from weixin_bot import IncomingMessage, WeixinBot
 from weixin_bot.api import MessageItemType, send_message
 from weixin_bot.types import MessageItem, MessageState, MessageType, SendMessageMessage
 
-TOKEN_PATH = Path.home() / ".bub/wechat_token.json"
+
+def get_token_path() -> Path:
+    """Return the WeChat token path under Bub's runtime data directory."""
+    return bub.home / "wechat_token.json"
 
 
 @dataclass
@@ -49,7 +53,7 @@ class WeChatChannel(Channel):
 
     def __init__(self, on_receive: MessageHandler) -> None:
         self.on_receive = on_receive
-        self.bot = WeixinBot(token_path=str(TOKEN_PATH))
+        self.bot = WeixinBot(token_path=str(get_token_path()))
         self.bot.on_message(self.process_message)
         self._ongoing_task: asyncio.Task | None = None
 

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import uuid
 from asyncio import Event
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
+import bub
 from bub.channels import Channel, ChannelMessage
 from bub.channels.message import MediaItem
 from bub.types import MessageHandler
@@ -20,9 +20,7 @@ from weixin_bot.types import MessageItem, MessageState, MessageType, SendMessage
 
 def get_token_path() -> Path:
     """Return the WeChat token path under Bub's runtime data directory."""
-    bub_home = os.getenv("BUB_HOME")
-    home = Path(bub_home).expanduser() if bub_home else Path.home() / ".bub"
-    return home / "wechat_token.json"
+    return bub.home / "wechat_token.json"
 
 
 @dataclass

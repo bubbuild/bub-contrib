@@ -10,8 +10,8 @@ from typing import Protocol, cast
 
 import bub
 from bub import hookimpl
-from bub.runtime import StreamEvent
-from bub.types import State
+from bub.streaming import StreamEvent
+from bub.turn import TurnState
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
@@ -23,11 +23,11 @@ RESUME_LINE_PREFIX = "To resume this session:"
 
 class RuntimeAgent(Protocol):
     async def run_stream(
-        self, *, session_id: str, prompt: str | list[dict], state: State
+        self, *, session_id: str, prompt: str | list[dict], state: TurnState
     ) -> AsyncIterable[StreamEvent]: ...
 
 
-def _load_thread_id(session_id: str, state: State) -> str | None:
+def _load_thread_id(session_id: str, state: TurnState) -> str | None:
     workspace = workspace_from_state(state)
     threads_file = workspace / THREADS_FILE
     with contextlib.suppress(FileNotFoundError):
@@ -36,7 +36,7 @@ def _load_thread_id(session_id: str, state: State) -> str | None:
         return threads.get(session_id)
 
 
-def _save_thread_id(session_id: str, thread_id: str, state: State) -> None:
+def _save_thread_id(session_id: str, thread_id: str, state: TurnState) -> None:
     workspace = workspace_from_state(state)
     threads_file = workspace / THREADS_FILE
     if threads_file.exists():
@@ -49,7 +49,7 @@ def _save_thread_id(session_id: str, thread_id: str, state: State) -> None:
         json.dump(threads, f, indent=2)
 
 
-def workspace_from_state(state: State) -> Path:
+def workspace_from_state(state: TurnState) -> Path:
     raw = state.get("_runtime_workspace")
     if isinstance(raw, str) and raw.strip():
         return Path(raw).expanduser().resolve()
@@ -72,7 +72,7 @@ def _settings() -> KimiSettings:
     return bub.ensure_config(KimiSettings)
 
 
-def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
+def _runtime_agent_from_state(state: TurnState) -> RuntimeAgent | None:
     agent = state.get("_runtime_agent")
     if agent is None:
         return None
@@ -80,7 +80,7 @@ def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
 
 
 async def _run_internal_command(
-    prompt: str, session_id: str, state: State
+    prompt: str, session_id: str, state: TurnState
 ) -> str | None:
     if not prompt.strip().startswith(","):
         return None
@@ -96,7 +96,7 @@ async def _run_internal_command(
 
 
 @hookimpl
-async def run_model(prompt: str, session_id: str, state: State) -> str:
+async def run_model(prompt: str, session_id: str, state: TurnState) -> str:
     internal_command_result = await _run_internal_command(prompt, session_id, state)
     if internal_command_result is not None:
         return internal_command_result

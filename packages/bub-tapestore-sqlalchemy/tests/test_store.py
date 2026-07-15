@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
-from bub.runtime import BubError
+from bub.errors import BubError
 from bub.tape import TapeEntry, TapeQuery
 
 

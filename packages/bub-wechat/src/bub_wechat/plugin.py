@@ -3,7 +3,7 @@ from bub import BubFramework, hookimpl, tool
 from bub.builtin.auth import app as auth_app
 from bub.channels import Channel
 from bub.tools import ToolContext
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 
 from bub_wechat.channel import OutgoingMessage, WeChatChannel, get_token_path
 

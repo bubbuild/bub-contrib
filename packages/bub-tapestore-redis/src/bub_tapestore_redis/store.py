@@ -11,7 +11,7 @@ from datetime import date as date_type
 from typing import Any
 
 import redis.asyncio as redis
-from bub.runtime import BubError, ErrorKind
+from bub.errors import BubError, ErrorKind
 from bub.tape import TapeEntry, TapeQuery
 from redis.exceptions import ResponseError
 

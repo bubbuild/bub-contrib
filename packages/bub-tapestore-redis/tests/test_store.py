@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 import pytest_asyncio
-from bub.runtime import BubError, ErrorKind
+from bub.errors import BubError, ErrorKind
 from bub.tape import LAST_ANCHOR, TapeContext, TapeEntry, TapeQuery, build_messages
 from bub_tapestore_redis import RedisTapeStore
 from fakeredis import FakeAsyncRedis

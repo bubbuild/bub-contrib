@@ -11,7 +11,7 @@ import bub
 import discord
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 from discord.ext import commands
 from loguru import logger
 from pydantic_settings import SettingsConfigDict

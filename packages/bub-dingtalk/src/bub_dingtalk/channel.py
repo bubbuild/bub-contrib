@@ -9,7 +9,7 @@ from typing import Any
 import bub
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 from dingtalk_stream import (
     AckMessage,
     CallbackHandler,

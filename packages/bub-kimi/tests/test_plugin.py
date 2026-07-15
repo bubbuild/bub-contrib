@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from bub.runtime import AsyncStreamEvents, StreamEvent
+from bub.streaming import AsyncStreamEvents, StreamEvent
 
 from bub_kimi import plugin
 

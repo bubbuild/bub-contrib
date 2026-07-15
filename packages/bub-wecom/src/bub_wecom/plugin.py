@@ -5,7 +5,7 @@ from typing import Any
 from bub import hookimpl
 from bub import inquirer as bub_inquirer
 from bub.channels import Channel
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 
 CHANNEL_NAME = "wecom"
 POLICIES = ["open", "disabled", "allowlist"]

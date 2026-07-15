@@ -5,8 +5,9 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from bub.channels import Channel
-from bub.runtime import StreamEvent
-from bub.types import Envelope, MessageHandler
+from bub.channels.contracts import MessageHandler
+from bub.envelope import Envelope
+from bub.streaming import StreamEvent
 
 from bub_extism.bridge import ExtismBridge
 from bub_extism.codec import message_to_json

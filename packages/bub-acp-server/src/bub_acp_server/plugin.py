@@ -54,12 +54,14 @@ from acp.schema import (
     ResumeSessionResponse,
 )
 from acp.helpers import start_tool_call, tool_content, update_tool_call
-from bub import RuntimeChoice, RuntimeOptions, hookimpl
+from bub import hookimpl
+from bub.channels.contracts import ChannelRouter
 from bub.channels.message import ChannelMessage, MediaItem, MediaType
-from bub.envelope import content_of, field_of
-from bub.runtime import StreamEvent
+from bub.envelope import Envelope, content_of, field_of
+from bub.model_selection import ModelChoice, ModelOptions
+from bub.streaming import StreamEvent
 from bub.tape import TapeEntry, TapeQuery
-from bub.types import Envelope, OutboundChannelRouter, TurnResult
+from bub.turn import TurnResult
 
 from bub_acp_server.config import ACPServerSettings
 
@@ -362,7 +364,7 @@ class BubACPAgent:
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         del kwargs
-        await self.framework.quit_via_router(session_id)
+        await self.framework.quit_via_channel_router(session_id)
 
     async def set_config_option(
         self,
@@ -374,9 +376,7 @@ class BubACPAgent:
         del kwargs
         session = self._sessions.get(session_id) or self._adopt_session(session_id)
         session.touch()
-        config_options = await self._set_session_runtime_option(
-            session, config_id, value
-        )
+        config_options = await self._set_session_model_option(session, config_id, value)
         self._save_sessions()
         return SetSessionConfigOptionResponse(config_options=config_options)
 
@@ -551,14 +551,14 @@ class BubACPAgent:
     async def _session_config_options(
         self, session: ACPSession
     ) -> list[SessionConfigOptionSelect] | None:
-        runtime_options = await self.framework.get_runtime_options(
+        model_options = await self.framework.get_model_options(
             session_id=session.session_id,
             workspace=session.cwd,
         )
-        acp_options = _runtime_options_to_acp_config_options(runtime_options, session)
+        acp_options = _model_options_to_acp_config_options(model_options, session)
         return acp_options or None
 
-    async def _set_session_runtime_option(
+    async def _set_session_model_option(
         self,
         session: ACPSession,
         config_id: str,
@@ -603,18 +603,18 @@ class BubACPAgent:
         async with self._prompt_lock:
             router = ACPStreamRouter(client, session.session_id)
             previous_router = cast(
-                OutboundChannelRouter | None,
-                getattr(self.framework, "_outbound_router", None),
+                ChannelRouter | None,
+                getattr(self.framework, "_channel_router", None),
             )
             previous_workspace = self.framework.workspace
             self.framework.workspace = session.cwd
-            self.framework.bind_outbound_router(router)
+            self.framework.bind_channel_router(router)
             try:
                 result = await self.framework.process_inbound(
                     inbound, stream_output=True
                 )
             finally:
-                self.framework.bind_outbound_router(previous_router)
+                self.framework.bind_channel_router(previous_router)
                 self.framework.workspace = previous_workspace
             if result.model_output and not router.sent_text:
                 await client.session_update(
@@ -754,17 +754,17 @@ def _framework_tape_store(framework: BubFramework) -> object | None:
     return store if hasattr(store, "fetch_all") else None
 
 
-def _runtime_options_to_acp_config_options(
-    runtime_options: RuntimeOptions, session: ACPSession
+def _model_options_to_acp_config_options(
+    model_options: ModelOptions, session: ACPSession
 ) -> list[SessionConfigOptionSelect]:
-    choices = runtime_options.models
+    choices = model_options.models
     if not choices:
         return []
 
     choice_ids = {choice.id for choice in choices}
     current_value = session.runtime.get("model")
     if current_value not in choice_ids:
-        current_value = runtime_options.current_model
+        current_value = model_options.current_model
     if current_value not in choice_ids:
         current_value = choices[0].id
     return [
@@ -773,13 +773,13 @@ def _runtime_options_to_acp_config_options(
             id="model",
             name="Model",
             current_value=current_value,
-            options=[_runtime_choice_to_acp_option(choice) for choice in choices],
+            options=[_model_choice_to_acp_option(choice) for choice in choices],
             category="model",
         )
     ]
 
 
-def _runtime_choice_to_acp_option(choice: RuntimeChoice) -> SessionConfigSelectOption:
+def _model_choice_to_acp_option(choice: ModelChoice) -> SessionConfigSelectOption:
     return SessionConfigSelectOption(
         value=choice.id,
         name=choice.name or choice.id,

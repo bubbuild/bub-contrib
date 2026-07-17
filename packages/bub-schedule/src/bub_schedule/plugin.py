@@ -4,7 +4,9 @@ from apscheduler.schedulers.base import BaseScheduler
 from bub import hookimpl
 from bub.channels import Channel
 from bub.framework import BubFramework
-from bub.types import Envelope, MessageHandler, State
+from bub.channels.contracts import MessageHandler
+from bub.envelope import Envelope
+from bub.turn import TurnState
 
 from bub_schedule.jobstore import JSONJobStore
 
@@ -23,7 +25,7 @@ class ScheduleImpl:
         self.scheduler = default_scheduler()
 
     @hookimpl
-    def load_state(self, message: Envelope, session_id: str) -> State:
+    def load_state(self, message: Envelope, session_id: str) -> TurnState:
         return {"scheduler": self.scheduler}
 
     @hookimpl

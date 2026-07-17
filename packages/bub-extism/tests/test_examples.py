@@ -12,8 +12,8 @@ from typing import Any
 import pluggy
 import pytest
 
-from bub.hook_runtime import HookRuntime
-from bub.hookspecs import BUB_HOOK_NAMESPACE, BubHookSpecs
+from bub.hooks import BUB_HOOK_NAMESPACE, BubHookSpecs
+from bub.hooks.runtime import HookRuntime
 from bub_extism.config import ExtismSettings
 from bub_extism.plugin import ExtismPlugin
 

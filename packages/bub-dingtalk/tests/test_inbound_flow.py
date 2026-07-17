@@ -76,11 +76,11 @@ def test_dingtalk_inbound_reaches_agent(tmp_path: Path, monkeypatch) -> None:
                 outbounds_captured.append(message)
                 return True
 
-        framework.bind_outbound_router(CaptureRouter())
+        framework.bind_channel_router(CaptureRouter())
         try:
             result = await framework.process_inbound(inbound)
         finally:
-            framework.bind_outbound_router(None)
+            framework.bind_channel_router(None)
 
         assert result.session_id == "dingtalk:204818006723348842"
         assert len(result.outbounds) >= 1
@@ -124,7 +124,7 @@ def _run_simulation() -> None:
             )
             return True
 
-    framework.bind_outbound_router(CaptureRouter())
+    framework.bind_channel_router(CaptureRouter())
     try:
         result = asyncio.run(framework.process_inbound(inbound))
         print(
@@ -133,7 +133,7 @@ def _run_simulation() -> None:
         for i, o in enumerate(outbounds):
             print(f"    outbound[{i}]: content={(o.content or '')[:100]!r}")
     finally:
-        framework.bind_outbound_router(None)
+        framework.bind_channel_router(None)
 
 
 def test_channel_manager_on_receive_to_process_inbound() -> None:
@@ -163,7 +163,7 @@ def test_channel_manager_on_receive_to_process_inbound() -> None:
                 outbounds.append(message)
                 return True
 
-        framework.bind_outbound_router(CaptureRouter())
+        framework.bind_channel_router(CaptureRouter())
 
         await manager.on_receive(inbound)
         msg = await asyncio.wait_for(manager._messages.get(), timeout=2.0)
@@ -171,7 +171,7 @@ def test_channel_manager_on_receive_to_process_inbound() -> None:
         assert msg.content == "test"
 
         await framework.process_inbound(msg)
-        framework.bind_outbound_router(None)
+        framework.bind_channel_router(None)
 
         assert len(outbounds) >= 1
         assert outbounds[0].channel == "dingtalk"

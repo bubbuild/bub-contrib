@@ -8,7 +8,7 @@ import bub
 from bub import hookimpl
 from bub.channels import Channel, Lifecycle
 from bub.channels.message import ChannelMessage
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 from fastmcp import FastMCP
 from loguru import logger
 

@@ -5,10 +5,10 @@ from typing import Any
 
 import pytest
 from acp.schema import TextContentBlock
-from bub import RuntimeChoice, RuntimeOptions
-from bub.types import TurnResult
-from bub.runtime import StreamEvent
+from bub.model_selection import ModelChoice, ModelOptions
+from bub.streaming import StreamEvent
 from bub.tape import TapeEntry, TapeQuery
+from bub.turn import TurnResult
 
 from bub_acp_server import plugin
 from bub_acp_server.plugin import BubACPAgent
@@ -37,17 +37,17 @@ class FakeFramework:
         self.messages: list[object] = []
         self.stream_output_values: list[bool] = []
 
-    def bind_outbound_router(self, router: object) -> None:
+    def bind_channel_router(self, router: object) -> None:
         self.previous_routers.append(router)
         self.router = router
 
-    async def quit_via_router(self, session_id: str) -> None:
+    async def quit_via_channel_router(self, session_id: str) -> None:
         return None
 
-    async def get_runtime_options(
+    async def get_model_options(
         self, *, session_id: str, workspace: Path
-    ) -> RuntimeOptions:
-        return RuntimeOptions()
+    ) -> ModelOptions:
+        return ModelOptions()
 
     async def process_inbound(
         self, inbound: object, stream_output: bool = False
@@ -114,20 +114,20 @@ class NoTextFramework(FakeFramework):
 class ConfigFramework(FakeFramework):
     def __init__(self) -> None:
         super().__init__()
-        self.runtime_queries: list[tuple[str, Path]] = []
+        self.model_queries: list[tuple[str, Path]] = []
 
-    async def get_runtime_options(
+    async def get_model_options(
         self, *, session_id: str, workspace: Path
-    ) -> RuntimeOptions:
-        self.runtime_queries.append((session_id, workspace))
-        return RuntimeOptions(
+    ) -> ModelOptions:
+        self.model_queries.append((session_id, workspace))
+        return ModelOptions(
             models=[
-                RuntimeChoice(
+                ModelChoice(
                     id="openai:gpt-5",
                     name="GPT-5",
                     description="OpenAI model",
                 ),
-                RuntimeChoice(
+                ModelChoice(
                     id="anthropic:claude-sonnet-4-5",
                     name="Claude Sonnet",
                 ),
@@ -253,7 +253,7 @@ async def test_session_lifecycle_returns_config_options(tmp_path: Path) -> None:
     assert loaded.config_options[0].id == "model"
     assert resumed.config_options is not None
     assert resumed.config_options[0].id == "model"
-    assert framework.runtime_queries == [
+    assert framework.model_queries == [
         (created.session_id, tmp_path),
         (created.session_id, tmp_path),
         (created.session_id, tmp_path),
@@ -279,13 +279,13 @@ async def test_set_config_option_updates_session_runtime_and_returns_config_opti
     }
     assert response.config_options[0].id == "model"
     assert response.config_options[0].current_value == "anthropic:claude-sonnet-4-5"
-    assert framework.runtime_queries == [
+    assert framework.model_queries == [
         (created.session_id, tmp_path),
         (created.session_id, tmp_path),
     ]
 
 
-def test_runtime_options_fall_back_when_persisted_model_is_unavailable(
+def test_model_options_fall_back_when_persisted_model_is_unavailable(
     tmp_path: Path,
 ) -> None:
     session = plugin.ACPSession(
@@ -293,12 +293,12 @@ def test_runtime_options_fall_back_when_persisted_model_is_unavailable(
         cwd=tmp_path,
         runtime={"model": "removed:model"},
     )
-    options = RuntimeOptions(
-        models=[RuntimeChoice(id="available:model")],
+    options = ModelOptions(
+        models=[ModelChoice(id="available:model")],
         current_model="available:model",
     )
 
-    config_options = plugin._runtime_options_to_acp_config_options(options, session)
+    config_options = plugin._model_options_to_acp_config_options(options, session)
 
     assert config_options[0].current_value == "available:model"
 

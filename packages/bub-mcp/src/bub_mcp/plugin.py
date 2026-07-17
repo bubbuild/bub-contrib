@@ -13,7 +13,9 @@ import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
 from bub.tools import REGISTRY, Tool, ToolContext
-from bub.types import Envelope, MessageHandler, State
+from bub.channels.contracts import MessageHandler
+from bub.envelope import Envelope
+from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
@@ -308,7 +310,7 @@ class MCPPlugin:
         self._manager = MCPChannel()
 
     @hookimpl
-    def load_state(self, message: Envelope, session_id: str) -> State:
+    def load_state(self, message: Envelope, session_id: str) -> TurnState:
         return {"mcp": self._manager}
 
     @hookimpl

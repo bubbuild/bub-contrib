@@ -12,8 +12,8 @@ import bub
 import typer
 from bub import BubFramework, hookimpl
 from bub.builtin.auth import app as auth_app
-from bub.runtime import StreamEvent
-from bub.types import State
+from bub.streaming import StreamEvent
+from bub.turn import TurnState
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
@@ -37,7 +37,7 @@ CliPathOption = Annotated[
 
 class RuntimeAgent(Protocol):
     async def run_stream(
-        self, *, session_id: str, prompt: str | list[dict], state: State
+        self, *, session_id: str, prompt: str | list[dict], state: TurnState
     ) -> AsyncIterable[StreamEvent]: ...
 
 
@@ -60,14 +60,14 @@ def _settings() -> CursorSettings:
     return bub.ensure_config(CursorSettings)
 
 
-def workspace_from_state(state: State) -> Path:
+def workspace_from_state(state: TurnState) -> Path:
     raw = state.get("_runtime_workspace")
     if isinstance(raw, str) and raw.strip():
         return Path(raw).expanduser().resolve()
     return Path.cwd().resolve()
 
 
-def _load_thread_id(session_id: str, state: State) -> str | None:
+def _load_thread_id(session_id: str, state: TurnState) -> str | None:
     threads_file = workspace_from_state(state) / THREADS_FILE
     with contextlib.suppress(FileNotFoundError, json.JSONDecodeError):
         with threads_file.open() as f:
@@ -78,7 +78,7 @@ def _load_thread_id(session_id: str, state: State) -> str | None:
     return None
 
 
-def _save_thread_id(session_id: str, thread_id: str, state: State) -> None:
+def _save_thread_id(session_id: str, thread_id: str, state: TurnState) -> None:
     threads_file = workspace_from_state(state) / THREADS_FILE
     if threads_file.exists():
         with threads_file.open() as f:
@@ -90,7 +90,7 @@ def _save_thread_id(session_id: str, thread_id: str, state: State) -> None:
         json.dump(threads, f, indent=2)
 
 
-def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
+def _runtime_agent_from_state(state: TurnState) -> RuntimeAgent | None:
     agent = state.get("_runtime_agent")
     if agent is None:
         return None
@@ -108,7 +108,7 @@ def _prompt_to_text(prompt: str | list[dict[str, Any]]) -> str:
 
 
 async def _run_internal_command(
-    prompt: str, session_id: str, state: State
+    prompt: str, session_id: str, state: TurnState
 ) -> str | None:
     if not prompt.strip().startswith(","):
         return None
@@ -156,7 +156,7 @@ def _cursor_command(
     return command
 
 
-def _result_from_stdout(stdout_text: str, session_id: str, state: State) -> str:
+def _result_from_stdout(stdout_text: str, session_id: str, state: TurnState) -> str:
     try:
         data = json.loads(stdout_text)
     except json.JSONDecodeError:
@@ -176,7 +176,7 @@ def _result_from_stdout(stdout_text: str, session_id: str, state: State) -> str:
 
 @hookimpl
 async def run_model(
-    prompt: str | list[dict[str, Any]], session_id: str, state: State
+    prompt: str | list[dict[str, Any]], session_id: str, state: TurnState
 ) -> str:
     prompt_text = _prompt_to_text(prompt)
     internal_command_result = await _run_internal_command(

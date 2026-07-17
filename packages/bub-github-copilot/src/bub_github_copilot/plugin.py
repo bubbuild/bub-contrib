@@ -10,8 +10,8 @@ import typer
 import bub
 from bub import BubFramework, hookimpl
 from bub.builtin.auth import app as auth_app
-from bub.runtime import StreamEvent
-from bub.types import State
+from bub.streaming import StreamEvent
+from bub.turn import TurnState
 from copilot import CopilotClient, SubprocessConfig
 from copilot.session import PermissionHandler
 from pydantic import Field
@@ -52,7 +52,7 @@ TimeoutOption = Annotated[
 
 class RuntimeAgent(Protocol):
     async def run_stream(
-        self, *, session_id: str, prompt: str | list[dict], state: State
+        self, *, session_id: str, prompt: str | list[dict], state: TurnState
     ) -> AsyncIterable[StreamEvent]: ...
 
 
@@ -77,14 +77,14 @@ def _settings() -> GitHubCopilotSettings:
     return bub.ensure_config(GitHubCopilotSettings)
 
 
-def workspace_from_state(state: State) -> Path:
+def workspace_from_state(state: TurnState) -> Path:
     raw = state.get("_runtime_workspace")
     if isinstance(raw, str) and raw.strip():
         return Path(raw).expanduser().resolve()
     return Path.cwd().resolve()
 
 
-def _runtime_agent_from_state(state: State) -> RuntimeAgent | None:
+def _runtime_agent_from_state(state: TurnState) -> RuntimeAgent | None:
     agent = state.get("_runtime_agent")
     if agent is None:
         return None
@@ -192,7 +192,7 @@ def _assistant_message_from_history(messages: list[object]) -> str | None:
 
 
 async def _run_internal_command(
-    prompt: str, session_id: str, state: State
+    prompt: str, session_id: str, state: TurnState
 ) -> str | None:
     if not prompt.strip().startswith(","):
         return None
@@ -324,7 +324,7 @@ def github_copilot_login(
 
 
 @hookimpl
-async def run_model(prompt: str | list[dict], session_id: str, state: State) -> str:
+async def run_model(prompt: str | list[dict], session_id: str, state: TurnState) -> str:
     prompt_text = _prompt_to_text(prompt)
     internal_command_result = await _run_internal_command(
         prompt_text, session_id, state

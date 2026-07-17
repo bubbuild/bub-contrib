@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from bub import hookimpl
-from bub.runtime import AsyncStreamEvents
+from bub.streaming import AsyncStreamEvents
 from bub.tape import LAST_ANCHOR, TapeContext
 from bub_extism.bridge import ExtismBridge
 from bub_extism.channel import channels_from_value
@@ -22,7 +22,9 @@ if TYPE_CHECKING:
     import typer
     from bub.channels import Channel
     from bub.framework import BubFramework
-    from bub.types import Envelope, MessageHandler, State
+    from bub.channels.contracts import MessageHandler
+    from bub.envelope import Envelope
+    from bub.turn import TurnState
     from bub.tape import TapeStore
 
 
@@ -37,12 +39,12 @@ def _message_session_args(message: Envelope, session_id: str) -> dict[str, Any]:
     }
 
 
-def _state_args(state: State) -> dict[str, Any]:
+def _state_args(state: TurnState) -> dict[str, Any]:
     return {"state": state_to_json(state)}
 
 
 def _message_session_state_args(
-    message: Envelope, session_id: str, state: State
+    message: Envelope, session_id: str, state: TurnState
 ) -> dict[str, Any]:
     return {
         **_message_session_args(message, session_id),
@@ -53,7 +55,7 @@ def _message_session_state_args(
 def _prompt_session_state_args(
     prompt: str | list[dict[str, Any]],
     session_id: str,
-    state: State,
+    state: TurnState,
 ) -> dict[str, Any]:
     return {
         "prompt": prompt,
@@ -171,7 +173,7 @@ class ExtismHookAdapter:
         self,
         message: Envelope,
         session_id: str,
-        state: State,
+        state: TurnState,
     ) -> str | list[dict[str, Any]] | None:
         return _prompt_value(
             await self._call(
@@ -180,7 +182,9 @@ class ExtismHookAdapter:
             )
         )
 
-    async def hook_load_state(self, message: Envelope, session_id: str) -> State | None:
+    async def hook_load_state(
+        self, message: Envelope, session_id: str
+    ) -> TurnState | None:
         return _optional_mapping(
             await self._call(
                 "load_state", **_message_session_args(message, session_id)
@@ -191,7 +195,7 @@ class ExtismHookAdapter:
     async def hook_save_state(
         self,
         session_id: str,
-        state: State,
+        state: TurnState,
         message: Envelope,
         model_output: str,
     ) -> None:
@@ -205,7 +209,7 @@ class ExtismHookAdapter:
         self,
         message: Envelope,
         session_id: str,
-        state: State,
+        state: TurnState,
         model_output: str,
     ) -> list[Envelope]:
         return _outbound_messages(
@@ -243,7 +247,7 @@ class ExtismHookAdapter:
         )
 
     def hook_system_prompt(
-        self, prompt: str | list[dict[str, Any]], state: State
+        self, prompt: str | list[dict[str, Any]], state: TurnState
     ) -> str | None:
         return _optional_string(
             self._call_sync("system_prompt", prompt=prompt, **_state_args(state)),
@@ -272,7 +276,7 @@ class ExtismHookAdapter:
         self,
         prompt: str | list[dict[str, Any]],
         session_id: str,
-        state: State,
+        state: TurnState,
     ) -> str | None:
         return _optional_string(
             await self._call(
@@ -286,7 +290,7 @@ class ExtismHookAdapter:
         self,
         prompt: str | list[dict[str, Any]],
         session_id: str,
-        state: State,
+        state: TurnState,
     ) -> AsyncStreamEvents | None:
         value = await self._call(
             "run_model_stream",

@@ -2,11 +2,11 @@ import textwrap
 
 import bub
 from bub import hookimpl
-from bub.types import State
+from bub.turn import TurnState
 
 
 @hookimpl
-def system_prompt(prompt: str, state: State) -> str:
+def system_prompt(prompt: str, state: TurnState) -> str:
     session_id = state.get("session_id", "default")
     session_dir = bub.home / "sessions"
     prompt_file = session_dir / session_id / "AGENTS.md"

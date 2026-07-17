@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-from bub.runtime import AsyncStreamEvents, StreamEvent, StreamState
+from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
 
 
 def stream_events_from_value(value: Any) -> AsyncStreamEvents | None:

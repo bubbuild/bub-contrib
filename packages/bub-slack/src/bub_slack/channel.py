@@ -13,7 +13,7 @@ Activation rules:
 * Messages from bots (including itself) and message subtypes (joins, edits,
   deletes, file shares, ...) are ignored to avoid echo loops and noise.
 
-Replies are delivered through Bub's normal outbound router: the framework
+Replies are delivered through Bub's normal channel router: the framework
 renders the model's text into a :class:`ChannelMessage` targeted at this channel
 and calls :meth:`send`; we leave ``output_channel`` at its default so routing
 falls back to ``slack``.
@@ -32,7 +32,7 @@ from typing import Any
 import bub
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 from loguru import logger
 from slack_sdk.socket_mode.aiohttp import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest

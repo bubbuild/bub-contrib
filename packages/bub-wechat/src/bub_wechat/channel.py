@@ -11,7 +11,7 @@ from typing import AsyncIterator, Literal
 import bub
 from bub.channels import Channel, ChannelMessage
 from bub.channels.message import MediaItem
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 from loguru import logger
 from weixin_bot import IncomingMessage, WeixinBot
 from weixin_bot.api import MessageItemType, send_message

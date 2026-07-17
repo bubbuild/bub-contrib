@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from bub.runtime import BubError
+from bub.errors import BubError
 from bub.tape import TapeEntry, TapeQuery
 
 from bub_tapestore_sqlite import store as store_module

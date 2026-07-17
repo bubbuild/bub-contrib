@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from bub.envelope import normalize_envelope
-from bub.runtime import StreamEvent
+from bub.streaming import StreamEvent
 from bub.tape import TapeEntry, utc_now
 
 BUB_EXTISM_ABI_VERSION = "bub.extism.v1"

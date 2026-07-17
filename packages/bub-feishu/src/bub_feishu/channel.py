@@ -17,7 +17,7 @@ import bub
 import lark_oapi as lark
 from bub.channels import Channel
 from bub.channels.message import ChannelMessage, MediaItem
-from bub.types import MessageHandler
+from bub.channels.contracts import MessageHandler
 from lark_oapi.api.im.v1 import (
     CreateMessageRequest,
     CreateMessageRequestBody,

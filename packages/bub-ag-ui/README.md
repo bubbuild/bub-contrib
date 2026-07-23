@@ -47,6 +47,10 @@ The default endpoints are:
 - `POST /agent` for AG-UI runs
 - `GET /agent/health` for channel health
 
+For a runnable, credential-free walkthrough that starts the real Bub gateway
+and sends a protocol-native AG-UI request, see the
+[`examples`](examples/README.md) directory.
+
 ## Event mapping
 
 | Bub stream event | AG-UI event |

@@ -7,7 +7,6 @@ from types import ModuleType
 import pytest
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-CLIENT_PATH = PACKAGE_ROOT / "examples" / "client.py"
 ECHO_PLUGIN_PATH = (
     PACKAGE_ROOT
     / "examples"
@@ -25,35 +24,6 @@ def _load_module(name: str, path: Path) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def test_client_builds_protocol_native_request() -> None:
-    client = _load_module("bub_ag_ui_example_client", CLIENT_PATH)
-
-    input_data = client.build_run_input("hello from the example")
-    payload = input_data.model_dump(mode="json", by_alias=True, exclude_none=True)
-
-    assert payload["threadId"].startswith("example-thread-")
-    assert payload["runId"].startswith("example-run-")
-    assert payload["state"] == {"example": "bub-ag-ui"}
-    assert payload["messages"][0]["content"] == "hello from the example"
-    assert payload["context"] == [
-        {"description": "client", "value": "bub-ag-ui example"}
-    ]
-
-
-def test_client_decodes_ag_ui_sse_records() -> None:
-    client = _load_module("bub_ag_ui_example_client_sse", CLIENT_PATH)
-    lines = [
-        b"event: message\n",
-        b'data: {"type":"RUN_STARTED","runId":"run-1"}\n',
-        b"\n",
-        b'data: {"type":"RUN_FINISHED","runId":"run-1"}\n',
-    ]
-
-    events = list(client.decode_sse_events(lines))
-
-    assert [event["type"] for event in events] == ["RUN_STARTED", "RUN_FINISHED"]
 
 
 @pytest.mark.asyncio

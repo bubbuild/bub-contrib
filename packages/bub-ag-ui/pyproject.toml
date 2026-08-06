@@ -1,0 +1,21 @@
+[project]
+name = "bub-ag-ui"
+version = "0.1.0"
+description = "AG-UI protocol channel for Bub"
+readme = "README.md"
+authors = [{ name = "Chojan Shang", email = "psiace@apache.org" }]
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "ag-ui-protocol>=0.1.18",
+    "fastapi>=0.115.12",
+    "pydantic-settings>=2.0.0",
+    "uvicorn>=0.34.0",
+]
+
+[project.entry-points."bub"]
+ag-ui = "bub_ag_ui.plugin:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"

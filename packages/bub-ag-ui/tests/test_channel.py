@@ -1,0 +1,361 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from ag_ui.core import Context, RunAgentInput, TextInputContent, Tool, UserMessage
+from ag_ui.encoder import EventEncoder
+from bub.channels.message import ChannelMessage
+from bub.streaming import StreamEvent
+from bub_ag_ui.channel import AGUIChannel
+from bub_ag_ui.config import AGUISettings
+from bub_ag_ui.plugin import AGUIPlugin
+
+
+def _input(*, state: Any = None, context: list[Context] | None = None) -> RunAgentInput:
+    return RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        parent_run_id=None,
+        state={} if state is None else state,
+        messages=[
+            UserMessage(
+                id="user-1",
+                content=[
+                    TextInputContent(text="describe the image"),
+                ],
+            )
+        ],
+        tools=[Tool(name="lookup", description="Lookup data")],
+        context=context
+        if context is not None
+        else [Context(description="tenant", value="demo")],
+        forwarded_props={},
+    )
+
+
+def test_settings_do_not_read_process_path(monkeypatch: Any) -> None:
+    monkeypatch.setenv("PATH", "/tmp/not-an-ag-ui-path")  # noqa: S108
+    monkeypatch.delenv("BUB_AG_UI_PATH", raising=False)
+
+    settings = AGUISettings()
+
+    assert settings.path == "/agent"
+    assert settings.health_path == "/agent/health"
+
+
+def test_settings_read_bub_path(monkeypatch: Any) -> None:
+    monkeypatch.setenv("PATH", "/tmp/not-an-ag-ui-path")  # noqa: S108
+    monkeypatch.setenv("BUB_AG_UI_PATH", "/custom-agent")
+
+    settings = AGUISettings()
+
+    assert settings.path == "/custom-agent"
+
+
+def _decode_payloads(chunks: list[str]) -> list[str]:
+    payloads: list[str] = []
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            if line.startswith("data: "):
+                payloads.append(line[len("data: ") :])
+    return payloads
+
+
+async def _drain_queue(active: Any) -> list[str]:
+    chunks: list[str] = []
+    while not active.queue.empty():
+        item = await active.queue.get()
+        if item is not None:
+            chunks.append(item)
+    return chunks
+
+
+def test_channel_wraps_parent_stream_and_preserves_original_events() -> None:
+    channel = AGUIChannel(None, settings=AGUISettings(host="127.0.0.1", port=18088))
+    input_data = _input(state={"count": 1})
+    message = channel.build_message(input_data)
+    active = asyncio.run(channel.register_request(input_data, encoder=EventEncoder("")))
+
+    async def iterator():
+        yield StreamEvent("text", {"delta": "Hello"})
+        yield StreamEvent(
+            "tool_call",
+            {
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "arguments": '{"city":"Shanghai"}',
+                        },
+                    }
+                ],
+            },
+        )
+        yield StreamEvent("tool_result", {"tool_results": [{"weather": "sunny"}]})
+        yield StreamEvent("usage", {"input_tokens": 10, "output_tokens": 5})
+
+    forwarded = asyncio.run(_collect_stream(channel, message, iterator()))
+
+    assert [event.kind for event in forwarded] == [
+        "text",
+        "tool_call",
+        "tool_result",
+        "usage",
+    ]
+
+    chunks = asyncio.run(_drain_queue(active))
+    payloads = _decode_payloads(chunks)
+    assert any('"type":"RUN_STARTED"' in payload for payload in payloads)
+    assert any(
+        '"type":"STATE_SNAPSHOT"' in payload and '"count":1' in payload
+        for payload in payloads
+    )
+    assert any(
+        '"type":"TEXT_MESSAGE_CONTENT"' in payload and '"delta":"Hello"' in payload
+        for payload in payloads
+    )
+    assert any(
+        '"type":"TOOL_CALL_START"' in payload and '"toolCallId":"call-1"' in payload
+        for payload in payloads
+    )
+    assert any('"type":"TOOL_CALL_RESULT"' in payload for payload in payloads)
+    assert any('"name":"bub.usage"' in payload for payload in payloads)
+
+
+def test_channel_maps_parallel_bub_tool_events_by_index() -> None:
+    channel = AGUIChannel(None, settings=AGUISettings(host="127.0.0.1", port=18091))
+    input_data = _input()
+    message = channel.build_message(input_data)
+    active = asyncio.run(channel.register_request(input_data, encoder=EventEncoder("")))
+
+    async def iterator():
+        yield StreamEvent(
+            "tool_call",
+            {
+                "tool_calls": [
+                    {"id": "call-1", "function": {"name": "first", "arguments": "{}"}},
+                    {"id": "call-2", "function": {"name": "second", "arguments": "{}"}},
+                ]
+            },
+        )
+        yield StreamEvent("tool_result", {"tool_results": ["one", {"value": "two"}]})
+
+    asyncio.run(_collect_stream(channel, message, iterator()))
+
+    payloads = _decode_payloads(asyncio.run(_drain_queue(active)))
+    result_payloads = [
+        payload for payload in payloads if '"type":"TOOL_CALL_RESULT"' in payload
+    ]
+    assert len(result_payloads) == 2
+    assert '"toolCallId":"call-1"' in result_payloads[0]
+    assert '"content":"one"' in result_payloads[0]
+    assert '"toolCallId":"call-2"' in result_payloads[1]
+    assert '\\"value\\": \\"two\\"' in result_payloads[1]
+
+
+def test_plugin_build_prompt_and_save_state() -> None:
+    plugin = AGUIPlugin(framework=None)
+    input_data = _input(state={"count": 1})
+    message = plugin._channel.build_message(input_data)
+    active = asyncio.run(
+        plugin._channel.register_request(input_data, encoder=EventEncoder(""))
+    )
+
+    prompt = asyncio.run(
+        plugin.build_prompt(message=message, session_id="thread-1", state={})
+    )
+    assert prompt == "tenant: demo\ndescribe the image"
+    loaded_state = plugin.load_state(message, "thread-1")
+    assert loaded_state["count"] == 1
+    assert loaded_state["_ag_ui"]["context"] == [
+        {"description": "tenant", "value": "demo"}
+    ]
+    assert loaded_state["_ag_ui"]["forwarded_props"] == {}
+    assert loaded_state["_ag_ui"]["messages"][0]["id"] == "user-1"
+    assert loaded_state["_ag_ui"]["messages"][0]["role"] == "user"
+    assert loaded_state["_ag_ui"]["messages"][0]["content"] == [
+        {"type": "text", "text": "describe the image"}
+    ]
+    assert loaded_state["_ag_ui"]["tools"][0]["name"] == "lookup"
+    assert loaded_state["_ag_ui"]["tools"][0]["description"] == "Lookup data"
+
+    asyncio.run(
+        plugin.save_state(
+            session_id="thread-1",
+            state={"count": 2, "session_id": "thread-1"},
+            message=message,
+            model_output="Done",
+        )
+    )
+    staged_payloads = _decode_payloads(asyncio.run(_drain_queue(active)))
+    assert any('"type":"RUN_STARTED"' in payload for payload in staged_payloads)
+    assert any(
+        '"type":"STATE_SNAPSHOT"' in payload and '"count":1' in payload
+        for payload in staged_payloads
+    )
+    assert not any(
+        '"type":"TEXT_MESSAGE_CONTENT"' in payload for payload in staged_payloads
+    )
+    assert not any('"type":"RUN_FINISHED"' in payload for payload in staged_payloads)
+
+    outbound = ChannelMessage(
+        session_id="thread-1",
+        channel="ag-ui",
+        chat_id="thread-1",
+        content="Done",
+    )
+    asyncio.run(plugin._channel.send(outbound))
+
+    chunks = asyncio.run(_drain_queue(active))
+    payloads = _decode_payloads(chunks)
+    assert any(
+        '"type":"TEXT_MESSAGE_CONTENT"' in payload and '"delta":"Done"' in payload
+        for payload in payloads
+    )
+    assert any(
+        '"type":"STATE_SNAPSHOT"' in payload and '"count":2' in payload
+        for payload in payloads
+    )
+    assert any('"type":"TEXT_MESSAGE_END"' in payload for payload in payloads)
+    assert any('"type":"RUN_FINISHED"' in payload for payload in payloads)
+    assert sum('"type":"TEXT_MESSAGE_CONTENT"' in payload for payload in payloads) == 1
+
+
+def test_plugin_keeps_output_schema_out_of_prompt_but_in_state() -> None:
+    plugin = AGUIPlugin(framework=None)
+    input_data = _input(
+        state={"count": 1},
+        context=[
+            Context(description="tenant", value="demo"),
+            Context(
+                description="output_schema",
+                value='{"type":"object","properties":{"name":{"type":"string"}}}',
+            ),
+        ],
+    )
+    message = plugin._channel.build_message(input_data)
+
+    prompt = asyncio.run(
+        plugin.build_prompt(message=message, session_id="thread-1", state={})
+    )
+    loaded_state = plugin.load_state(message, "thread-1")
+
+    assert prompt == "tenant: demo\ndescribe the image"
+    assert loaded_state["count"] == 1
+    assert loaded_state["_ag_ui"]["context"] == [
+        {"description": "tenant", "value": "demo"},
+        {
+            "description": "output_schema",
+            "value": {"type": "object", "properties": {"name": {"type": "string"}}},
+        },
+    ]
+
+
+def test_plugin_keeps_structured_context_out_of_prompt_but_in_state() -> None:
+    plugin = AGUIPlugin(framework=None)
+    input_data = _input(
+        context=[
+            Context(description="tenant", value="demo"),
+            Context(description="filters", value='{"limit":5,"tags":["ui"]}'),
+        ],
+    )
+    message = plugin._channel.build_message(input_data)
+
+    prompt = asyncio.run(
+        plugin.build_prompt(message=message, session_id="thread-1", state={})
+    )
+    loaded_state = plugin.load_state(message, "thread-1")
+
+    assert prompt == "tenant: demo\ndescribe the image"
+    assert loaded_state["_ag_ui"]["context"] == [
+        {"description": "tenant", "value": "demo"},
+        {"description": "filters", "value": {"limit": 5, "tags": ["ui"]}},
+    ]
+
+
+def test_plugin_on_error_emits_run_error_instead_of_run_finished() -> None:
+    plugin = AGUIPlugin(framework=None)
+    input_data = _input(state={"count": 1})
+    message = plugin._channel.build_message(input_data)
+    active = asyncio.run(
+        plugin._channel.register_request(input_data, encoder=EventEncoder(""))
+    )
+
+    asyncio.run(
+        plugin.save_state(
+            session_id="thread-1",
+            state={"count": 2},
+            message=message,
+            model_output="partial output",
+        )
+    )
+    asyncio.run(plugin.on_error("turn", RuntimeError("boom"), message))
+
+    payloads = _decode_payloads(asyncio.run(_drain_queue(active)))
+    assert any(
+        '"type":"RUN_ERROR"' in payload and '"message":"boom"' in payload
+        for payload in payloads
+    )
+    assert not any('"type":"RUN_FINISHED"' in payload for payload in payloads)
+
+
+def test_channel_send_fallback_emits_terminal_events() -> None:
+    channel = AGUIChannel(None, settings=AGUISettings(host="127.0.0.1", port=18089))
+    input_data = _input()
+    active = asyncio.run(channel.register_request(input_data, encoder=EventEncoder("")))
+
+    outbound = ChannelMessage(
+        session_id="thread-1",
+        channel="ag-ui",
+        chat_id="thread-1",
+        content="fallback output",
+    )
+    asyncio.run(channel.send(outbound))
+
+    chunks = asyncio.run(_drain_queue(active))
+    payloads = _decode_payloads(chunks)
+    assert any(
+        '"type":"TEXT_MESSAGE_CONTENT"' in payload
+        and '"delta":"fallback output"' in payload
+        for payload in payloads
+    )
+    assert any('"type":"RUN_FINISHED"' in payload for payload in payloads)
+
+
+def test_channel_stream_error_event_emits_run_error_and_closes_request() -> None:
+    channel = AGUIChannel(None, settings=AGUISettings(host="127.0.0.1", port=18090))
+    input_data = _input()
+    message = channel.build_message(input_data)
+    active = asyncio.run(channel.register_request(input_data, encoder=EventEncoder("")))
+
+    async def iterator():
+        yield StreamEvent("text", {"delta": "partial"})
+        yield StreamEvent(
+            "error", {"message": "stream failed", "kind": "runtime_error"}
+        )
+
+    forwarded = asyncio.run(_collect_stream(channel, message, iterator()))
+
+    assert [event.kind for event in forwarded] == ["text", "error"]
+
+    payloads = _decode_payloads(asyncio.run(_drain_queue(active)))
+    assert any(
+        '"type":"TEXT_MESSAGE_CONTENT"' in payload and '"delta":"partial"' in payload
+        for payload in payloads
+    )
+    assert any('"type":"TEXT_MESSAGE_END"' in payload for payload in payloads)
+    assert any(
+        '"type":"RUN_ERROR"' in payload and '"message":"stream failed"' in payload
+        for payload in payloads
+    )
+    assert not any('"type":"RUN_FINISHED"' in payload for payload in payloads)
+    assert active.finished is True
+
+
+async def _collect_stream(
+    channel: AGUIChannel, message: ChannelMessage, iterator: Any
+) -> list[StreamEvent]:
+    return [event async for event in channel.stream_events(message, iterator)]

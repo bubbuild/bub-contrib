@@ -1,0 +1,26 @@
+[project]
+name = "bub-context-budget"
+version = "0.1.0"
+description = "Proactive context-budget guard for Bub LLM calls"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.10.1",
+    "tiktoken>=0.13.0,<0.14.0",
+]
+
+[project.entry-points.bub]
+context-budget = "bub_context_budget.plugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

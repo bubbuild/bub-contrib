@@ -31,7 +31,7 @@ async def search(query: str, max_results: int, settings: WebSearchSettings) -> s
                 },
             ) as response,
         ):
-            data = await response.json()
+            data = await response.json(content_type=None)
     except aiohttp.ClientError as exc:
         return f"HTTP error: {exc!s}"
     except json.JSONDecodeError as exc:

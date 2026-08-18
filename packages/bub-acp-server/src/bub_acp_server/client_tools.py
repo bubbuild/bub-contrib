@@ -25,6 +25,7 @@ _TOOL_NAMES = (
     "fs.read",
     "fs.write",
     "fs.edit",
+    "tape.handoff",
     "update_plan",
 )
 type TerminalObserver = Callable[[str, str, str], Awaitable[None]]
@@ -245,6 +246,15 @@ class ACPClientToolRuntime:
         )
         return f"Plan updated with {len(plan)} steps"
 
+    @staticmethod
+    async def tape_handoff(
+        name: str,
+        summary: str,
+        context: ToolContext,
+    ) -> str:
+        await context.tape.handoff(name=name, state={"summary": summary})
+        return f"anchor added: {name}"
+
     def _require_client(self) -> Client:
         if self._client is None:
             raise RuntimeError("ACP client is not connected")
@@ -343,6 +353,16 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Replace the ACP session plan and persist it to the current tape."""
         return await runtime.update_plan(request, context)
 
+    @tool(name="tape.handoff", context=True)
+    async def tape_handoff(
+        name: str = "handoff",
+        summary: str = "",
+        *,
+        context: ToolContext,
+    ) -> str:
+        """Compact the current context by adding a handoff anchor."""
+        return await runtime.tape_handoff(name, summary, context)
+
     return {
         tool_item.name: tool_item
         for tool_item in (
@@ -352,6 +372,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
             fs_read,
             fs_write,
             fs_edit,
+            tape_handoff,
             update_plan_tool,
         )
     }

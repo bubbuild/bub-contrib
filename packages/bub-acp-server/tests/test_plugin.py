@@ -532,8 +532,8 @@ async def test_prompt_passes_session_config_to_bub_context(tmp_path: Path) -> No
         session_id=created.session_id,
     )
 
-    assert framework.messages[0].context["model"] == "anthropic:claude-sonnet-4-5"
-    assert framework.messages[0].context["reasoning_effort"] == "high"
+    assert framework.messages[0].context["_runtime_model"] == "anthropic:claude-sonnet-4-5"
+    assert framework.messages[0].context["_runtime_reasoning_effort"] == "high"
     assert framework.messages[0].context["_runtime_workspace"] == str(tmp_path)
     assert framework.messages[0].context["chat_id"] == created.session_id
     assert "acp_session_id" not in framework.messages[0].context
@@ -598,11 +598,9 @@ async def test_prompt_streams_bub_events_to_acp_client() -> None:
     response = await agent.prompt(
         [TextContentBlock(type="text", text="say hello")],
         session_id=session.session_id,
-        message_id="user-message-1",
     )
 
     assert response.stop_reason == "end_turn"
-    assert response.user_message_id == "user-message-1"
     assert framework.stream_output_values == [True]
     assert framework.messages[0].content == "say hello"
     assert framework.messages[0].channel == "acp-server"
@@ -680,6 +678,50 @@ async def test_bash_tool_call_attaches_acp_terminal_content() -> None:
     assert result_update.status == "completed"
     assert result_update.raw_output == "/workspace"
     assert result_update.content is None
+
+
+@pytest.mark.asyncio
+async def test_tape_handoff_is_reported_as_context_compaction() -> None:
+    client = FakeClient()
+    router = ACPStreamRouter(client)
+
+    async def stream():
+        yield StreamEvent(
+            "tool_call",
+            {
+                "tool_calls": [
+                    {
+                        "id": "call-handoff",
+                        "type": "function",
+                        "function": {
+                            "name": "tape.handoff",
+                            "arguments": '{"name":"phase-1","summary":"done"}',
+                        },
+                    }
+                ]
+            },
+        )
+        yield StreamEvent(
+            "tool_result", {"tool_results": ["anchor added: phase-1"]}
+        )
+
+    async for _ in router.wrap_stream({"chat_id": "session-1"}, stream()):
+        pass
+
+    start = client.updates[0][1]
+    completed = client.updates[1][1]
+    assert start.session_update == "tool_call"
+    assert start.tool_call_id == "call-handoff"
+    assert start.title == "Context compacting"
+    assert start.kind == "other"
+    assert start.status == "in_progress"
+    assert start.field_meta == {"contextCompaction": True}
+    assert completed.session_update == "tool_call_update"
+    assert completed.tool_call_id == "call-handoff"
+    assert completed.title == "Context compacted"
+    assert completed.status == "completed"
+    assert completed.content is None
+    assert completed.field_meta == {"contextCompaction": True}
 
 
 @pytest.mark.asyncio

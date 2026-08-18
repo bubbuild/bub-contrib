@@ -13,6 +13,7 @@ Expose Bub as an Agent Client Protocol agent.
 - An ACP-aware `update_plan` tool that updates the client plan UI and records each complete plan as a `plan` event in the session tape
 - Automatic recovery of the latest persisted plan into the next ACP turn's model context
 - Session-scoped model and reasoning-effort selection through ACP config options
+- ACP context-compaction notifications when `tape.handoff` runs
 - Mid-turn steering through the `_session/steering` ACP extension
 
 ## Installation
@@ -48,6 +49,8 @@ The process speaks ACP over stdio. Prompts are sent through Bub's hook pipeline 
 The agent sends an ACP `usage_update` whenever the streamed usage snapshot changes, with a final end-of-stream check as a fallback. Missing token usage is reported as `0`. If the model provider does not report its context-window size, set `BUB_ACP_SERVER_CONTEXT_WINDOW_SIZE`; the default is `128000` tokens.
 
 ACP clients can select both the model and reasoning effort for each session. Reasoning effort defaults to `auto`; the selected value is persisted with the ACP session and passed into Bub's turn state for subsequent model calls.
+
+While the ACP server is running, it replaces Bub's `tape.handoff` tool with an equivalent implementation and reports the operation as a context-compaction tool call. Compatible clients receive `Context compacting` and `Context compacted` updates marked with `_meta.contextCompaction`.
 
 Bub keeps using its own configuration, tools, skills, and tapes. The ACP client starts the process and displays the session; it does not replace Bub's model setup.
 

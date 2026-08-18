@@ -90,11 +90,18 @@ def _context(tmp_path: Path) -> ToolContext:
 class FakeTape:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object], dict[str, object]]] = []
+        self.handoffs: list[tuple[str, dict[str, object]]] = []
 
     async def append_event(
         self, name: str, payload: dict[str, object], **meta: object
     ) -> None:
         self.events.append((name, payload, meta))
+
+    async def handoff(
+        self, *, name: str, state: dict[str, object]
+    ) -> list[object]:
+        self.handoffs.append((name, state))
+        return []
 
 
 @pytest.mark.asyncio
@@ -321,6 +328,39 @@ async def test_update_plan_updates_acp_ui_and_persists_tape(tmp_path: Path) -> N
     assert [entry.status for entry in update.entries] == [
         "completed",
         "in_progress",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_replaces_tape_handoff_without_changing_tape_semantics(
+    tmp_path: Path,
+) -> None:
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    client = FakeClient()
+    tape = FakeTape()
+    context = ToolContext(
+        tape=cast(Any, tape),
+        state={
+            "session_id": "acp-server:session-1",
+            "_runtime_workspace": str(tmp_path),
+        },
+    )
+    original = REGISTRY["tape.handoff"]
+
+    with replace_builtin_tools(_runtime(client)):
+        assert REGISTRY["tape.handoff"] is not original
+        assert REGISTRY["tape.handoff"].parameters == original.parameters
+        result = await REGISTRY["tape.handoff"].run(
+            name="phase-1",
+            summary="Implementation complete",
+            context=context,
+        )
+
+    assert REGISTRY["tape.handoff"] is original
+    assert result == "anchor added: phase-1"
+    assert tape.handoffs == [
+        ("phase-1", {"summary": "Implementation complete"})
     ]
 
 

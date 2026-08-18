@@ -360,7 +360,7 @@ async def test_plugin_steering_inbox_precedes_builtin_provider(
                 content="hello",
                 context={
                     "_runtime_workspace": str(tmp_path),
-                    "reasoning_effort": "high",
+                    "_runtime_reasoning_effort": "high",
                 },
             ),
             "acp-server:session",

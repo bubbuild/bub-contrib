@@ -88,7 +88,10 @@ class ACPServerPlugin:
         workspace = context.get("_runtime_workspace")
         if isinstance(workspace, str) and workspace:
             state["_runtime_workspace"] = workspace
-        reasoning_effort = context.get("reasoning_effort")
+        model = context.get("_runtime_model")
+        if isinstance(model, str) and model:
+            state["model"] = model
+        reasoning_effort = context.get("_runtime_reasoning_effort")
         if isinstance(reasoning_effort, str) and reasoning_effort:
             state["reasoning_effort"] = reasoning_effort
         return state

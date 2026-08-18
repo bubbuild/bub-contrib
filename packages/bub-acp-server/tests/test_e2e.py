@@ -137,8 +137,8 @@ async def test_acp_prompt_executes_bub_tools_through_client(tmp_path: Path) -> N
             )
             session = await connection.new_session(cwd=str(workspace))
             response = await connection.prompt(
+                session.session_id,
                 [TextContentBlock(type="text", text="exercise client tools")],
-                session_id=session.session_id,
             )
 
         assert process.returncode is None

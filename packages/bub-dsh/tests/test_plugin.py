@@ -267,7 +267,7 @@ def test_harness_kwargs_omits_optional_settings(
     tmp_path: Path,
 ) -> None:
     bub_home = tmp_path / "bub-home"
-    monkeypatch.setattr(plugin.bub, "home", bub_home)
+    monkeypatch.setenv("BUB_HOME", str(bub_home))
     dsh_settings = plugin.DshSettings()
     root_settings = FakeRootSettings(model="deepseek-v4-flash")
     monkeypatch.setattr(

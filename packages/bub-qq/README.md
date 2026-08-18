@@ -299,7 +299,6 @@ From official QQ Bot docs (API auth + event subscription):
 - [QQ Bot Developer Documentation](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/getting-started.html)
 - [Bub docs](https://bub.build/)
 - [Bub plugin hub](https://hub.bub.build/)
-- [Bub plugin install](https://bub.build/docs/getting-started/install/) / CLI: `bub install`
 
 Use the QQ docs for app creation, credentials, event subscription, and callback settings (`APPID`, `SECRET`, webhook URL, intents, etc.).
 

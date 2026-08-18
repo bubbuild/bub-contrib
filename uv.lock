@@ -16,6 +16,7 @@ members = [
     "bub-cursor",
     "bub-dingtalk",
     "bub-discord",
+    "bub-dsh",
     "bub-extism",
     "bub-feishu",
     "bub-github-copilot",
@@ -431,6 +432,7 @@ dependencies = [
     { name = "bub-cursor" },
     { name = "bub-dingtalk" },
     { name = "bub-discord" },
+    { name = "bub-dsh" },
     { name = "bub-extism" },
     { name = "bub-feishu" },
     { name = "bub-github-copilot" },
@@ -470,6 +472,7 @@ requires-dist = [
     { name = "bub-cursor", editable = "packages/bub-cursor" },
     { name = "bub-dingtalk", editable = "packages/bub-dingtalk" },
     { name = "bub-discord", editable = "packages/bub-discord" },
+    { name = "bub-dsh", editable = "packages/bub-dsh" },
     { name = "bub-extism", editable = "packages/bub-extism" },
     { name = "bub-feishu", editable = "packages/bub-feishu" },
     { name = "bub-github-copilot", editable = "packages/bub-github-copilot" },
@@ -534,6 +537,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "discord-py", specifier = ">=2.7.1" }]
+
+[[package]]
+name = "bub-dsh"
+version = "0.1.0"
+source = { editable = "packages/bub-dsh" }
+dependencies = [
+    { name = "deepseek-harness-sdk" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deepseek-harness-sdk", specifier = ">=0.1.0rc7,<0.2.0" },
+    { name = "pydantic-settings", specifier = ">=2.13.1" },
+]
 
 [[package]]
 name = "bub-extism"
@@ -1098,6 +1116,28 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/de/75/c7988cb0b90ab9d6728d4c444f09256cfdc97606c1638d8a8090eeb57f7e/cyclopts-4.14.1.tar.gz", hash = "sha256:5d01fc3a940a0e4e872a81ed533a10c1892b5baaa4121fe69528a2b8c17fc9d0", size = 177281, upload-time = "2026-05-19T19:49:22.312Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/22/1d/f6c80f82a42c69ff5a86c2580e789133de387d067210c7c46677618a2ca7/cyclopts-4.14.1-py3-none-any.whl", hash = "sha256:b705fdaa3277554a5da03e9bb5ff96a44d204a1afe3099f1b56e1586488bbfd4", size = 214925, upload-time = "2026-05-19T19:49:23.559Z" },
+]
+
+[[package]]
+name = "deepseek-harness-runtime-bin"
+version = "0.1.0rc7"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/6e/c7d6992c148312a9abee04115802a44eb474d9dd5464cc6856b14518bc8a/deepseek_harness_runtime_bin-0.1.0rc7-py3-none-macosx_14_0_arm64.whl", hash = "sha256:39ae51dec905c496ede69250d51b02a424a6c96829feb2ad7e01b3cec97a3255", size = 52067269, upload-time = "2026-08-18T02:04:29.222Z" },
+    { url = "https://files.pythonhosted.org/packages/10/64/86796e0394b577741850c6818e8dad8e13afc38c9b4692c7b4738045916f/deepseek_harness_runtime_bin-0.1.0rc7-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:de4e2571d3cd1c521ee22c754460dd251b45bd91a033876f554d0eab9b2843a1", size = 56534076, upload-time = "2026-08-18T02:04:32.529Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/f1/91501f0f08949fbc592f790a1a1a327ff781fe35138765eac38afb77c433/deepseek_harness_runtime_bin-0.1.0rc7-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:bf26f76a8cab7bedcce3a060b81d19ec1cabd8bd261c40b47381d630742797a7", size = 56796555, upload-time = "2026-08-18T02:04:35.677Z" },
+]
+
+[[package]]
+name = "deepseek-harness-sdk"
+version = "0.1.0rc7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "deepseek-harness-runtime-bin" },
+    { name = "pydantic" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/5e/86d118a15ad0f5b42933fb7162420b60b7cc53a4739da272a5204501e009/deepseek_harness_sdk-0.1.0rc7-py3-none-any.whl", hash = "sha256:5327d60659d8802442d2c589c89c3528cf18eb07b5d698059c833eb6b853b7d4", size = 12881, upload-time = "2026-08-18T02:05:09.933Z" },
 ]
 
 [[package]]

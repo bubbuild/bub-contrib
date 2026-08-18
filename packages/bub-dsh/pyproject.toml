@@ -1,0 +1,20 @@
+[project]
+name = "bub-dsh"
+version = "0.1.0"
+description = "DeepSeek Harness SDK-backed run_model plugin for Bub"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "deepseek-harness-sdk>=0.1.0rc7,<0.2.0",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.entry-points.bub]
+dsh = "bub_dsh.plugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"

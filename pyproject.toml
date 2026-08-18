@@ -12,6 +12,7 @@ dependencies = [
     "bub-cursor",
     "bub-discord",
     "bub-dingtalk",
+    "bub-dsh",
     "bub-extism",
     "bub-github-copilot",
     "bub-kimi",
@@ -43,6 +44,7 @@ bub-context-budget = { workspace = true }
 bub-cursor = { workspace = true }
 bub-discord = { workspace = true }
 bub-dingtalk = { workspace = true }
+bub-dsh = { workspace = true }
 bub-extism = { workspace = true }
 bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }

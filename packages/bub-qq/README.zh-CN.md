@@ -296,8 +296,9 @@ C2C 保持仅被动回复：官方文档写明 C2C 主动推送已于 2025-04-21
 
 ## 官方文档
 
-- [QQ 机器人开发文档](https://bot.q.qq.com/wiki/develop/api-v2/)
-- [Bub 文档](https://bub.build/zh-cn/docs/)
+- [QQ 机器人开发文档](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/getting-started.html)
+- [Bub 文档](https://bub.build/)
+- [Bub 插件合集](https://hub.bub.build/)
 - Bub 插件安装：`bub install`（见 [安装说明](https://bub.build/zh-cn/docs/getting-started/install/)）
 
 创建应用、凭据、事件订阅与回调配置（`APPID`、`SECRET`、回调 URL、intents 等）请以 QQ 官方文档为准。

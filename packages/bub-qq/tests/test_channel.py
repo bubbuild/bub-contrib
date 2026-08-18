@@ -321,6 +321,114 @@ def test_channel_handles_group_at_message() -> None:
     configure._config_data.clear()
 
 
+class InteractionOpenAPIStub:
+    def __init__(self) -> None:
+        self.acks: list[dict[str, object]] = []
+
+    async def put_interaction(
+        self,
+        *,
+        interaction_id: str,
+        code: int = 0,
+        data: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        self.acks.append({"id": interaction_id, "code": code, "data": data})
+        return {}
+
+
+def test_channel_records_msg_toggle_events(tmp_path) -> None:
+    async def _run() -> None:
+        configure.merge(
+            configure._config_data,
+            {
+                "qq": {
+                    "receive_mode": "webhook",
+                    "state_file": str(tmp_path / "state.json"),
+                }
+            },
+        )
+        configure._global_config.clear()
+        channel = QQChannel(lambda message: None)
+
+        await channel._handle_transport_payload(
+            {"op": 0, "t": "GROUP_MSG_RECEIVE", "d": {"group_openid": "group-1"}}
+        )
+        await channel._handle_transport_payload(
+            {"op": 0, "t": "GROUP_MSG_REJECT", "d": {"group_openid": "group-2"}}
+        )
+        await channel._handle_transport_payload(
+            {"op": 0, "t": "C2C_MSG_RECEIVE", "d": {"openid": "user-1"}}
+        )
+        await channel._handle_transport_payload(
+            {"op": 0, "t": "C2C_MSG_REJECT", "d": {"openid": "user-2"}}
+        )
+
+        store = channel._platform_store
+        assert store.active_messages_allowed("group", "group-1") is True
+        assert store.active_messages_allowed("group", "group-2") is False
+        assert store.active_messages_allowed("c2c", "user-1") is True
+        assert store.active_messages_allowed("c2c", "user-2") is False
+
+    asyncio.run(_run())
+    configure._global_config.clear()
+    configure._config_data.clear()
+
+
+def test_channel_persists_claw_cfg_update_and_echoes_state(tmp_path) -> None:
+    async def _run() -> None:
+        configure.merge(
+            configure._config_data,
+            {
+                "qq": {
+                    "receive_mode": "webhook",
+                    "state_file": str(tmp_path / "state.json"),
+                }
+            },
+        )
+        configure._global_config.clear()
+        channel = QQChannel(lambda message: None)
+        openapi = InteractionOpenAPIStub()
+        channel._openapi = openapi  # type: ignore[assignment]
+
+        await channel._handle_transport_payload(
+            {
+                "op": 0,
+                "t": "INTERACTION_CREATE",
+                "d": {
+                    "id": "interaction-1",
+                    "group_openid": "group-1",
+                    "data": {
+                        "type": 2002,
+                        "resolved": {"claw_cfg": {"require_mention": "mention"}},
+                    },
+                },
+            }
+        )
+
+        assert channel._platform_store.require_mention("group-1") == "mention"
+        first_ack = openapi.acks[0]
+        assert first_ack["data"]["claw_cfg"]["require_mention"] == "mention"  # type: ignore[index]
+
+        await channel._handle_transport_payload(
+            {
+                "op": 0,
+                "t": "INTERACTION_CREATE",
+                "d": {
+                    "id": "interaction-2",
+                    "group_openid": "group-1",
+                    "data": {"type": 2001, "resolved": {}},
+                },
+            }
+        )
+
+        second_ack = openapi.acks[1]
+        assert second_ack["data"]["claw_cfg"]["require_mention"] == "mention"  # type: ignore[index]
+
+    asyncio.run(_run())
+    configure._global_config.clear()
+    configure._config_data.clear()
+
+
 def test_channel_send_routes_group_messages() -> None:
     async def _run() -> None:
         configure.merge(configure._config_data, {"qq": {"receive_mode": "webhook"}})

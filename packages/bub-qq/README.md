@@ -6,14 +6,19 @@ Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
 
 ## What it provides
 
-- Bub channel plugin (`entry point`: `qq` → `bub_qq.plugin`)
-- Inbound C2C (`C2C_MESSAGE_CREATE`) and group (`GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE`) events adapted to Bub `ChannelMessage`
-- Outbound C2C and group text replies via QQ OpenAPI (passive reply only)
-- Receive transport switch: **webhook** or **websocket** (mutually exclusive on the QQ platform side)
-- `onboard_config` so `bub onboard` can collect `appid` / `secret` / `receive_mode`
-- Bundled skill resources under `src/skills/qq`
+| Capability | Details |
+| --- | --- |
+| Single-chat (C2C) receive/reply | `C2C_MESSAGE_CREATE` adapted to Bub `ChannelMessage`; passive text / markdown replies |
+| Group receive/reply | `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE`; full-message mode supported, payload carries `was_mentioned` / `sender_role` |
+| Active group messages | Proactive fallback when a passive reply is impossible (`active_messages`, requires the group admin's opt-in in the QQ client) |
+| Quotes and chat records | `msg_elements` parsed into `quoted_messages` (quoted messages / merged-forward chat records) for the model |
+| Receive transport | **webhook** or **websocket** (mutually exclusive on the QQ platform side); ed25519 signature verification and reconnect included |
+| Security | User/group allowlists, role-gated comma commands, per-scope tool policy, LLM rate limiting, audit logs (see Security) |
+| Persisted platform state | Active-message opt-ins (`*_MSG_RECEIVE` / `*_MSG_REJECT`) and group claw_cfg survive restarts |
+| Reliable sending | Inbound/outbound dedupe, `msg_seq` management, error catalog; async manual audit (304023/304024) treated as pending success |
+| Onboarding | `bub onboard` collects `appid` / `secret` / `receive_mode`; bundled skill resources under `src/skills/qq` |
 
-Supports **single-chat (C2C)** and **group** text receive/reply. QQ Guild is not covered yet.
+Plugin entry point: `qq` → `bub_qq.plugin`. Supports **single-chat (C2C)** and **group** text receive/reply. QQ Guild is not covered yet.
 
 ## Prerequisites
 
@@ -133,7 +138,7 @@ Gateway start fails if `appid` / `secret` are empty, or if `receive_mode` is not
 | YAML field (`qq.*`) | Env var | Default | Description |
 | --- | --- | --- | --- |
 | `token_url` | `BUB_QQ_TOKEN_URL` | `https://bots.qq.com/app/getAppAccessToken` | Access token endpoint |
-| `openapi_base_url` | `BUB_QQ_OPENAPI_BASE_URL` | `https://api.sgroup.qq.com` | OpenAPI base URL |
+| `openapi_base_url` | `BUB_QQ_OPENAPI_BASE_URL` | `https://api.bot.qq.com` | OpenAPI base URL (official unified endpoint; override here to use the legacy `https://api.sgroup.qq.com`) |
 | `timeout_seconds` | `BUB_QQ_TIMEOUT_SECONDS` | `30` | HTTP timeout for token and OpenAPI |
 | `token_refresh_skew_seconds` | `BUB_QQ_TOKEN_REFRESH_SKEW_SECONDS` | `60` | Refresh token this many seconds before expiry |
 | `webhook_host` | `BUB_QQ_WEBHOOK_HOST` | `127.0.0.1` | Embedded webhook bind host |
@@ -145,6 +150,9 @@ Gateway start fails if `appid` / `secret` are empty, or if `receive_mode` is not
 | `inbound_dedupe_size` | `BUB_QQ_INBOUND_DEDUPE_SIZE` | `1024` | Recent inbound `msg_id` cache size |
 | `session_state_size` | `BUB_QQ_SESSION_STATE_SIZE` | `1024` | Max sessions / send records kept in memory for passive replies (oldest entries are evicted) |
 | `passive_reply_window_seconds` | `BUB_QQ_PASSIVE_REPLY_WINDOW_SECONDS` | `3600` | How long after an inbound message passive replies are attempted |
+| `active_messages` | `BUB_QQ_ACTIVE_MESSAGES` | `false` | Send proactive group messages (no `msg_id`) when a passive reply is impossible; requires the group admin to allow proactive messages in the QQ client |
+| `passive_replies_per_msg_id` | `BUB_QQ_PASSIVE_REPLIES_PER_MSG_ID` | `4` | Local cap of passive replies per inbound `msg_id`; beyond it the send falls back to an active message (when enabled) or is skipped |
+| `state_file` | `BUB_QQ_STATE_FILE` | empty | JSON file persisting platform switches (active-message opt-ins, group claw_cfg); empty uses `<bub home>/qq/state.json` |
 | `admin_users` | `BUB_QQ_ADMIN_USERS` | empty | Comma-separated user openids with full comma-command and tool access in every scope |
 | `allow_users` | `BUB_QQ_ALLOW_USERS` | empty | Comma-separated C2C allowlist; when set, C2C messages from anyone else are dropped |
 | `allow_groups` | `BUB_QQ_ALLOW_GROUPS` | empty | Comma-separated group allowlist; when set, messages from other groups are dropped |
@@ -173,6 +181,8 @@ export BUB_QQ_RECEIVE_MODE=websocket
 ```
 
 Which group messages the bot hears is controlled in the QQ client by a group admin setting (all messages / last 10 @mentions / @only). Every received group message wakes the model; `was_mentioned` in the payload is `false` when the bot was not @mentioned, and an empty reply is not sent.
+
+Settings path in the latest mobile QQ client: **open the group chat → tap "More" in the top-right corner → Group Bots → Manage**. There the group owner or an admin can adjust the bot's group message scope and toggle "allow the bot to speak proactively" (pairs with `active_messages`).
 
 ## Security
 
@@ -209,11 +219,12 @@ CLI chat (`bub chat`) does not replace the QQ channel; use gateway for QQ IO.
 | Inbound event | `C2C_MESSAGE_CREATE`, `GROUP_AT_MESSAGE_CREATE`, `GROUP_MESSAGE_CREATE` |
 | Group activation | every received group message is `is_active=true`; delivery scope is set in the QQ client by a group admin |
 | Command messages | inbound text starting with `,` is forwarded as Bub `kind=command` for authorized senders only (see Security); otherwise treated as plain text |
-| Outbound | Text (`msg_type = 0`), or markdown (`msg_type = 2`) when the reply looks like markdown; **passive reply** only (`msg_id` + plugin-managed `msg_seq`) |
-| Passive window | replies are skipped once the latest inbound timestamp is older than 60 minutes |
+| Outbound | Text (`msg_type = 0`), or markdown (`msg_type = 2`) when the reply looks like markdown; **passive reply preferred** (`msg_id` + plugin-managed `msg_seq`), with an optional **active fallback** for groups (`active_messages`, plain text only) |
+| Passive window | passive replies stop once the latest inbound timestamp is older than 60 minutes; groups fall back to active messages when enabled |
+| Active opt-in | `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT` (and the C2C twins) are persisted per group/user; sends are skipped when the admin explicitly rejected active messages |
 | Debounce | `needs_debounce = true` |
 
-Active push is intentionally not used: official docs state active C2C push stopped being provided on 2025-04-21.
+C2C stays passive-only: official docs state active C2C push stopped being provided on 2025-04-21. Group active messages are opt-in on both sides (bot config `active_messages` + the group admin's QQ client switch) and consume platform quota.
 
 ## Payload shape
 
@@ -226,6 +237,7 @@ Inbound non-command messages are encoded as a JSON string, including fields like
 - `sender_name` / `sender_role` / `group_openid` / `chat_type` / `was_mentioned` (group)
 - `date`
 - `attachments` (when present)
+- `quoted_messages` (when present: quoted message / merged-forward chat record content from `msg_elements`, with `message`, optional `sender_name`, and nested `messages`)
 
 Normal replies should return final text and let Bub outbound routing call `QQChannel.send`. Do not call `qq_send.py` or invent `msg_seq` for ordinary C2C replies.
 
@@ -242,15 +254,19 @@ Normal replies should return final text and let Bub outbound routing call `QQCha
 - C2C / group inbound adaptation, `msg_id` dedupe, 60-minute passive text or markdown replies
 - Group text receive/reply; message scope is controlled in the QQ client by a group admin
 - In-memory send idempotency for the same `session_id + msg_id + msg_seq`
-- OpenAPI error surfacing (HTTP status, platform code, `X-Tps-trace-ID`) and error catalog metadata
+- OpenAPI error surfacing (HTTP status, platform `code` / `err_code`, trace_id from the response header or body) and error catalog metadata
 - Layered security: allowlists, role-gated comma commands, per-scope tool policy, LLM rate limiting, and audit logs (see Security)
-- Automated tests for config, auth, signatures, channel, webhook, websocket, gateway, plugin onboarding, C2C/group services, and security policies
+- Proactive group messages as a passive-reply fallback (`active_messages`), with persisted per-group/user opt-in state from `*_MSG_RECEIVE` / `*_MSG_REJECT` events
+- claw_cfg round-trip: `INTERACTION_CREATE` 2002 updates are persisted per group and 2001 queries echo the real `require_mention` state
+- 304023/304024 (async manual audit) treated as pending success instead of a failed send
+- Automated tests for config, auth, signatures, channel, webhook, websocket, gateway, plugin onboarding, C2C/group services, security policies, and the platform store
 
 ### Not yet
 
 - QQ Guild and rich-media send/receive
-- Wider webhook event coverage beyond validation, basic `{"op":12}` ack, C2C/group messages, and interaction query
-- Active push after the passive reply window expires
+- Wider webhook event coverage beyond validation, basic `{"op":12}` ack, C2C/group messages, message-toggle events, and interaction query/update
+- Active C2C push (discontinued by the platform on 2025-04-21)
+- Markdown in active group messages (requires a registered template; active path sends plain text)
 - Dynamic in-process shard rebalancing after startup
 
 ## Confirmed interface rules
@@ -261,8 +277,9 @@ From official QQ Bot docs (API auth + event subscription):
 
 - Token: `POST https://bots.qq.com/app/getAppAccessToken` body `{ appId, clientSecret }`
 - Token lifetime up to `7200` seconds; refresh within `60` seconds of expiry returns a new token while the old remains valid during the overlap
-- OpenAPI base: `https://api.sgroup.qq.com`
-- Header: `Authorization: QQBot {ACCESS_TOKEN}`; trace header `X-Tps-trace-ID`
+- OpenAPI unified endpoint: `https://api.bot.qq.com` (the legacy `https://api.sgroup.qq.com` can be restored via `openapi_base_url`)
+- Header: `Authorization: QQBot {ACCESS_TOKEN}`
+- Failure response body carries `err_code`, `message`, `trace_id` (legacy format uses `code`; the plugin accepts both); trace_id is also exposed via the `X-Tps-trace-ID` response header
 
 **Events / transport**
 

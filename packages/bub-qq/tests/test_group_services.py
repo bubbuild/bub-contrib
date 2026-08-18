@@ -59,6 +59,21 @@ class GroupOpenAPIStub:
         )
         return {"id": "group-reply-1"}
 
+    async def post_group_active_text_message(
+        self,
+        *,
+        group_openid: str,
+        content: str,
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "group_openid": group_openid,
+                "content": content,
+                "mode": "active",
+            }
+        )
+        return {"id": "group-active-1"}
+
 
 def _state() -> QQSessionState:
     return QQSessionState()
@@ -294,6 +309,127 @@ def test_group_send_service_sends_markdown_for_formatted_content() -> None:
                 "msg_type": 2,
             }
         ]
+
+    asyncio.run(_run())
+
+
+def test_group_send_service_falls_back_to_active_without_msg_id() -> None:
+    async def _run() -> None:
+        openapi = GroupOpenAPIStub()
+        service = QQGroupSendService(
+            channel_name="qq",
+            receive_mode="websocket",
+            state=_state(),
+            openapi=openapi,
+            active_messages=True,
+        )
+
+        result = await service.send(
+            ChannelMessage(
+                session_id="qq:group:group-openid",
+                chat_id="group:group-openid",
+                content="scheduled push",
+                channel="qq",
+            )
+        )
+
+        assert result == {"id": "group-active-1"}
+        assert openapi.calls == [
+            {
+                "group_openid": "group-openid",
+                "content": "scheduled push",
+                "mode": "active",
+            }
+        ]
+
+    asyncio.run(_run())
+
+
+def test_group_send_service_skips_active_when_disabled() -> None:
+    async def _run() -> None:
+        openapi = GroupOpenAPIStub()
+        service = QQGroupSendService(
+            channel_name="qq",
+            receive_mode="websocket",
+            state=_state(),
+            openapi=openapi,
+        )
+
+        result = await service.send(
+            ChannelMessage(
+                session_id="qq:group:group-openid",
+                chat_id="group:group-openid",
+                content="scheduled push",
+                channel="qq",
+            )
+        )
+
+        assert result is None
+        assert openapi.calls == []
+
+    asyncio.run(_run())
+
+
+def test_group_send_service_respects_admin_rejection(tmp_path) -> None:
+    async def _run() -> None:
+        from bub_qq.store import QQPlatformStore
+
+        store = QQPlatformStore(tmp_path / "state.json")
+        store.update("group", "group-openid", active_messages=False)
+        openapi = GroupOpenAPIStub()
+        service = QQGroupSendService(
+            channel_name="qq",
+            receive_mode="websocket",
+            state=_state(),
+            openapi=openapi,
+            active_messages=True,
+            platform_store=store,
+        )
+
+        result = await service.send(
+            ChannelMessage(
+                session_id="qq:group:group-openid",
+                chat_id="group:group-openid",
+                content="scheduled push",
+                channel="qq",
+            )
+        )
+
+        assert result is None
+        assert openapi.calls == []
+
+    asyncio.run(_run())
+
+
+def test_group_send_service_falls_back_to_active_after_reply_limit() -> None:
+    async def _run() -> None:
+        state = _state()
+        state.latest_message_id_by_session["qq:group:group-openid"] = "group-message-1"
+        state.latest_timestamp_by_session["qq:group:group-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
+        openapi = GroupOpenAPIStub()
+        service = QQGroupSendService(
+            channel_name="qq",
+            receive_mode="websocket",
+            state=state,
+            openapi=openapi,
+            passive_replies_per_msg_id=2,
+            active_messages=True,
+        )
+
+        for index in range(3):
+            await service.send(
+                ChannelMessage(
+                    session_id="qq:group:group-openid",
+                    chat_id="group:group-openid",
+                    content=f"reply {index}",
+                    channel="qq",
+                )
+            )
+
+        assert [call.get("msg_seq") for call in openapi.calls] == [1, 2, None]
+        assert openapi.calls[2]["mode"] == "active"
 
     asyncio.run(_run())
 

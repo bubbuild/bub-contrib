@@ -214,6 +214,23 @@ class QQOpenAPI:
             msg_seq=msg_seq,
         )
 
+    async def post_group_active_text_message(
+        self,
+        *,
+        group_openid: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Send a proactive group message (no ``msg_id``/``msg_seq``).
+
+        Consumes the group's active-message quota and requires the group
+        admin to have allowed proactive messages in the QQ client.
+        """
+
+        return await self.post(
+            f"/v2/groups/{group_openid}/messages",
+            json_body={"content": content, "msg_type": 0},
+        )
+
     async def _post_text_message(
         self,
         *,

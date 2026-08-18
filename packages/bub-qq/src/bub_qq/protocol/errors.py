@@ -201,6 +201,9 @@ KNOWN_OPENAPI_ERRORS: dict[int, QQKnownOpenAPIError] = {
         "request",
         False,
     ),
+    40034005: _e(
+        40034005, "ReplyMessageExpired", "回复消息 msg_id 已过期", "reply", False
+    ),
     40054005: _e(
         40054005, "MessageDeduplicated", "消息被去重，请检查请求 msgseq", "reply", False
     ),
@@ -780,9 +783,14 @@ def build_openapi_error(
     elif known is not None:
         error_message = known.description
 
+    trace_id = trace_id_from_response(response)
+    if trace_id is None and isinstance(payload, dict):
+        body_trace_id = str(payload.get("trace_id") or "").strip()
+        trace_id = body_trace_id or None
+
     return QQOpenAPIError(
         status_code=response.status,
-        trace_id=trace_id_from_response(response),
+        trace_id=trace_id,
         error_code=error_code,
         error_message=error_message,
         response_body=payload,
@@ -820,7 +828,10 @@ def lookup_known_error(error_code: int | None) -> QQKnownOpenAPIError | None:
 def extract_business_code(payload: Any) -> int | None:
     if not isinstance(payload, dict):
         return None
+    # Legacy responses use "code"; the api.bot.qq.com format uses "err_code".
     value = payload.get("code")
+    if value is None:
+        value = payload.get("err_code")
     if value is None:
         return None
     try:

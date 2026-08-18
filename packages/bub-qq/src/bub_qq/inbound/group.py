@@ -16,6 +16,7 @@ from ..session import QQSessionState
 from ..session import remember_session
 from .common import attachment_payloads
 from .common import exclude_none
+from .common import msg_element_payloads
 
 GROUP_AT_EVENT = "GROUP_AT_MESSAGE_CREATE"
 GROUP_MESSAGE_EVENT = "GROUP_MESSAGE_CREATE"
@@ -129,6 +130,7 @@ def build_group_channel_message(
         "was_mentioned": was_mentioned,
         "date": message.timestamp,
         "attachments": attachment_payloads(message.attachments),
+        "quoted_messages": msg_element_payloads(message.msg_elements),
     }
     return ChannelMessage(
         session_id=session_id,

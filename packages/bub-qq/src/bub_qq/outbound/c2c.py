@@ -7,6 +7,7 @@ from loguru import logger
 
 from ..inbound.c2c import resolve_c2c_openid
 from ..session import QQSessionState
+from .send_flow import DEFAULT_PASSIVE_REPLIES_PER_MSG_ID
 from .send_flow import DEFAULT_PASSIVE_REPLY_WINDOW_SECONDS
 from .send_flow import normalize_outbound_content
 from .send_flow import run_send_flow
@@ -41,12 +42,14 @@ class QQC2CSendService:
         state: QQSessionState,
         openapi: QQC2COpenAPI,
         passive_reply_window_seconds: float = DEFAULT_PASSIVE_REPLY_WINDOW_SECONDS,
+        passive_replies_per_msg_id: int = DEFAULT_PASSIVE_REPLIES_PER_MSG_ID,
     ) -> None:
         self._channel_name = channel_name
         self._receive_mode = receive_mode
         self._state = state
         self._openapi = openapi
         self._passive_reply_window_seconds = passive_reply_window_seconds
+        self._passive_replies_per_msg_id = passive_replies_per_msg_id
 
     async def send(self, message: ChannelMessage) -> dict[str, object] | None:
         content = normalize_outbound_content(message.content or "")
@@ -97,4 +100,5 @@ class QQC2CSendService:
             send_text=send_text,
             send_markdown=send_markdown,
             passive_reply_window_seconds=self._passive_reply_window_seconds,
+            passive_replies_per_msg_id=self._passive_replies_per_msg_id,
         )

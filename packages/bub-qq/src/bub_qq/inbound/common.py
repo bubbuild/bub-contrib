@@ -5,10 +5,29 @@ from __future__ import annotations
 from typing import Any
 
 from ..protocol.models import QQAttachment
+from ..protocol.models import QQMsgElement
 
 
 def exclude_none(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def msg_element_payloads(
+    elements: tuple[QQMsgElement, ...],
+) -> list[dict[str, Any]] | None:
+    """Referenced messages (quotes / chat records) for the model payload."""
+
+    if not elements:
+        return None
+    payloads: list[dict[str, Any]] = []
+    for element in elements:
+        payload: dict[str, Any] = {
+            "message": element.content,
+            "sender_name": element.sender_name,
+            "messages": msg_element_payloads(element.elements),
+        }
+        payloads.append(exclude_none(payload))
+    return payloads
 
 
 def attachment_payloads(

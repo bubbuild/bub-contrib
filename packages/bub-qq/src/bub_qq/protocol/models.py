@@ -31,6 +31,55 @@ class QQAttachment:
         )
 
 
+_MSG_ELEMENT_MAX_DEPTH = 3
+
+
+@dataclass(frozen=True)
+class QQMsgElement:
+    """One referenced message element (quote / chat record / parallel).
+
+    Populated when ``message_type`` is 101/102/103; nested elements carry
+    merged-forward chat records. Nesting is capped to keep pathological
+    payloads bounded.
+    """
+
+    content: str
+    message_type: int | None
+    sender_name: str | None
+    elements: tuple[QQMsgElement, ...]
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any], *, depth: int = 0) -> QQMsgElement:
+        author = payload.get("author")
+        if not isinstance(author, dict):
+            author = {}
+        nested_raw = payload.get("msg_elements")
+        nested: tuple[QQMsgElement, ...] = ()
+        if depth < _MSG_ELEMENT_MAX_DEPTH and isinstance(nested_raw, list):
+            nested = tuple(
+                cls.from_payload(item, depth=depth + 1)
+                for item in nested_raw
+                if isinstance(item, dict)
+            )
+        return cls(
+            content=str(payload.get("content") or ""),
+            message_type=_optional_int(payload.get("message_type")),
+            sender_name=_optional_str(
+                author.get("username") or author.get("nickname")
+            ),
+            elements=nested,
+        )
+
+
+def _msg_elements_from(data: dict[str, Any]) -> tuple[QQMsgElement, ...]:
+    raw = data.get("msg_elements")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        QQMsgElement.from_payload(item) for item in raw if isinstance(item, dict)
+    )
+
+
 @dataclass(frozen=True)
 class QQMention:
     """A single @mention entry in a QQ group event."""
@@ -71,6 +120,9 @@ class QQGroupMessage:
     event_type: str | None
     member_role: str | None = None
     """Sender's role in the group: ``member`` / ``admin`` / ``owner``."""
+    message_type: int | None = None
+    """0=text, 3=ARK card, 101=parallel, 102=chat record, 103=quote."""
+    msg_elements: tuple[QQMsgElement, ...] = ()
 
     @classmethod
     def from_event(cls, payload: dict[str, Any]) -> QQGroupMessage:
@@ -112,6 +164,8 @@ class QQGroupMessage:
             sequence=_optional_int(payload.get("s")),
             event_type=_optional_str(payload.get("t")),
             member_role=_optional_str(author.get("member_role")),
+            message_type=_optional_int(data.get("message_type")),
+            msg_elements=_msg_elements_from(data),
         )
 
 
@@ -126,6 +180,9 @@ class QQC2CMessage:
     attachments: tuple[QQAttachment, ...]
     event_id: str | None
     sequence: int | None
+    message_type: int | None = None
+    """0=text, 3=ARK card, 101=parallel, 102=chat record, 103=quote."""
+    msg_elements: tuple[QQMsgElement, ...] = ()
 
     @classmethod
     def from_event(cls, payload: dict[str, Any]) -> QQC2CMessage:
@@ -155,6 +212,8 @@ class QQC2CMessage:
             ),
             event_id=_optional_str(payload.get("id")),
             sequence=_optional_int(payload.get("s")),
+            message_type=_optional_int(data.get("message_type")),
+            msg_elements=_msg_elements_from(data),
         )
 
 

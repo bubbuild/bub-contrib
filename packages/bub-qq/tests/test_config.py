@@ -26,3 +26,9 @@ def test_webhook_port_defaults_to_official_allowed_port() -> None:
     config = QQConfig(receive_mode="webhook")
 
     assert config.webhook_port == 8080
+
+
+def test_openapi_base_url_defaults_to_unified_endpoint() -> None:
+    config = QQConfig()
+
+    assert config.openapi_base_url == "https://api.bot.qq.com"

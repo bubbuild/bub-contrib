@@ -22,7 +22,7 @@ class QQConfig(bub.Settings):
     appid: str = ""
     secret: str = ""
     token_url: str = "https://bots.qq.com/app/getAppAccessToken"
-    openapi_base_url: str = "https://api.sgroup.qq.com"
+    openapi_base_url: str = "https://api.bot.qq.com"
     timeout_seconds: float = 30.0
     token_refresh_skew_seconds: int = 60
     receive_mode: str = Field(
@@ -52,6 +52,31 @@ class QQConfig(bub.Settings):
         default=3600.0,
         gt=0,
         description="How long after an inbound message passive replies are attempted.",
+    )
+    active_messages: bool = Field(
+        default=False,
+        description=(
+            "Send proactive group messages (no msg_id) when a passive reply"
+            " is impossible. Requires the group admin to allow proactive"
+            " messages in the QQ client; consumes platform quota."
+        ),
+    )
+    passive_replies_per_msg_id: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "Local cap of passive replies per inbound msg_id, aligned with"
+            " the platform limit; beyond it the send falls back to an active"
+            " message (when enabled) or is skipped."
+        ),
+    )
+    state_file: str = Field(
+        default="",
+        description=(
+            "Path of the JSON file persisting platform switches (active"
+            "-message opt-ins, group claw_cfg). Empty uses"
+            " <bub home>/qq/state.json."
+        ),
     )
     websocket_intents: int = 1 << 25
     websocket_use_shard_gateway: bool = False

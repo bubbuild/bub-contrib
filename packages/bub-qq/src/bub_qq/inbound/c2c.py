@@ -14,6 +14,7 @@ from ..session import QQSessionState
 from ..session import remember_session
 from .common import attachment_payloads
 from .common import exclude_none
+from .common import msg_element_payloads
 
 
 class QQC2CInboundService:
@@ -106,6 +107,7 @@ def build_c2c_channel_message(
         "sender_id": message.user_openid,
         "date": message.timestamp,
         "attachments": attachment_payloads(message.attachments),
+        "quoted_messages": msg_element_payloads(message.msg_elements),
     }
     return ChannelMessage(
         session_id=session_id,

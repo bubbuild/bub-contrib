@@ -69,6 +69,38 @@ def test_group_message_parses_at_event() -> None:
     assert message.member_role == "owner"
 
 
+def test_c2c_message_parses_quoted_msg_elements() -> None:
+    message = QQC2CMessage.from_event(
+        {
+            "t": "C2C_MESSAGE_CREATE",
+            "d": {
+                "author": {"user_openid": "user-openid"},
+                "content": "这个建议很有帮助，谢谢你！",
+                "id": "message-quote-1",
+                "message_type": 103,
+                "msg_elements": [
+                    {
+                        "msg_idx": "REFIDX_aaa==",
+                        "message_type": 103,
+                        "content": "每天坚持阅读半小时",
+                        "author": {"username": "Bob"},
+                        "msg_elements": [
+                            {"message_type": 0, "content": "nested record"}
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert message.message_type == 103
+    assert len(message.msg_elements) == 1
+    element = message.msg_elements[0]
+    assert element.content == "每天坚持阅读半小时"
+    assert element.sender_name == "Bob"
+    assert element.elements[0].content == "nested record"
+
+
 def test_group_message_member_role_defaults_to_none() -> None:
     message = QQGroupMessage.from_event(
         {

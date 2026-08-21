@@ -7,6 +7,9 @@ DEFAULT_OLLAMA_API_BASE = "https://ollama.com/api"
 DEFAULT_SEARXNG_TIMEOUT_SECONDS = 10
 DEFAULT_SEARXNG_SAFE_SEARCH = 1
 DEFAULT_SEARXNG_USER_AGENT = "bub-web-search/1.0"
+DEFAULT_JINA_SEARCH_BASE = "https://s.jina.ai"
+DEFAULT_JINA_READER_BASE = "https://r.jina.ai"
+DEFAULT_JINA_TIMEOUT_SECONDS = 30
 
 
 @bub.config(name="web-search")
@@ -18,10 +21,15 @@ class WebSearchSettings(bub.Settings):
         extra="ignore",
     )
 
-    provider: Literal["ollama", "searxng"] | None = None
+    provider: Literal["ollama", "searxng", "jina"] | None = None
 
     ollama_api_key: str | None = None
     ollama_api_base: str = DEFAULT_OLLAMA_API_BASE
+
+    jina_api_key: str | None = None
+    jina_search_base: str = DEFAULT_JINA_SEARCH_BASE
+    jina_reader_base: str = DEFAULT_JINA_READER_BASE
+    jina_timeout_seconds: int = DEFAULT_JINA_TIMEOUT_SECONDS
 
     searxng_base_url: str | None = None
     searxng_timeout_seconds: int = DEFAULT_SEARXNG_TIMEOUT_SECONDS
@@ -32,14 +40,20 @@ class WebSearchSettings(bub.Settings):
     searxng_auth_value: str | None = None
 
     @property
-    def resolved_provider(self) -> Literal["ollama", "searxng"] | None:
+    def resolved_provider(self) -> Literal["ollama", "searxng", "jina"] | None:
         if self.provider is not None:
             return self.provider
         if self.ollama_api_key:
             return "ollama"
         if self.searxng_base_url:
             return "searxng"
+        if self.jina_api_key:
+            return "jina"
         return None
+
+    @property
+    def resolved_jina_timeout_seconds(self) -> int:
+        return max(1, self.jina_timeout_seconds)
 
     @property
     def resolved_searxng_base_url(self) -> str | None:

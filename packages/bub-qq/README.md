@@ -11,6 +11,7 @@ Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
 | Single-chat (C2C) receive/reply | `C2C_MESSAGE_CREATE` adapted to Bub `ChannelMessage`; passive text / markdown replies |
 | Group receive/reply | `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE`; full-message mode supported, payload carries `was_mentioned` / `sender_role` |
 | Active group messages | Proactive fallback when a passive reply is impossible (`active_messages`, requires the group admin's opt-in in the QQ client) |
+| Reply modes & selective silence | `reply_mode: direct` (default) forwards the model's final text and swallows `<no_reply/>`; `reply_mode: tool` exposes a native `qq.send` tool so the model replies by calling it and stays silent by not calling it (see Reply modes) |
 | Quotes and chat records | `msg_elements` parsed into `quoted_messages` (quoted messages / merged-forward chat records) for the model |
 | Receive transport | **webhook** or **websocket** (mutually exclusive on the QQ platform side); ed25519 signature verification and reconnect included |
 | Security | User/group allowlists, role-gated comma commands, per-scope tool policy, LLM rate limiting, audit logs (see Security) |
@@ -152,6 +153,7 @@ Gateway start fails if `appid` / `secret` are empty, or if `receive_mode` is not
 | `passive_reply_window_seconds` | `BUB_QQ_PASSIVE_REPLY_WINDOW_SECONDS` | `3600` | How long after an inbound message passive replies are attempted |
 | `active_messages` | `BUB_QQ_ACTIVE_MESSAGES` | `false` | Send proactive group messages (no `msg_id`) when a passive reply is impossible; requires the group admin to allow proactive messages in the QQ client |
 | `passive_replies_per_msg_id` | `BUB_QQ_PASSIVE_REPLIES_PER_MSG_ID` | `4` | Local cap of passive replies per inbound `msg_id`; beyond it the send falls back to an active message (when enabled) or is skipped |
+| `reply_mode` | `BUB_QQ_REPLY_MODE` | `direct` | How model output reaches QQ: `direct` forwards the final text (output exactly `<no_reply/>` to stay silent); `tool` disables direct forwarding and exposes the `qq.send` tool instead (see Reply modes) |
 | `state_file` | `BUB_QQ_STATE_FILE` | empty | JSON file persisting platform switches (active-message opt-ins, group claw_cfg); empty uses `<bub home>/qq/state.json` |
 | `admin_users` | `BUB_QQ_ADMIN_USERS` | empty | Comma-separated user openids with full comma-command and tool access in every scope |
 | `allow_users` | `BUB_QQ_ALLOW_USERS` | empty | Comma-separated C2C allowlist; when set, C2C messages from anyone else are dropped |
@@ -180,9 +182,28 @@ export BUB_QQ_SECRET=your_secret
 export BUB_QQ_RECEIVE_MODE=websocket
 ```
 
-Which group messages the bot hears is controlled in the QQ client by a group admin setting (all messages / last 10 @mentions / @only). Every received group message wakes the model; `was_mentioned` in the payload is `false` when the bot was not @mentioned, and an empty reply is not sent.
+Which group messages the bot hears is controlled in the QQ client by a group admin setting (all messages / last 10 @mentions / @only). Every received group message wakes the model; `was_mentioned` in the payload is `false` when the bot was not @mentioned.
 
 Settings path in the latest mobile QQ client: **open the group chat → tap "More" in the top-right corner → Group Bots → Manage**. There the group owner or an admin can adjust the bot's group message scope and toggle "allow the bot to speak proactively" (pairs with `active_messages`).
+
+## Reply modes
+
+`reply_mode` decides how model output becomes a QQ message, and — just as important — how the model stays silent (e.g. for un-mentioned group chatter it has nothing to add to). In opt-in/opt-out terms: `direct` is **opt-out** (replying is the default; the model explicitly opts out with a sentinel), while `tool` is **opt-in** (silence is the default; the model explicitly opts in by calling the send tool — the same contract Bub's other channels use). Both modes share the same send pipeline (passive `msg_id`/`msg_seq` targeting, dedupe, markdown fallback, active-message fallback), and a per-mode `<qq_response_instruct>` block is injected into the system prompt so the model knows the active contract.
+
+### `direct` (default)
+
+The model's final text is forwarded to the chat as-is — delivery never depends on the model calling anything. To skip a reply, the model outputs exactly `<no_reply/>`; the channel swallows it (logged as `qq.send skip_no_reply`) and nothing is sent. Leaked model special tokens (`<|eos|>`, `<|im_end|>`, …) are stripped from the edges of outbound text; output consisting only of such tokens is also treated as silence. Recommended when the configured model's tool-calling reliability is unknown: the failure mode is an unwanted message, never a lost one.
+
+### `tool`
+
+Direct forwarding is disabled (model output is routed to the `null` channel) and a native `qq.send` tool is registered instead. The model replies by calling `qq.send` with the message text — `msg_id`/`msg_seq` are resolved internally, so the model never touches protocol fields — and stays silent by simply not calling it. This matches Bub's native channel contract and additionally allows several messages per turn. The failure mode is inverted: if the model forgets to call the tool, the reply is silently lost, so use this mode with models whose tool calling you trust.
+
+`qq.send` is exempt from the tool policy (`group_tool_policy` / `c2c_tool_policy` / `denied_tools`): it is the reply path itself, which was never gated in direct mode.
+
+Notes for `tool` mode:
+
+- Comma-command output is always delivered directly in both modes (commands bypass the model).
+- The `llm_rate_limit_notice` text is not delivered in tool mode (the short-circuited turn produces direct output, which tool mode drops); the rate limit itself still applies and is logged.
 
 ## Security
 
@@ -195,6 +216,16 @@ The plugin ships with layered, fail-closed protections for public chats:
 5. **Audit log** — `after_llm_call` / `after_tool_call` hooks emit `qq.audit.llm` / `qq.audit.tool` log lines with session, sender, role, tool/model, duration, and error type.
 
 Note: with no configuration, comma commands are unusable in C2C (fail-closed). Set `admin_users` to your own openid to keep command access.
+
+### Ops comma commands
+
+The plugin ships model-invisible comma commands (registered with `agent_use=False`) for authorized senders:
+
+| Command | Description |
+| --- | --- |
+| `,qq.version` | Show the installed bub-qq plugin version |
+
+Any other registered Bub tool can also be run as `,name args`, and an unknown `,name` falls back to executing the line as a bash command — which is why the comma-command gate effectively grants authorized senders full shell access.
 
 ## Run
 
@@ -239,7 +270,7 @@ Inbound non-command messages are encoded as a JSON string, including fields like
 - `attachments` (when present)
 - `quoted_messages` (when present: quoted message / merged-forward chat record content from `msg_elements`, with `message`, optional `sender_name`, and nested `messages`)
 
-Normal replies should return final text and let Bub outbound routing call `QQChannel.send`. Do not call `qq_send.py` or invent `msg_seq` for ordinary C2C replies.
+In `direct` mode, normal replies should return final text and let Bub outbound routing call `QQChannel.send`; in `tool` mode, replies go through the `qq.send` tool. In both cases `msg_seq` is managed inside the plugin — never invent protocol fields.
 
 ## Status
 
@@ -259,7 +290,8 @@ Normal replies should return final text and let Bub outbound routing call `QQCha
 - Proactive group messages as a passive-reply fallback (`active_messages`), with persisted per-group/user opt-in state from `*_MSG_RECEIVE` / `*_MSG_REJECT` events
 - claw_cfg round-trip: `INTERACTION_CREATE` 2002 updates are persisted per group and 2001 queries echo the real `require_mention` state
 - 304023/304024 (async manual audit) treated as pending success instead of a failed send
-- Automated tests for config, auth, signatures, channel, webhook, websocket, gateway, plugin onboarding, C2C/group services, security policies, and the platform store
+- Selective silence in both reply modes: `<no_reply/>` sentinel filtering (`direct`) and reply-by-tool with silence-by-omission (`tool`), driven by an injected per-mode system prompt block
+- Automated tests for config, auth, signatures, channel, webhook, websocket, gateway, plugin onboarding, C2C/group services, security policies, reply modes, and the platform store
 
 ### Not yet
 

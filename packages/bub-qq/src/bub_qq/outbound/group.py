@@ -11,6 +11,7 @@ from ..store import QQPlatformStore
 from .send_flow import DEFAULT_PASSIVE_REPLIES_PER_MSG_ID
 from .send_flow import DEFAULT_PASSIVE_REPLY_WINDOW_SECONDS
 from .send_flow import ActiveSender
+from .send_flow import is_no_reply
 from .send_flow import normalize_outbound_content
 from .send_flow import run_send_flow
 
@@ -68,6 +69,9 @@ class QQGroupSendService:
         content = normalize_outbound_content(message.content or "")
         if not content:
             logger.warning("qq.send skip_empty session_id={}", message.session_id)
+            return None
+        if is_no_reply(content):
+            logger.info("qq.send skip_no_reply session_id={}", message.session_id)
             return None
 
         session_id = message.session_id or ""

@@ -29,6 +29,7 @@ from .outbound.group import QQGroupSendService
 from .protocol.auth import QQTokenProvider
 from .protocol.errors import QQOpenAPIError
 from .protocol.openapi import QQOpenAPI
+from .runtime import set_active_channel
 from .security import QQAccessPolicy
 from .session import QQInboundDeduper
 from .session import QQSessionState
@@ -64,17 +65,22 @@ class QQChannel(Channel):
         )
         self._policy = QQAccessPolicy.from_config(self._config)
         self._platform_store = QQPlatformStore(self._resolve_state_path())
+        # In tool reply mode the model must reply through the qq.send tool,
+        # so direct model output is routed to the "null" channel and dropped.
+        suppress_direct_output = self._config.reply_mode == "tool"
         self._c2c_inbound = QQC2CInboundService(
             channel_name=self.name,
             deduper=self._deduper,
             state=self._session_state,
             policy=self._policy,
+            suppress_direct_output=suppress_direct_output,
         )
         self._group_inbound = QQGroupInboundService(
             channel_name=self.name,
             deduper=self._deduper,
             state=self._session_state,
             policy=self._policy,
+            suppress_direct_output=suppress_direct_output,
         )
         self._c2c_send = QQC2CSendService(
             channel_name=self.name,
@@ -94,6 +100,7 @@ class QQChannel(Channel):
             active_messages=self._config.active_messages,
             platform_store=self._platform_store,
         )
+        set_active_channel(self)
 
     def _resolve_state_path(self) -> Path:
         raw = (self._config.state_file or "").strip()
@@ -113,7 +120,8 @@ class QQChannel(Channel):
         if mode == "webhook":
             await self._webhook.start()
             logger.info(
-                "qq.start mode=webhook token_url={} openapi_base_url={} webhook=http://{}:{}{} websocket=disabled",
+                "qq.start mode=webhook reply_mode={} token_url={} openapi_base_url={} webhook=http://{}:{}{} websocket=disabled",
+                self._config.reply_mode,
                 self._config.token_url,
                 self._config.openapi_base_url,
                 self._config.webhook_host,
@@ -124,7 +132,8 @@ class QQChannel(Channel):
 
         await self._websocket.start(stop_event)
         logger.info(
-            "qq.start mode=websocket token_url={} openapi_base_url={} intents={} webhook=disabled",
+            "qq.start mode=websocket reply_mode={} token_url={} openapi_base_url={} intents={} webhook=disabled",
+            self._config.reply_mode,
             self._config.token_url,
             self._config.openapi_base_url,
             self._config.websocket_intents,
@@ -137,10 +146,14 @@ class QQChannel(Channel):
         logger.info("qq.stopped")
 
     async def send(self, message: ChannelMessage) -> None:
+        await self.send_for_result(message)
+
+    async def send_for_result(self, message: ChannelMessage) -> dict[str, object] | None:
+        """Send and return the send-service result (used by the qq.send tool)."""
+
         if _is_group_target(self.name, message):
-            await self._group_send.send(message)
-            return
-        await self._c2c_send.send(message)
+            return await self._group_send.send(message)
+        return await self._c2c_send.send(message)
 
     async def _handle_transport_payload(self, payload: dict[str, Any]) -> None:
         op = payload.get("op")

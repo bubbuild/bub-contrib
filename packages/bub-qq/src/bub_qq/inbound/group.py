@@ -33,11 +33,13 @@ class QQGroupInboundService:
         deduper: QQInboundDeduper,
         state: QQSessionState,
         policy: QQAccessPolicy,
+        suppress_direct_output: bool = False,
     ) -> None:
         self._channel_name = channel_name
         self._deduper = deduper
         self._state = state
         self._policy = policy
+        self._suppress_direct_output = suppress_direct_output
 
     def parse_inbound(
         self, payload: dict[str, Any]
@@ -67,6 +69,7 @@ class QQGroupInboundService:
                 sender_id=message.member_openid,
                 sender_role=message.member_role,
             ),
+            suppress_direct_output=self._suppress_direct_output,
         )
         remember_session(
             self._state,
@@ -82,6 +85,7 @@ def build_group_channel_message(
     message: QQGroupMessage,
     *,
     allow_command: bool = False,
+    suppress_direct_output: bool = False,
 ) -> ChannelMessage:
     session_id = f"{channel_name}:group:{message.group_openid}"
     chat_id = f"group:{message.group_openid}"
@@ -139,6 +143,10 @@ def build_group_channel_message(
         chat_id=chat_id,
         is_active=True,
         context=context,
+        # In tool reply mode the model replies via the qq.send tool; route
+        # the direct model output to the "null" channel so it is dropped.
+        # Command results (above) always stay on the direct route.
+        output_channel="null" if suppress_direct_output else "",
     )
 
 

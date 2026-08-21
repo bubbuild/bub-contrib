@@ -31,6 +31,11 @@ QQ_STATE_KEY = "qq"
 
 GROUP_PRIVILEGED_ROLES = frozenset({"owner", "admin"})
 
+# The channel reply tool is exempt from every tool policy: sending a reply
+# was never gated in direct mode, and denying it under reply_mode="tool"
+# would mute the bot entirely.
+REPLY_TOOL_NAME = "qq.send"
+
 RESTRICTED_TOOL_PATTERNS: tuple[str, ...] = (
     "bash",
     "bash.*",
@@ -38,6 +43,18 @@ RESTRICTED_TOOL_PATTERNS: tuple[str, ...] = (
     "fs.edit",
     "subagent",
 )
+
+
+def _tool_name_forms(tool: str) -> tuple[str, ...]:
+    """Both spellings of one tool name.
+
+    Bub exposes registry names to the model with ``.`` replaced by ``_``
+    (``fs.write`` -> ``fs_write``) and interception hooks see the
+    model-facing form. Matching both keeps dotted config patterns working.
+    """
+
+    dotted = tool.replace("_", ".")
+    return (tool,) if dotted == tool else (tool, dotted)
 
 
 def parse_id_list(raw: str) -> frozenset[str]:
@@ -104,8 +121,9 @@ def denied_tool_reason(
     if tool_policy == "locked":
         return "Tool calls are disabled in this chat."
     patterns = (*RESTRICTED_TOOL_PATTERNS, *extra_denied_patterns)
+    forms = _tool_name_forms(tool)
     for pattern in patterns:
-        if fnmatchcase(tool, pattern):
+        if any(fnmatchcase(form, pattern) for form in forms):
             return f"Tool '{tool}' is not allowed in this chat."
     return None
 
@@ -120,6 +138,8 @@ def evaluate_tool_call(
     gate semantics.
     """
 
+    if REPLY_TOOL_NAME in _tool_name_forms(tool):
+        return None
     policy = QQAccessPolicy.from_config(config)
     sender_id = str(qq_state.get("sender_id") or "")
     scope = str(qq_state.get("scope") or "")

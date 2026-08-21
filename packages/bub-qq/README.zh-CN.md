@@ -11,6 +11,7 @@ English documentation: [README.md](./README.md)
 | 单聊（C2C）收发 | `C2C_MESSAGE_CREATE` 适配为 Bub `ChannelMessage`；被动文本 / markdown 回复 |
 | 群聊收发 | `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE`；支持全量消息模式，payload 携带 `was_mentioned` / `sender_role` |
 | 群主动消息 | 被动回复不可用时兜底主动发送（`active_messages`，需群管理员在 QQ 客户端授权） |
+| 回复模式与选择性沉默 | `reply_mode: direct`（默认）直通转发模型最终文本、`<no_reply/>` 哨兵表示沉默；`reply_mode: tool` 注册原生 `qq.send` 工具，模型调用即回复、不调用即沉默（见「回复模式」） |
 | 引用与聊天记录 | 解析 `msg_elements`，将引用消息 / 合并转发内容以 `quoted_messages` 传给模型 |
 | 接收模式 | **webhook** 或 **websocket** 二选一（QQ 平台侧互斥）；含 ed25519 验签与断线重连 |
 | 安全防护 | 用户/群白名单、按角色门控的逗号命令、按场景工具策略、LLM 频控、审计日志（见「安全」） |
@@ -152,6 +153,7 @@ QQ 侧将 webhook 与 WebSocket 视为 **互斥**。成功配置有效的 HTTPS 
 | `passive_reply_window_seconds` | `BUB_QQ_PASSIVE_REPLY_WINDOW_SECONDS` | `3600` | 入站消息之后尝试被动回复的时间窗口（秒） |
 | `active_messages` | `BUB_QQ_ACTIVE_MESSAGES` | `false` | 无法被动回复时改发群主动消息（不带 `msg_id`）；需要群管理员在 QQ 客户端允许机器人主动发言 |
 | `passive_replies_per_msg_id` | `BUB_QQ_PASSIVE_REPLIES_PER_MSG_ID` | `4` | 每条入站 `msg_id` 的被动回复本地上限；超出后降级为主动消息（若已开启）或跳过 |
+| `reply_mode` | `BUB_QQ_REPLY_MODE` | `direct` | 模型输出如何到达 QQ：`direct` 直通转发最终文本（输出 `<no_reply/>` 表示沉默）；`tool` 关闭直通转发并注册 `qq.send` 工具（见「回复模式」） |
 | `state_file` | `BUB_QQ_STATE_FILE` | 空 | 持久化平台开关状态（主动消息授权、群 claw_cfg）的 JSON 文件；留空使用 `<bub home>/qq/state.json` |
 | `admin_users` | `BUB_QQ_ADMIN_USERS` | 空 | 逗号分隔的用户 openid，在所有场景拥有完整的逗号命令与工具权限 |
 | `allow_users` | `BUB_QQ_ALLOW_USERS` | 空 | 逗号分隔的 C2C 白名单；设置后其他用户的私聊消息会被丢弃 |
@@ -180,9 +182,28 @@ export BUB_QQ_SECRET=your_secret
 export BUB_QQ_RECEIVE_MODE=websocket
 ```
 
-群聊能听到哪些消息，由 QQ 客户端里群管理员的「允许机器人可获取的群聊消息范围」决定（全部消息 / @ 最近 10 条 / 仅 @）。插件对收到的每条群消息都会唤醒模型；未 @ 时 payload 里 `was_mentioned` 为 `false`，模型可选择不回复（空文本不会发出）。
+群聊能听到哪些消息，由 QQ 客户端里群管理员的「允许机器人可获取的群聊消息范围」决定（全部消息 / @ 最近 10 条 / 仅 @）。插件对收到的每条群消息都会唤醒模型；未 @ 时 payload 里 `was_mentioned` 为 `false`，模型可按当前回复模式选择不回复。
 
 最新版手机 QQ 中的设置路径：**进入群聊 → 右上角「更多」 → 群机器人 → 管理**。群主或管理员可在此调整「机器人可获取的群聊消息范围」，以及是否「允许机器人主动发言」（配合 `active_messages` 使用）。
+
+## 回复模式
+
+`reply_mode` 决定模型输出如何变成 QQ 消息，以及同样重要的——模型如何保持沉默（例如群聊中未被 @ 且无话可说时）。用 opt-in/opt-out 的语言说：`direct` 是 **opt-out**（默认回复，模型输出哨兵显式退出本轮）；`tool` 是 **opt-in**（默认沉默，模型调用发送工具显式选择回复——与 Bub 其他通道的契约一致）。两种模式共享同一条发送链路（被动 `msg_id`/`msg_seq` 定位、去重、markdown 回退、主动消息兜底），并会按模式向 system prompt 注入一段 `<qq_response_instruct>`，让模型明确当前契约。
+
+### `direct`（默认）
+
+模型的最终文本原样转发到聊天——送达不依赖模型调用任何东西。需要沉默时，模型输出 `<no_reply/>`，channel 将其吞掉（日志记 `qq.send skip_no_reply`），不发送任何内容。泄漏的模型特殊 token（`<|eos|>`、`<|im_end|>` 等）会从出站文本首尾剥离；输出仅含此类 token 时同样按沉默处理。当所配模型的工具调用可靠性未知时推荐此模式：失败方向是「多发一条」，绝不会「丢一条」。
+
+### `tool`
+
+关闭直通转发（模型输出被路由到 `null` 通道丢弃），改为注册原生 `qq.send` 工具。模型调用 `qq.send` 传入消息文本即回复——`msg_id`/`msg_seq` 在插件内部解析，模型不接触协议字段——不调用即沉默。这与 Bub 原生的 channel 契约一致，且天然支持一轮多条消息。失败方向相反：模型忘记调用工具时回复会静默丢失，请在信任所配模型工具调用能力时使用。
+
+`qq.send` 不受工具策略（`group_tool_policy` / `c2c_tool_policy` / `denied_tools`）限制：它就是回复路径本身，direct 模式下发送回复从来不受门控。
+
+`tool` 模式注意事项：
+
+- 逗号命令的输出在两种模式下都直接送达（命令不经过模型）。
+- `llm_rate_limit_notice` 提示文本在 tool 模式下不会送达（被短路的回合产生的是直通输出，tool 模式会丢弃它）；频控本身仍然生效并记录日志。
 
 ## 安全
 
@@ -195,6 +216,16 @@ export BUB_QQ_RECEIVE_MODE=websocket
 5. **审计日志** —— `after_llm_call` / `after_tool_call` hook 输出 `qq.audit.llm` / `qq.audit.tool` 日志，包含会话、发送者、角色、工具/模型、耗时与错误类型。
 
 注意：不做任何配置时，私聊里的逗号命令不可用（fail-closed）。请把自己的 openid 加入 `admin_users` 以保留命令权限。
+
+### 运维逗号命令
+
+插件内置了对模型不可见（`agent_use=False`）、仅授权发送者可用的逗号命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `,qq.version` | 查看已安装的 bub-qq 插件版本 |
+
+其他已注册的 Bub 工具同样可以用 `,名字 参数` 调用；未知的 `,名字` 会兜底为整行 bash 命令执行——因此逗号命令门控实际上等于给授权发送者完整的 shell 权限。
 
 ## 运行
 
@@ -239,7 +270,7 @@ C2C 保持仅被动回复：官方文档写明 C2C 主动推送已于 2025-04-21
 - `attachments`（如有）
 - `quoted_messages`（如有：来自 `msg_elements` 的引用消息 / 合并转发聊天记录，含 `message`、可选 `sender_name` 与嵌套 `messages`）
 
-普通回复应直接返回最终文本，由 Bub outbound 路由调用 `QQChannel.send`。日常 C2C 回复不要调用 `qq_send.py`，也不要自行构造 `msg_seq`。
+`direct` 模式下普通回复应直接返回最终文本，由 Bub outbound 路由调用 `QQChannel.send`；`tool` 模式下通过 `qq.send` 工具回复。两种模式下 `msg_seq` 都由插件内部管理——不要自行构造协议字段。
 
 ## 状态
 
@@ -259,7 +290,8 @@ C2C 保持仅被动回复：官方文档写明 C2C 主动推送已于 2025-04-21
 - 群主动消息作为被动回复的兜底（`active_messages`），并通过 `*_MSG_RECEIVE` / `*_MSG_REJECT` 事件按群/用户持久化授权状态
 - claw_cfg 闭环：`INTERACTION_CREATE` 2002 变更按群持久化，2001 查询回显真实 `require_mention` 状态
 - 304023/304024（异步人工审核）按「待审核成功」处理，不再当作发送失败
-- 覆盖配置、鉴权、签名、channel、webhook、websocket、gateway、插件 onboarding、C2C/群聊服务、安全策略、平台状态存储等的自动化测试
+- 两种回复模式下的选择性沉默：`direct` 模式的 `<no_reply/>` 哨兵过滤、`tool` 模式的「调用即回复、不调用即沉默」，并按模式注入 system prompt 契约说明
+- 覆盖配置、鉴权、签名、channel、webhook、websocket、gateway、插件 onboarding、C2C/群聊服务、安全策略、回复模式、平台状态存储等的自动化测试
 
 ### 尚未支持
 

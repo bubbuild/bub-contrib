@@ -32,3 +32,18 @@ def test_openapi_base_url_defaults_to_unified_endpoint() -> None:
     config = QQConfig()
 
     assert config.openapi_base_url == "https://api.bot.qq.com"
+
+
+def test_reply_mode_defaults_to_direct() -> None:
+    config = QQConfig()
+
+    assert config.reply_mode == "direct"
+
+
+def test_reply_mode_rejects_unknown_values() -> None:
+    try:
+        QQConfig(reply_mode="skill")
+    except ValidationError as exc:
+        assert "reply_mode" in str(exc)
+    else:
+        raise AssertionError("expected reply_mode='skill' to be rejected")

@@ -1,6 +1,6 @@
 [project]
 name = "bub-qq"
-version = "0.1.0"
+version = "0.2.0"
 description = "QQ Open Platform channel for Bub"
 readme = "README.md"
 authors = [
@@ -22,4 +22,4 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = ["bub_qq", "skills.qq"]
-source-include = ["src/skills/qq/SKILL.md", "src/skills/qq/scripts/*.py"]
+source-include = ["src/skills/qq/SKILL.md"]

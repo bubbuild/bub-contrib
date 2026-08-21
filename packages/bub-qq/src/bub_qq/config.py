@@ -7,6 +7,7 @@ from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
 type ToolPolicy = Literal["open", "restricted", "locked"]
+type ReplyMode = Literal["direct", "tool"]
 
 
 @bub.config(name="qq")
@@ -59,6 +60,15 @@ class QQConfig(bub.Settings):
             "Send proactive group messages (no msg_id) when a passive reply"
             " is impossible. Requires the group admin to allow proactive"
             " messages in the QQ client; consumes platform quota."
+        ),
+    )
+    reply_mode: ReplyMode = Field(
+        default="direct",
+        description=(
+            "How model output reaches QQ. 'direct' forwards the model's"
+            " final text as the reply (output exactly <no_reply/> to stay"
+            " silent). 'tool' disables direct forwarding and exposes the"
+            " qq.send tool instead; staying silent means not calling it."
         ),
     )
     passive_replies_per_msg_id: int = Field(

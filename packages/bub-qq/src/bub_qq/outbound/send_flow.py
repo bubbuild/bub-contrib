@@ -44,6 +44,31 @@ DEFAULT_PASSIVE_REPLIES_PER_MSG_ID = 4
 # Pseudo msg_id used to key dedupe records for active (proactive) sends.
 ACTIVE_MSG_ID = "__active__"
 
+# Sentinel the model outputs (per the injected system prompt) to skip the
+# reply for this turn. Matched leniently: <no_reply/>, <no_reply>, <no_reply />.
+NO_REPLY_SENTINEL = "<no_reply/>"
+_NO_REPLY_RE = re.compile(r"^<no_reply\s*/?>", re.IGNORECASE)
+
+# Model special tokens (<|eos|>, <|im_end|>, <|endoftext|>, ...) sometimes
+# leak into text output, typically when the model means "nothing to say".
+# They are stripped from the edges of outbound content; a reply that was
+# only special tokens becomes empty and is skipped.
+_EDGE_SPECIAL_TOKEN_RE = re.compile(r"^\s*<\|[^|<>]{1,64}\|>\s*|\s*<\|[^|<>]{1,64}\|>\s*$")
+
+
+def is_no_reply(content: str) -> bool:
+    """Whether the model chose silence for this turn (sentinel protocol)."""
+
+    return bool(_NO_REPLY_RE.match(content.strip()))
+
+
+def _strip_edge_special_tokens(text: str) -> str:
+    previous = None
+    while previous != text:
+        previous = text
+        text = _EDGE_SPECIAL_TOKEN_RE.sub("", text)
+    return text.strip()
+
 
 class ActiveSender(Protocol):
     async def __call__(self, *, content: str) -> dict[str, object]: ...
@@ -329,7 +354,7 @@ def hash_outbound_content(content: str) -> str:
 def normalize_outbound_content(content: str) -> str:
     normalized = content.strip()
     normalized = re.sub(r"^\$qq\s*→\s*", "", normalized, count=1, flags=re.IGNORECASE)
-    return normalized.strip()
+    return _strip_edge_special_tokens(normalized)
 
 
 def is_passive_reply_window_open(

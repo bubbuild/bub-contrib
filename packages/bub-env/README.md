@@ -23,9 +23,18 @@ matching Bub's usual "environment beats config file" precedence. Non-string
 YAML values are stringified (`true`/`false` for booleans); `null` values are
 skipped.
 
-## Enablement
+## Install (end users)
 
-Install `bub-env` into the same environment as Bub, e.g.:
+`bub-env` is not on PyPI. With a global Bub install (`uv tool install bub`),
+install the plugin into Bub's own environment:
+
+```bash
+bub install bub-env@main
+```
+
+## Install (local development)
+
+Install the package path into the same environment that runs `bub`:
 
 ```bash
 uv tool install bub --with /path/to/bub-contrib/packages/bub-env

@@ -21,9 +21,18 @@ env:
 的优先级保持一致。非字符串的 YAML 值会被转换为字符串（布尔值转为
 `true`/`false`）；`null` 值会被跳过。
 
-## 启用方式
+## 安装（普通用户）
 
-将 `bub-env` 安装到 Bub 所在的同一环境中，例如：
+`bub-env` 未发布到 PyPI。如果 Bub 是全局安装的（`uv tool install bub`），
+用下面的命令把插件装进 Bub 自己的环境：
+
+```bash
+bub install bub-env@main
+```
+
+## 安装（本地开发）
+
+将包路径安装到运行 `bub` 的同一环境中：
 
 ```bash
 uv tool install bub --with /path/to/bub-contrib/packages/bub-env

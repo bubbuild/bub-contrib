@@ -564,16 +564,8 @@ dependencies = [
     { name = "pydantic-settings" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
 [package.metadata]
 requires-dist = [{ name = "pydantic-settings", specifier = ">=2.10.1" }]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "bub-extism"

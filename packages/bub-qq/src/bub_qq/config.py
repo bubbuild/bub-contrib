@@ -91,6 +91,8 @@ class QQConfig(bub.Settings):
     websocket_intents: int = 1 << 25
     websocket_use_shard_gateway: bool = False
     websocket_reconnect_delay_seconds: float = 5.0
+    websocket_reconnect_max_delay_seconds: float = 300.0
+    websocket_max_identify_rejections: int = 5
     admin_users: str = Field(
         default="",
         description=(

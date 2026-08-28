@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from bub_qq.config import QQConfig
 from bub_qq.gateway.websocket import QQWebSocketClient
+from bub_qq.gateway.websocket import QQWebSocketInvalidSession
+from bub_qq.gateway.websocket import QQWebSocketRetryExhausted
 from bub_qq.gateway.websocket import _ShardSpec
 from bub_qq.gateway.websocket import _ShardState
 
@@ -142,6 +146,96 @@ def test_identify_uses_current_shard_index_and_total() -> None:
                 },
             }
         ]
+
+    asyncio.run(_run())
+
+
+def test_reconnect_delay_grows_exponentially_and_caps() -> None:
+    client = QQWebSocketClient(
+        QQConfig(receive_mode="websocket"),
+        OpenAPIStub(),
+        _on_payload,
+    )  # type: ignore[arg-type]
+
+    assert client._reconnect_delay(0) == 5.0
+    assert client._reconnect_delay(1) == 5.0
+    assert client._reconnect_delay(2) == 10.0
+    assert client._reconnect_delay(3) == 20.0
+    assert client._reconnect_delay(100) == 300.0
+
+
+def test_run_shard_stops_after_max_consecutive_identify_rejections() -> None:
+    async def _run() -> None:
+        clock = ManualClock()
+        client = QQWebSocketClient(
+            QQConfig(receive_mode="websocket", websocket_max_identify_rejections=3),
+            OpenAPIStub(),
+            _on_payload,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )  # type: ignore[arg-type]
+        spec = _ShardSpec(
+            index=0,
+            total=1,
+            url="wss://api.sgroup.qq.com/websocket/",
+            use_shard=False,
+        )
+        client._shard_states = {0: _ShardState()}
+
+        async def _always_rejected(spec: _ShardSpec) -> None:
+            del spec
+            raise QQWebSocketInvalidSession({"resumable": False})
+
+        client._connect_once = _always_rejected  # type: ignore[method-assign]
+
+        with pytest.raises(QQWebSocketRetryExhausted):
+            await client._run_shard(spec)
+
+        assert clock.sleeps == [5.0, 10.0]
+        assert client._shard_states[0].session_id is None
+        assert client._shard_states[0].sequence is None
+
+    asyncio.run(_run())
+
+
+def test_run_shard_resets_rejection_count_after_established_session() -> None:
+    async def _run() -> None:
+        clock = ManualClock()
+        client = QQWebSocketClient(
+            QQConfig(receive_mode="websocket", websocket_max_identify_rejections=2),
+            OpenAPIStub(),
+            _on_payload,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )  # type: ignore[arg-type]
+        spec = _ShardSpec(
+            index=0,
+            total=1,
+            url="wss://api.sgroup.qq.com/websocket/",
+            use_shard=False,
+        )
+        client._shard_states = {0: _ShardState()}
+        attempts = 0
+
+        async def _reject_except_second_attempt(spec: _ShardSpec) -> None:
+            del spec
+            nonlocal attempts
+            attempts += 1
+            if attempts == 2:
+                # Session came up, then the connection dropped normally.
+                client._shard_states[0].session_established = True
+                return
+            raise QQWebSocketInvalidSession(None)
+
+        client._connect_once = _reject_except_second_attempt  # type: ignore[method-assign]
+
+        with pytest.raises(QQWebSocketRetryExhausted):
+            await client._run_shard(spec)
+
+        # With limit=2: rejection at attempt 1 (count 1), success at attempt 2
+        # resets the counter, rejections at attempts 3 and 4 reach the limit.
+        # Without the reset the limit would already trip at attempt 3.
+        assert attempts == 4
 
     asyncio.run(_run())
 

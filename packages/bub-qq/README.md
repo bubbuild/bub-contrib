@@ -165,7 +165,9 @@ Gateway start fails if `appid` / `secret` are empty, or if `receive_mode` is not
 | `llm_rate_limit_notice` | `BUB_QQ_LLM_RATE_LIMIT_NOTICE` | `请求过于频繁，请稍后再试。` | Reply text used when a sender hits the LLM rate limit |
 | `websocket_intents` | `BUB_QQ_WEBSOCKET_INTENTS` | `1 << 25` | WebSocket identify intents (`GROUP_AND_C2C_EVENT`) |
 | `websocket_use_shard_gateway` | `BUB_QQ_WEBSOCKET_USE_SHARD_GATEWAY` | `false` | Use `/gateway/bot` recommended shard count |
-| `websocket_reconnect_delay_seconds` | `BUB_QQ_WEBSOCKET_RECONNECT_DELAY_SECONDS` | `5` | Delay before WebSocket reconnect |
+| `websocket_reconnect_delay_seconds` | `BUB_QQ_WEBSOCKET_RECONNECT_DELAY_SECONDS` | `5` | Base delay before WebSocket reconnect (doubles per consecutive failure) |
+| `websocket_reconnect_max_delay_seconds` | `BUB_QQ_WEBSOCKET_RECONNECT_MAX_DELAY_SECONDS` | `300` | Upper bound for the exponential reconnect backoff |
+| `websocket_max_identify_rejections` | `BUB_QQ_WEBSOCKET_MAX_IDENTIFY_REJECTIONS` | `5` | Stop the client after this many consecutive identify rejections (op 9); `0` disables the limit |
 
 Example:
 

@@ -24,10 +24,15 @@ from .info import get_shard_gateway
 from .info import heartbeat_payload
 from .info import identify_payload
 from .info import resume_payload
+from .ws_errors import FATAL_WEBSOCKET_CODES
 from .ws_errors import QQWebSocketFatalError
 from .ws_errors import raise_for_close_code
 
 WebSocketCallback = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
+# How long to wait for the server close frame after op 7/9, so the close code
+# (e.g. 4013/4014 intent errors) can be surfaced in logs instead of being lost.
+_CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class _ShardState:
     sequence: int | None = None
     session_id: str | None = None
     heartbeat_task: asyncio.Task[None] | None = None
+    session_established: bool = False
 
 
 class QQWebSocketClient:
@@ -100,6 +106,7 @@ class QQWebSocketClient:
         logger.info("qq.websocket.stopped")
 
     async def _run(self) -> None:
+        consecutive_failures = 0
         while not self._should_stop():
             try:
                 specs = await self._resolve_shard_specs()
@@ -121,7 +128,8 @@ class QQWebSocketClient:
 
             if self._should_stop():
                 break
-            await self._sleep(self._config.websocket_reconnect_delay_seconds)
+            consecutive_failures += 1
+            await self._sleep(self._reconnect_delay(consecutive_failures))
 
     async def _run_workers(self, specs: list[_ShardSpec]) -> None:
         try:
@@ -132,6 +140,9 @@ class QQWebSocketClient:
         except* QQWebSocketStopRequested:
             pass
         except* QQWebSocketFatalError:
+            if self._stop_event is not None:
+                self._stop_event.set()
+        except* QQWebSocketRetryExhausted:
             if self._stop_event is not None:
                 self._stop_event.set()
         except* QQAuthError:
@@ -178,7 +189,12 @@ class QQWebSocketClient:
         self._identify_attempts.clear()
 
     async def _run_shard(self, spec: _ShardSpec) -> None:
+        consecutive_failures = 0
+        identify_rejections = 0
         while not self._should_stop():
+            state = self._shard_states[spec.index]
+            state.session_established = False
+            invalid_session = False
             try:
                 await self._connect_once(spec)
             except asyncio.CancelledError:
@@ -191,18 +207,20 @@ class QQWebSocketClient:
                     exc,
                 )
                 raise
-            except QQWebSocketReconnectRequested:
+            except QQWebSocketReconnectRequested as exc:
                 logger.warning(
-                    "qq.websocket.reconnect_requested shard={} reason=server_requested_reconnect delay_seconds={}",
+                    "qq.websocket.reconnect_requested shard={} close_code={} reason=server_requested_reconnect",
                     spec.label,
-                    self._config.websocket_reconnect_delay_seconds,
+                    exc.close_code,
                 )
-            except QQWebSocketInvalidSession:
+            except QQWebSocketInvalidSession as exc:
+                invalid_session = True
                 logger.warning(
-                    "qq.websocket.invalid_session shard={} action=identify_from_scratch",
+                    "qq.websocket.invalid_session shard={} close_code={} detail={} action=identify_from_scratch",
                     spec.label,
+                    exc.close_code,
+                    exc.detail,
                 )
-                state = self._shard_states[spec.index]
                 state.session_id = None
                 state.sequence = None
             except (QQAuthError, QQOpenAPIError) as exc:
@@ -217,9 +235,50 @@ class QQWebSocketClient:
             except Exception as exc:
                 logger.warning("qq.websocket.error shard={} error={}", spec.label, exc)
 
+            if state.session_established:
+                consecutive_failures = 0
+                identify_rejections = 0
+            else:
+                consecutive_failures += 1
+                if invalid_session:
+                    identify_rejections += 1
+                    self._raise_if_rejections_exhausted(spec, identify_rejections)
+
             if self._should_stop():
                 break
-            await self._sleep(self._config.websocket_reconnect_delay_seconds)
+            delay = self._reconnect_delay(consecutive_failures)
+            logger.info(
+                "qq.websocket.reconnect_wait shard={} consecutive_failures={} delay_seconds={}",
+                spec.label,
+                consecutive_failures,
+                delay,
+            )
+            await self._sleep(delay)
+
+    def _raise_if_rejections_exhausted(self, spec: _ShardSpec, rejections: int) -> None:
+        limit = self._config.websocket_max_identify_rejections
+        if limit < 1 or rejections < limit:
+            return
+        message = (
+            f"identify rejected {rejections} consecutive times without a successful"
+            " session; check intents, IP whitelist, and bot status on the QQ open"
+            " platform"
+        )
+        logger.error(
+            "qq.websocket.retry_exhausted shard={} rejections={} message={}",
+            spec.label,
+            rejections,
+            message,
+        )
+        raise QQWebSocketRetryExhausted(message)
+
+    def _reconnect_delay(self, consecutive_failures: int) -> float:
+        base = self._config.websocket_reconnect_delay_seconds
+        max_delay = self._config.websocket_reconnect_max_delay_seconds
+        if consecutive_failures <= 1:
+            return min(base, max_delay)
+        exponent = min(consecutive_failures - 1, 10)
+        return min(base * (2.0**exponent), max_delay)
 
     async def _connect_once(self, spec: _ShardSpec) -> None:
         state = self._shard_states[spec.index]
@@ -236,6 +295,9 @@ class QQWebSocketClient:
                 state.heartbeat_task = asyncio.create_task(
                     self._heartbeat_loop(ws, state, heartbeat_interval)
                 )
+                server_signal: (
+                    QQWebSocketReconnectRequested | QQWebSocketInvalidSession | None
+                ) = None
                 try:
                     async for message in ws:
                         if message.type == aiohttp.WSMsgType.TEXT:
@@ -249,13 +311,44 @@ class QQWebSocketClient:
                             aiohttp.WSMsgType.CLOSED,
                         }:
                             break
+                except (
+                    QQWebSocketReconnectRequested,
+                    QQWebSocketInvalidSession,
+                ) as exc:
+                    server_signal = exc
                 finally:
                     if state.heartbeat_task is not None:
                         state.heartbeat_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await state.heartbeat_task
                         state.heartbeat_task = None
+                if server_signal is not None:
+                    server_signal.close_code = await self._drain_close_code(ws)
+                    if server_signal.close_code in FATAL_WEBSOCKET_CODES:
+                        raise_for_close_code(server_signal.close_code)
+                    raise server_signal
                 raise_for_close_code(ws.close_code)
+
+    async def _drain_close_code(
+        self, ws: aiohttp.ClientWebSocketResponse
+    ) -> int | None:
+        """Wait briefly for the server close frame so its close code is observable."""
+        try:
+            async with asyncio.timeout(_CLOSE_DRAIN_TIMEOUT_SECONDS):
+                while not ws.closed:
+                    message = await ws.receive()
+                    if message.type in {
+                        aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.CLOSING,
+                        aiohttp.WSMsgType.CLOSED,
+                        aiohttp.WSMsgType.ERROR,
+                    }:
+                        break
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return ws.close_code
 
     async def _await_hello(self, ws: aiohttp.ClientWebSocketResponse) -> float:
         while True:
@@ -352,7 +445,7 @@ class QQWebSocketClient:
         if op == 7:
             raise QQWebSocketReconnectRequested()
         if op == 9:
-            raise QQWebSocketInvalidSession()
+            raise QQWebSocketInvalidSession(payload.get("d"))
         if op == 1:
             await ws.send_json(heartbeat_payload(state.sequence))
             return
@@ -372,17 +465,20 @@ class QQWebSocketClient:
         if payload.get("op") == 0:
             event_type = payload.get("t")
             if event_type == "READY":
+                state.session_established = True
                 data = payload.get("d")
                 if isinstance(data, dict):
                     session_id = data.get("session_id")
                     if isinstance(session_id, str) and session_id.strip():
                         state.session_id = session_id.strip()
-            elif event_type == "RESUMED" and state.session_id:
-                logger.info(
-                    "qq.websocket.resume_succeeded shard={} session_id={}",
-                    spec.label,
-                    state.session_id,
-                )
+            elif event_type == "RESUMED":
+                state.session_established = True
+                if state.session_id:
+                    logger.info(
+                        "qq.websocket.resume_succeeded shard={} session_id={}",
+                        spec.label,
+                        state.session_id,
+                    )
             await self._on_payload(payload)
 
     def _should_stop(self) -> bool:
@@ -399,11 +495,18 @@ def _parse_payload(text: str) -> dict[str, Any]:
 class QQWebSocketReconnectRequested(RuntimeError):
     def __init__(self) -> None:
         super().__init__("qq websocket reconnect requested by server")
+        self.close_code: int | None = None
 
 
 class QQWebSocketInvalidSession(RuntimeError):
-    def __init__(self) -> None:
+    def __init__(self, detail: Any = None) -> None:
         super().__init__("qq websocket invalid session")
+        self.detail = detail
+        self.close_code: int | None = None
+
+
+class QQWebSocketRetryExhausted(RuntimeError):
+    """Raised after too many consecutive identify rejections; stops the client."""
 
 
 class QQWebSocketStopRequested(RuntimeError):

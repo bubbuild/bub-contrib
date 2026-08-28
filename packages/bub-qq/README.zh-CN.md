@@ -165,7 +165,9 @@ QQ 侧将 webhook 与 WebSocket 视为 **互斥**。成功配置有效的 HTTPS 
 | `llm_rate_limit_notice` | `BUB_QQ_LLM_RATE_LIMIT_NOTICE` | `请求过于频繁，请稍后再试。` | 触发频控时回复的文本 |
 | `websocket_intents` | `BUB_QQ_WEBSOCKET_INTENTS` | `1 << 25` | WebSocket identify intents（`GROUP_AND_C2C_EVENT`） |
 | `websocket_use_shard_gateway` | `BUB_QQ_WEBSOCKET_USE_SHARD_GATEWAY` | `false` | 是否按 `/gateway/bot` 建议分片数连接 |
-| `websocket_reconnect_delay_seconds` | `BUB_QQ_WEBSOCKET_RECONNECT_DELAY_SECONDS` | `5` | WebSocket 断线后重连延迟 |
+| `websocket_reconnect_delay_seconds` | `BUB_QQ_WEBSOCKET_RECONNECT_DELAY_SECONDS` | `5` | WebSocket 重连基础延迟（连续失败时指数递增） |
+| `websocket_reconnect_max_delay_seconds` | `BUB_QQ_WEBSOCKET_RECONNECT_MAX_DELAY_SECONDS` | `300` | 指数退避的延迟上限 |
+| `websocket_max_identify_rejections` | `BUB_QQ_WEBSOCKET_MAX_IDENTIFY_REJECTIONS` | `5` | 连续 identify 被拒（op 9）达到该次数后停止客户端；`0` 表示不限制 |
 
 示例：
 

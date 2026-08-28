@@ -5,6 +5,8 @@ process at startup. Useful for API keys consumed by CLI tools and agent skill
 scripts (they inherit the Bub process environment), when running Bub as an
 installed tool where a workspace `.env` file is not practical.
 
+Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
+
 ## Configuration
 
 Add an `env:` section to `~/.bub/config.yml`. Every key/value pair becomes an

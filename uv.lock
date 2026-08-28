@@ -17,6 +17,7 @@ members = [
     "bub-dingtalk",
     "bub-discord",
     "bub-dsh",
+    "bub-env",
     "bub-extism",
     "bub-feishu",
     "bub-github-copilot",
@@ -433,6 +434,7 @@ dependencies = [
     { name = "bub-dingtalk" },
     { name = "bub-discord" },
     { name = "bub-dsh" },
+    { name = "bub-env" },
     { name = "bub-extism" },
     { name = "bub-feishu" },
     { name = "bub-github-copilot" },
@@ -473,6 +475,7 @@ requires-dist = [
     { name = "bub-dingtalk", editable = "packages/bub-dingtalk" },
     { name = "bub-discord", editable = "packages/bub-discord" },
     { name = "bub-dsh", editable = "packages/bub-dsh" },
+    { name = "bub-env", editable = "packages/bub-env" },
     { name = "bub-extism", editable = "packages/bub-extism" },
     { name = "bub-feishu", editable = "packages/bub-feishu" },
     { name = "bub-github-copilot", editable = "packages/bub-github-copilot" },
@@ -552,6 +555,25 @@ requires-dist = [
     { name = "deepseek-harness-sdk", specifier = ">=0.1.0rc7,<0.2.0" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
 ]
+
+[[package]]
+name = "bub-env"
+version = "0.1.0"
+source = { editable = "packages/bub-env" }
+dependencies = [
+    { name = "pydantic-settings" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic-settings", specifier = ">=2.10.1" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "bub-extism"

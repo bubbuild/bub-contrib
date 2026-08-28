@@ -1,0 +1,21 @@
+[project]
+name = "bub-env"
+version = "0.1.0"
+description = "Inject environment variables from the Bub config file at startup"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-settings>=2.10.1",
+]
+
+[project.entry-points.bub]
+env = "bub_env.plugin:EnvPlugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

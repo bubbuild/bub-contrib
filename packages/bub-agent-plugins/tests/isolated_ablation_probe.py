@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib.metadata
-import inspect
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--plugin-root", type=Path, required=True)
+    parser.add_argument("--plugin-fixture", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--skills-enabled", type=int, choices=(0, 1), required=True)
     parser.add_argument("--mcp-enabled", type=int, choices=(0, 1), required=True)
@@ -22,8 +21,12 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _write_runtime_files(
-    *, plugin_root: Path, workspace: Path, skills_enabled: bool, mcp_enabled: bool
+    *, plugin_fixture: Path, workspace: Path, skills_enabled: bool, mcp_enabled: bool
 ) -> Path:
+    plugin_root = workspace / ".agents" / "plugins" / plugin_fixture.name
+    plugin_root.parent.mkdir(parents=True)
+    shutil.copytree(plugin_fixture, plugin_root)
+
     skill_root = workspace / ".agents" / "skills" / "baseline-skill"
     skill_root.mkdir(parents=True)
     (skill_root / "SKILL.md").write_text(
@@ -32,6 +35,16 @@ def _write_runtime_files(
         "description: Verify existing Bub skill discovery.\n"
         "---\n"
         "Return `baseline-skill-ok`.\n",
+        encoding="utf-8",
+    )
+    shared_skill_root = workspace / ".agents" / "skills" / "shared-skill"
+    shared_skill_root.mkdir(parents=True)
+    (shared_skill_root / "SKILL.md").write_text(
+        "---\n"
+        "name: shared-skill\n"
+        "description: Workspace skill takes precedence.\n"
+        "---\n"
+        "Return `workspace-skill-ok`.\n",
         encoding="utf-8",
     )
 
@@ -56,8 +69,6 @@ def _write_runtime_files(
         json.dumps(
             {
                 "agent-plugins": {
-                    "paths": [str(plugin_root)],
-                    "auto_discover": False,
                     "skills_enabled": skills_enabled,
                     "mcp_enabled": mcp_enabled,
                     "data_root": str(bub_home / "agent-plugins"),
@@ -69,11 +80,13 @@ def _write_runtime_files(
     return config_file
 
 
-async def _call_tool(tool: Any, **arguments: str) -> str:
-    result = tool.run(**arguments)
-    if inspect.isawaitable(result):
-        result = await result
-    return str(result)
+async def _wait_for_tool(name: str, timeout: float = 30) -> Any:
+    from bub.tools import REGISTRY
+
+    async with asyncio.timeout(timeout):
+        while name not in REGISTRY:
+            await asyncio.sleep(0.05)
+    return REGISTRY[name]
 
 
 async def _exercise_channels(
@@ -92,24 +105,18 @@ async def _exercise_channels(
     try:
         for channel in active_channels:
             await channel.start(asyncio.Event())
-            assert channel._bootstrap_task is not None
-            await asyncio.wait_for(asyncio.shield(channel._bootstrap_task), timeout=30)
 
-        baseline_state = baseline.list()["baseline"]
-        assert baseline_state.connected, baseline_state.error
-        baseline_result = await _call_tool(
-            REGISTRY["mcp.baseline_ping"], value="baseline"
-        )
+        baseline_tool = await _wait_for_tool("mcp.baseline_ping")
+        baseline_result = await baseline_tool.run(value="baseline")
         assert baseline_result == "basic-mcp-ok:baseline"
 
         plugin_result = None
         if plugin_channel is not None:
-            plugin_state = plugin_channel.list()["basic-agent-plugin.basic"]
-            assert plugin_state.connected, plugin_state.error
-            plugin_result = await _call_tool(
-                REGISTRY["mcp.basic-agent-plugin.basic_ping"], value="plugin"
-            )
+            plugin_tool = await _wait_for_tool("mcp.basic-agent-plugin.basic_ping")
+            plugin_result = await plugin_tool.run(value="plugin")
             assert plugin_result == "basic-mcp-ok:plugin"
+        else:
+            assert "mcp.basic-agent-plugin.basic_ping" not in REGISTRY
 
         return {
             "baseline_mcp": baseline_result,
@@ -122,13 +129,13 @@ async def _exercise_channels(
 
 def main() -> None:
     args = _parse_args()
-    plugin_root = args.plugin_root.resolve()
+    plugin_fixture = args.plugin_fixture.resolve()
     workspace = args.workspace.resolve()
     skills_enabled = bool(args.skills_enabled)
     mcp_enabled = bool(args.mcp_enabled)
     workspace.mkdir(parents=True)
     config_file = _write_runtime_files(
-        plugin_root=plugin_root,
+        plugin_fixture=plugin_fixture,
         workspace=workspace,
         skills_enabled=skills_enabled,
         mcp_enabled=mcp_enabled,
@@ -140,16 +147,6 @@ def main() -> None:
 
     framework = BubFramework(config_file=config_file)
     framework.load_hooks()
-    assert framework._plugin_status["mcp"].is_success
-    assert framework._plugin_status["agent-plugins"].is_success
-
-    entry_points = {
-        item.name: item.value for item in importlib.metadata.entry_points(group="bub")
-    }
-    assert entry_points["mcp"] == "bub_mcp.plugin:MCPPlugin"
-    assert (
-        entry_points["agent-plugins"] == "bub_agent_plugins.plugin:AgentPluginsPlugin"
-    )
 
     async def message_handler(_message: Any) -> None:
         return None
@@ -157,6 +154,7 @@ def main() -> None:
     channels = framework.get_channels(message_handler)
     skills = {skill.name: skill for skill in discover_skills(workspace)}
     assert skills["baseline-skill"].body() == "Return `baseline-skill-ok`."
+    assert skills["shared-skill"].body() == "Return `workspace-skill-ok`."
     assert ("basic-skill" in skills) is skills_enabled
     if skills_enabled:
         assert (

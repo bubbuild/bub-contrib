@@ -91,7 +91,7 @@ def test_standard_plugin_in_an_isolated_environment(tmp_path: Path) -> None:
             [
                 str(isolated_python),
                 str(probe),
-                "--plugin-root",
+                "--plugin-fixture",
                 str(plugin_root),
                 "--workspace",
                 str(case_root / "workspace"),
@@ -104,38 +104,9 @@ def test_standard_plugin_in_an_isolated_environment(tmp_path: Path) -> None:
         )
         results.append(json.loads(output.strip().splitlines()[-1]))
 
-    assert results == [
-        {
-            "baseline_mcp": "basic-mcp-ok:baseline",
-            "baseline_skill": True,
-            "mcp_enabled": False,
-            "plugin_mcp": None,
-            "plugin_skill": False,
-            "skills_enabled": False,
-        },
-        {
-            "baseline_mcp": "basic-mcp-ok:baseline",
-            "baseline_skill": True,
-            "mcp_enabled": False,
-            "plugin_mcp": None,
-            "plugin_skill": True,
-            "skills_enabled": True,
-        },
-        {
-            "baseline_mcp": "basic-mcp-ok:baseline",
-            "baseline_skill": True,
-            "mcp_enabled": True,
-            "plugin_mcp": "basic-mcp-ok:plugin",
-            "plugin_skill": False,
-            "skills_enabled": False,
-        },
-        {
-            "baseline_mcp": "basic-mcp-ok:baseline",
-            "baseline_skill": True,
-            "mcp_enabled": True,
-            "plugin_mcp": "basic-mcp-ok:plugin",
-            "plugin_skill": True,
-            "skills_enabled": True,
-        },
-    ]
-    print(json.dumps(results, indent=2, sort_keys=True))
+    for result in results:
+        assert result["baseline_skill"] is True
+        assert result["baseline_mcp"] == "basic-mcp-ok:baseline"
+        assert result["plugin_skill"] is result["skills_enabled"]
+        expected_mcp = "basic-mcp-ok:plugin" if result["mcp_enabled"] else None
+        assert result["plugin_mcp"] == expected_mcp

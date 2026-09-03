@@ -73,3 +73,21 @@ bub mcp remove weather
 ```
 
 `bub mcp add` writes the server config into `mcp.json` and performs a connection test before exiting.
+
+## Embedding
+
+Other Bub plugins can reuse the MCP lifecycle and tool bridge with a read-only configuration:
+
+```python
+from bub_mcp.plugin import MCPChannel
+
+channel = MCPChannel.from_server_configs(
+    {"weather": {"url": "https://weather.example.com/mcp"}}
+)
+```
+
+The default `MCPChannel()` behavior remains backed by Bub's `mcp.json`. Read-only channels reject
+`add()` and `remove()` so an embedding plugin remains the owner of its source configuration. The
+standalone `MCPChannel()` construction and behavior remain unchanged. A composite plugin that must
+keep unrelated components running when all MCP servers fail can subclass the channel and set
+`stop_when_all_failed = False`.

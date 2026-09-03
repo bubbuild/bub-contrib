@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 
 from bub.tools import REGISTRY
@@ -89,6 +90,14 @@ def teardown_function() -> None:
     for name in list(REGISTRY):
         if name.startswith(plugin.TOOL_PREFIX):
             REGISTRY.pop(name, None)
+
+
+def test_default_constructor_contract_is_unchanged() -> None:
+    assert not inspect.signature(plugin.MCPChannel).parameters
+    channel = plugin.MCPChannel()
+    assert channel.name == plugin.LIFECYCLE_CHANNEL_NAME
+    assert channel.stop_when_all_failed is True
+    assert channel._server_configs is None
 
 
 def test_lifecycle_channel_uses_manager_start_and_stop(monkeypatch) -> None:
@@ -182,6 +191,82 @@ def test_channel_list_reads_current_config(monkeypatch, tmp_path: Path) -> None:
     channel = _make_channel(tmp_path)
 
     assert channel.list() == {}
+
+
+def test_channel_can_bootstrap_from_injected_read_only_config(monkeypatch) -> None:
+    config = {
+        "weather": {
+            "url": "https://weather.example.com/mcp",
+            "transport": "http",
+        }
+    }
+    created_clients: list[FakeClient] = []
+
+    def fake_create_fastmcp_client(
+        client_config: dict[str, object], *, init_timeout_seconds: float | None
+    ) -> FakeClient:
+        client = FakeClient(client_config, init_timeout_seconds=init_timeout_seconds)
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr(plugin, "_create_fastmcp_client", fake_create_fastmcp_client)
+    channel = plugin.MCPChannel.from_server_configs(config)
+
+    async def run_test() -> None:
+        await channel._bootstrap(asyncio.Event())
+        assert created_clients[0].config == config
+        try:
+            await channel.add("other", {"command": "other"})
+        except RuntimeError as exc:
+            assert "read-only" in str(exc)
+        else:  # pragma: no cover - assertion guard
+            raise AssertionError("injected config accepted a mutation")
+        await channel.stop()
+
+    asyncio.run(run_test())
+
+
+def test_embedded_channel_can_keep_runtime_alive_when_all_servers_fail(
+    monkeypatch,
+) -> None:
+    class EmbeddedChannel(plugin.MCPChannel):
+        stop_when_all_failed = False
+
+    channel = EmbeddedChannel.from_server_configs({"broken": {"command": "broken"}})
+
+    async def fake_connect_server(
+        server_name: str, server_config: dict[str, object]
+    ) -> plugin.MCPServerState:
+        del server_name, server_config
+        return plugin.MCPServerState(error="connection refused")
+
+    monkeypatch.setattr(channel, "_connect_server", fake_connect_server)
+
+    async def run_test() -> None:
+        stop_event = asyncio.Event()
+        await channel._bootstrap(stop_event)
+        assert not stop_event.is_set()
+
+    asyncio.run(run_test())
+
+
+def test_default_channel_still_stops_runtime_when_all_servers_fail(monkeypatch) -> None:
+    channel = plugin.MCPChannel.from_server_configs({"broken": {"command": "broken"}})
+
+    async def fake_connect_server(
+        server_name: str, server_config: dict[str, object]
+    ) -> plugin.MCPServerState:
+        del server_name, server_config
+        return plugin.MCPServerState(error="connection refused")
+
+    monkeypatch.setattr(channel, "_connect_server", fake_connect_server)
+
+    async def run_test() -> None:
+        stop_event = asyncio.Event()
+        await channel._bootstrap(stop_event)
+        assert stop_event.is_set()
+
+    asyncio.run(run_test())
 
 
 def test_bootstrap_records_failed_server_and_keeps_successful_servers(

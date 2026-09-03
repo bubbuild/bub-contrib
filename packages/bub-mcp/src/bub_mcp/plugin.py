@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 import fastmcp
 import mcp.types
@@ -103,13 +105,26 @@ class MCPServerState:
 
 class MCPChannel(Lifecycle):
     name = LIFECYCLE_CHANNEL_NAME
+    stop_when_all_failed = True
 
     def __init__(self) -> None:
         self.settings = bub.ensure_config(MCPSettings)
+        self._server_configs: dict[str, dict[str, Any]] | None = None
         self._lock = asyncio.Lock()
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
         self._stop_event: asyncio.Event | None = None
+
+    @classmethod
+    def from_server_configs(
+        cls, server_configs: Mapping[str, Mapping[str, Any]]
+    ) -> Self:
+        channel = cls()
+        channel._server_configs = {
+            name: deepcopy(dict(server_config))
+            for name, server_config in server_configs.items()
+        }
+        return channel
 
     async def start(self, stop_event: asyncio.Event) -> None:
         self._stop_event = stop_event
@@ -147,6 +162,8 @@ class MCPChannel(Lifecycle):
         return self._servers.copy()
 
     async def add(self, name: str, server: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        if self._server_configs is not None:
+            raise RuntimeError("externally configured MCP channels are read-only")
         server_name = name.strip()
         if not server_name:
             raise ValueError("server name must not be blank")
@@ -162,6 +179,8 @@ class MCPChannel(Lifecycle):
         return mcp_servers
 
     async def remove(self, name: str) -> dict[str, dict[str, Any]]:
+        if self._server_configs is not None:
+            raise RuntimeError("externally configured MCP channels are read-only")
         server_name = name.strip()
         if not server_name:
             raise ValueError("server name must not be blank")
@@ -195,7 +214,7 @@ class MCPChannel(Lifecycle):
     async def _bootstrap(self, stop_event: asyncio.Event) -> None:
         async with self._lock:
             try:
-                config = self.settings.read_mcp_servers()
+                config = self._read_mcp_servers()
                 if not config:
                     self._servers = {}
                     return
@@ -219,8 +238,10 @@ class MCPChannel(Lifecycle):
                     for tool in server.tools:
                         REGISTRY[tool.name] = tool
 
-                if self._servers and not any(
-                    server.connected for server in self._servers.values()
+                if (
+                    self.stop_when_all_failed
+                    and self._servers
+                    and not any(server.connected for server in self._servers.values())
                 ):
                     stop_event.set()
             except asyncio.CancelledError:
@@ -237,7 +258,13 @@ class MCPChannel(Lifecycle):
                         server.client = None
                     server.connected = False
                 logger.warning("bub-mcp bootstrap failed: {}", exc)
-                stop_event.set()
+                if self.stop_when_all_failed:
+                    stop_event.set()
+
+    def _read_mcp_servers(self) -> dict[str, Any]:
+        if self._server_configs is not None:
+            return deepcopy(self._server_configs)
+        return self.settings.read_mcp_servers()
 
     async def _connect_server(
         self, server_name: str, server_config: dict[str, Any]

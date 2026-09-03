@@ -266,16 +266,21 @@ class MCPChannel(Lifecycle):
             return deepcopy(self._server_configs)
         return self.settings.read_mcp_servers()
 
+    def _create_client(
+        self, server_name: str, server_config: dict[str, Any]
+    ) -> fastmcp.Client[Any]:
+        return _create_fastmcp_client(
+            {server_name: server_config},
+            init_timeout_seconds=self.settings.init_timeout_seconds,
+        )
+
     async def _connect_server(
         self, server_name: str, server_config: dict[str, Any]
     ) -> MCPServerState:
         server = MCPServerState()
         client: Any | None = None
         try:
-            client = _create_fastmcp_client(
-                {server_name: server_config},
-                init_timeout_seconds=self.settings.init_timeout_seconds,
-            )
+            client = self._create_client(server_name, server_config)
             await client.__aenter__()
             remote_tools = await client.list_tools()
             server.client = client

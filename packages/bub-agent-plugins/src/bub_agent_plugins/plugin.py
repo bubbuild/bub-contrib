@@ -15,7 +15,9 @@ from loguru import logger
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
-from bub_agent_plugins.loader import AgentPluginLoadResult, AgentPluginLoader
+from bub_agent_plugins.loader import AgentPluginLoader
+from bub_agent_plugins.mcp import create_agent_plugin_client
+from bub_agent_plugins.models import AgentPluginLoadResult
 from bub_agent_plugins.skills import PluginSkillRegistry
 
 try:
@@ -51,6 +53,13 @@ class AgentPluginsSettings(bub.Settings):
 class AgentPluginMCPChannel(MCPChannel):
     name = "agent-plugins.mcp"
     stop_when_all_failed = False
+
+    def _create_client(self, server_name: str, server_config: dict[str, Any]) -> Any:
+        return create_agent_plugin_client(
+            server_name,
+            server_config,
+            self.settings.init_timeout_seconds,
+        )
 
 
 class AgentPluginsPlugin:

@@ -98,3 +98,19 @@ def test_skill_cannot_escape_the_plugin_root(tmp_path: Path) -> None:
     (skill_dir / "outside.txt").symlink_to(outside)
 
     assert _load(root, tmp_path).skill_directories == []
+
+
+def test_plugin_data_cannot_escape_the_configured_root(tmp_path: Path) -> None:
+    root = tmp_path / "plugin"
+    _write_manifest(root)
+    _write_mcp(root, {"server": {"type": "stdio", "command": "python"}})
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (data_root / "example-plugin").symlink_to(outside, target_is_directory=True)
+
+    result = _load(root, tmp_path)
+
+    assert result.mcp_servers == {}
+    assert any("PLUGIN_DATA escapes" in message for message in result.diagnostics)

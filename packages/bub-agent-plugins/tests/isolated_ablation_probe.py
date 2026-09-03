@@ -7,6 +7,8 @@ import asyncio
 import json
 import os
 import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +129,69 @@ async def _exercise_channels(
             await channel.stop()
 
 
+def _assert_plugin_headers_stay_on_origin() -> None:
+    origin_headers: list[str | None] = []
+    destination_headers: list[str | None] = []
+
+    class DestinationHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            destination_headers.append(self.headers.get("X-Plugin-Token"))
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    destination = ThreadingHTTPServer(("127.0.0.1", 0), DestinationHandler)
+    destination_url = f"http://127.0.0.1:{destination.server_port}/mcp"
+
+    class OriginHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            origin_headers.append(self.headers.get("X-Plugin-Token"))
+            self.send_response(307)
+            self.send_header("Location", destination_url)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
+    threads = [
+        threading.Thread(target=server.serve_forever, daemon=True)
+        for server in (origin, destination)
+    ]
+    for thread in threads:
+        thread.start()
+
+    async def request_redirect() -> None:
+        import httpx
+
+        from bub_agent_plugins.mcp import same_origin_http_client
+
+        create_client = same_origin_http_client(
+            f"http://127.0.0.1:{origin.server_port}/mcp"
+        )
+        async with create_client(headers={"X-Plugin-Token": "package-data"}) as client:
+            try:
+                await client.get(f"http://127.0.0.1:{origin.server_port}/mcp")
+            except httpx.RequestError:
+                pass
+            else:
+                raise AssertionError("cross-origin redirect was not rejected")
+
+    try:
+        asyncio.run(request_redirect())
+    finally:
+        for server in (origin, destination):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join()
+
+    assert origin_headers == ["package-data"]
+    assert destination_headers == []
+
+
 def main() -> None:
     args = _parse_args()
     plugin_fixture = args.plugin_fixture.resolve()
@@ -147,6 +212,7 @@ def main() -> None:
 
     framework = BubFramework(config_file=config_file)
     framework.load_hooks()
+    _assert_plugin_headers_stay_on_origin()
 
     async def message_handler(_message: Any) -> None:
         return None

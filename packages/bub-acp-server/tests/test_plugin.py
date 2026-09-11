@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -212,6 +213,37 @@ def test_register_cli_accepts_only_deprecated_serve_argument(
     assert result.exit_code == exit_code
     assert message in result.output
     assert calls == [framework] * expected_calls
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_cli_without_http_extra(
+    monkeypatch: pytest.MonkeyPatch, transport: str
+) -> None:
+    original_import = builtins.__import__
+
+    def without_http(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "bub_acp_server.http":
+            raise ModuleNotFoundError("No module named 'hypercorn'", name="hypercorn")
+        return original_import(name, *args, **kwargs)
+
+    calls = []
+
+    async def run(framework: Any) -> None:
+        calls.append(framework)
+
+    monkeypatch.setattr(builtins, "__import__", without_http)
+    monkeypatch.setattr(plugin, "run_acp_agent", run)
+    framework = FakeFramework()
+    app = typer.Typer()
+    plugin.ACPServerPlugin(cast(Any, framework)).register_cli_commands(app)
+    result = CliRunner().invoke(app, ["--transport", transport])
+    if transport == "stdio":
+        assert result.exit_code == 0, result.output
+        assert calls == [framework]
+    else:
+        assert result.exit_code == 2
+        assert "HTTP requires the http extra" in result.output
+        assert not calls
 
 
 def test_plan_prompt_is_enabled_for_acp_server_turns() -> None:
@@ -485,7 +517,7 @@ async def test_load_session_reports_store_errors_and_cleans_up_stream(
     with pytest.raises(OSError, match="store unavailable"):
         await agent.load_session(cwd=str(tmp_path), session_id="history")
 
-    assert framework.router.pop_stream_state("history") is None
+    assert agent._require_stream_router().pop_stream_state("history") is None
 
 
 @pytest.mark.asyncio

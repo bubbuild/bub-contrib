@@ -410,6 +410,8 @@ class BubACPAgent:
         *,
         client_tools: ACPClientToolRuntime | None = None,
         steering_inbox: ACPSteeringInbox | None = None,
+        prompt_lock: asyncio.Lock | None = None,
+        sessions: dict[str, ACPSession] | None = None,
     ) -> None:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
@@ -417,8 +419,8 @@ class BubACPAgent:
         self._client: Client | None = None
         self._stream_router: ACPStreamRouter | None = None
         self._session_store_path = bub.home.expanduser() / "acp-sessions.json"
-        self._sessions: dict[str, ACPSession] = self._load_sessions()
-        self._prompt_lock = asyncio.Lock()
+        self._sessions = self._load_sessions() if sessions is None else sessions
+        self._prompt_lock = prompt_lock if prompt_lock is not None else asyncio.Lock()
         self._steering_inbox = steering_inbox or ACPSteeringInbox()
         self._prompt_runs: dict[str, deque[ACPPromptRun]] = {}
         self._steering_locks: dict[str, asyncio.Lock] = {}
@@ -435,7 +437,6 @@ class BubACPAgent:
             conn, context_window_size=self.settings.context_window_size
         )
         self.client_tools.set_terminal_observer(self._stream_router.attach_terminal)
-        self.framework.bind_channel_router(self._stream_router)
 
     async def initialize(
         self,
@@ -532,7 +533,9 @@ class BubACPAgent:
         **kwargs: Any,
     ) -> ListSessionsResponse:
         del additional_directories, cursor, cwd, kwargs
-        self._sessions = self._load_sessions()
+        sessions_on_disk = self._load_sessions()
+        self._sessions.clear()
+        self._sessions.update(sessions_on_disk)
         sessions = sorted(
             self._sessions.values(),
             key=lambda item: item.updated_at or "",
@@ -734,9 +737,13 @@ class BubACPAgent:
                 run.started.set()
                 router = self._require_stream_router()
                 try:
-                    result = await self.framework.process_inbound(
-                        inbound, stream_output=True
-                    )
+                    # The framework router and Bub tool registry are process-wide.
+                    # HTTP connections share this lock and bind only for their turn.
+                    self.framework.bind_channel_router(router)
+                    with replace_builtin_tools(self.client_tools):
+                        result = await self.framework.process_inbound(
+                            inbound, stream_output=True
+                        )
                 finally:
                     stream_state = router.pop_stream_state(session.session_id)
                 if result.model_output and not (
@@ -987,14 +994,13 @@ async def run_acp_agent(
     framework: BubFramework, *, use_unstable_protocol: bool = True
 ) -> None:
     agent = BubACPAgent(framework)
-    with replace_builtin_tools(agent.client_tools):
-        async with framework.running():
-            get_steering_inbox = getattr(framework, "get_steering_inbox", None)
-            if callable(get_steering_inbox):
-                steering_inbox = get_steering_inbox()
-                if isinstance(steering_inbox, ACPSteeringInbox):
-                    agent.set_steering_inbox(steering_inbox)
-            await run_agent(agent, use_unstable_protocol=use_unstable_protocol)
+    async with framework.running():
+        get_steering_inbox = getattr(framework, "get_steering_inbox", None)
+        if callable(get_steering_inbox):
+            steering_inbox = get_steering_inbox()
+            if isinstance(steering_inbox, ACPSteeringInbox):
+                agent.set_steering_inbox(steering_inbox)
+        await run_agent(agent, use_unstable_protocol=use_unstable_protocol)
 
 
 def _message_chat_id(message: Envelope) -> str:

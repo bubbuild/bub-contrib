@@ -6,7 +6,7 @@ Expose Bub as an Agent Client Protocol agent.
 
 - Bub plugin entry point: `acp-server`
 - CLI command registered on Bub: `bub acp`
-- Standalone console script: `bub-acp-server`
+- Optional Streamable HTTP transport at `/acp`, served by Hypercorn with HTTP/2 support
 - ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, and `session/prompt`
 - Streaming ACP `session/update` events from Bub stream events
 - ACP client-backed replacements for Bub's `bash`, `fs.read`, `fs.write`, and `fs.edit` tools while the ACP server is running
@@ -30,19 +30,13 @@ bub install bub-acp-server@main
 
 ## Usage
 
-Configure an ACP-compatible client to launch one of:
+Configure an ACP-compatible client to launch:
 
 ```bash
 bub acp
 ```
 
 The previous `bub acp serve` form remains accepted temporarily and prints a deprecation warning. Other positional arguments are rejected.
-
-or:
-
-```bash
-bub-acp-server
-```
 
 The process speaks ACP over stdio. Prompts are sent through Bub's hook pipeline with stream output enabled, so model chunks and tool events can be displayed by the ACP client as they arrive.
 
@@ -65,6 +59,55 @@ ACP session metadata is stored under Bub home as `acp-sessions.json` so compatib
 `bub-acp-server` supports both ACP session load and resume. `session/load` restores the matching Bub history through the same ACP streaming path used by live turns. `session/resume` attaches the editor back to the Bub session without replaying history, so later turns keep streaming through Bub's normal hook pipeline.
 
 History is read through Bub's configured tape store. Store errors are reported instead of falling back to a separate local JSONL reader.
+
+## HTTP transport
+
+HTTP uses the SDK's experimental [web transport](https://agentclientprotocol.github.io/python-sdk/web-transport/), including POST requests, SSE streams, and connection IDs. Install the optional dependencies from a checkout:
+
+```bash
+uv pip install -e 'packages/bub-acp-server[http]'
+```
+
+Start the server:
+
+```bash
+bub acp --transport http
+```
+
+The default endpoint is `http://127.0.0.1:28200/acp`; use `--host` and `--port` to override it. The default transport remains `stdio`. HTTP listens on loopback by default and does not add authentication; use it with trusted clients.
+
+For negotiated HTTP/2, configure TLS or terminate HTTP/2 at a reverse proxy:
+
+```bash
+bub acp --transport http --host 127.0.0.1 --port 8443 \
+  --certfile /path/to/cert.pem --keyfile /path/to/key.pem
+```
+
+Hypercorn supports HTTP/2; the TLS endpoint is `https://127.0.0.1:8443/acp`. Plain HTTP also works with clients that use HTTP/1.1 for local development. SDK HTTP clients negotiate HTTP/2 over TLS; setting `http2=True` alone does not enable cleartext HTTP/2 negotiation.
+
+Connect using the SDK (inside an async function, with an ACP `Client` implementation):
+
+```python
+from acp import connect_to_agent
+from acp.http import create_http_stream
+from acp.schema import TextContentBlock
+
+transport = create_http_stream("http://127.0.0.1:28200/acp")
+connection = connect_to_agent(my_client, transport)
+try:
+    await connection.initialize(protocol_version=1)
+    session = await connection.new_session(cwd="/path/to/workspace")
+    await connection.prompt(
+        session_id=session.session_id,
+        prompt=[TextContentBlock(type="text", text="Hello")],
+    )
+finally:
+    await connection.close()
+```
+
+Clients must advertise and implement filesystem/terminal capabilities to use Bub's client-backed tools. Each connection has its own client capabilities and stream router. Prompt execution is serialized across connections because Bub's tool registry and framework router are shared; session metadata is shared so one connection cannot overwrite another's newly created sessions.
+
+With SDK **0.12.1**, HTTP supports initialization, new sessions, session listing, config options, prompts, tool callbacks, and steering. Session load/resume/close are not advertised in HTTP mode: the adapter does not enable unstable close/resume routes, and its stream registration requires a `sessionId` in the response that the standard load response lacks. `connection.close()` terminates the HTTP connection with `DELETE`. Stdio retains load, resume, and close support. Automatic SSE reconnection is also not provided by the SDK.
 
 ## Steering
 

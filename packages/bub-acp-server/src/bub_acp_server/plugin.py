@@ -4,6 +4,8 @@ import asyncio
 import inspect
 import json
 from collections.abc import Iterable, Mapping
+from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
@@ -20,6 +22,12 @@ if TYPE_CHECKING:
     from bub.framework import BubFramework
 
 __all__ = ["ACPServerPlugin", "BubACPAgent", "run_acp_agent"]
+
+
+class Transport(str, Enum):
+    stdio = "stdio"
+    http = "http"
+
 
 ACP_PLAN_SYSTEM_PROMPT = """\
 <plan_instructions>
@@ -107,8 +115,22 @@ class ACPServerPlugin:
 
     @hookimpl
     def register_cli_commands(self, app: typer.Typer) -> None:
-        @app.command("acp", help="Run Bub as an ACP agent.")
-        def acp(command: str | None = typer.Argument(None, metavar="[serve]")) -> None:
+        @app.command("acp", help="Run Bub as an ACP agent over stdio or HTTP.")
+        def acp(
+            command: str | None = typer.Argument(None, metavar="[serve]"),
+            transport: Transport = typer.Option(Transport.stdio, help="ACP transport."),
+            host: str = typer.Option("127.0.0.1", help="HTTP listen address."),
+            port: int = typer.Option(28200, min=1, max=65535, help="HTTP listen port."),
+            certfile: Path | None = typer.Option(
+                None,
+                exists=True,
+                dir_okay=False,
+                help="TLS certificate for HTTPS/HTTP2.",
+            ),
+            keyfile: Path | None = typer.Option(
+                None, exists=True, dir_okay=False, help="TLS private key."
+            ),
+        ) -> None:
             if command == "serve":
                 typer.echo(
                     "Warning: `bub acp serve` is deprecated; use `bub acp` instead.",
@@ -116,7 +138,36 @@ class ACPServerPlugin:
                 )
             elif command is not None:
                 raise typer.BadParameter(
-                    f"Got unexpected extra argument {command!r}",
-                    param_hint="command",
+                    f"Got unexpected extra argument {command!r}", param_hint="command"
                 )
-            asyncio.run(run_acp_agent(self.framework))
+            if transport == Transport.stdio:
+                if (
+                    host != "127.0.0.1"
+                    or port != 28200
+                    or certfile is not None
+                    or keyfile is not None
+                ):
+                    raise typer.BadParameter(
+                        "HTTP listen and TLS options require --transport http"
+                    )
+                asyncio.run(run_acp_agent(self.framework))
+                return
+            if (certfile is None) != (keyfile is None):
+                raise typer.BadParameter(
+                    "--certfile and --keyfile must be provided together"
+                )
+            try:
+                from bub_acp_server.http import run_acp_http
+            except ImportError as error:
+                raise typer.BadParameter(
+                    "HTTP requires the http extra: uv pip install 'bub-acp-server[http]'"
+                ) from error
+            asyncio.run(
+                run_acp_http(
+                    self.framework,
+                    host=host,
+                    port=port,
+                    certfile=certfile,
+                    keyfile=keyfile,
+                )
+            )

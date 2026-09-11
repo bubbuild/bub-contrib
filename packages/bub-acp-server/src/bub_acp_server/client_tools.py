@@ -4,19 +4,22 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from acp.helpers import plan_entry, update_plan as acp_update_plan
 from acp.interfaces import Client
 from acp.schema import (
+    AgentPlanUpdate,
     ClientCapabilities,
+    PlanEntry,
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
 from pydantic import BaseModel, Field
-from bub.tools import REGISTRY, ToolContext, tool
+from bub.tools import REGISTRY, Tool, ToolContext, tool
 
 _TOOL_NAMES = (
     "bash",
@@ -219,8 +222,8 @@ class ACPClientToolRuntime:
             raise ValueError("plan must contain at most one in_progress step")
 
         entries = [
-            plan_entry(
-                item.step,
+            PlanEntry(
+                content=item.step,
                 priority=item.priority,
                 status=item.status,
             )
@@ -234,7 +237,7 @@ class ACPClientToolRuntime:
 
         await context.tape.append_event("plan", payload, run_id=context.run_id)
         await self._require_client().session_update(
-            _session_id(context), acp_update_plan(entries)
+            _session_id(context), AgentPlanUpdate(entries=entries)
         )
         return f"Plan updated with {len(plan)} steps"
 
@@ -250,14 +253,38 @@ class ACPClientToolRuntime:
         return client
 
 
+_active_runtime: ContextVar[ACPClientToolRuntime | None] = ContextVar(
+    "acp_tool_runtime", default=None
+)
+
+
+def _scoped_tool(
+    runtime: ACPClientToolRuntime, replacement: Tool, original: Tool | None
+) -> Tool:
+    def dispatch(*args: Any, **kwargs: Any) -> Any:
+        if _active_runtime.get() is runtime:
+            return replacement.run(*args, **kwargs)
+        if original is None:
+            raise RuntimeError(f"{replacement.name} is only available in an ACP turn")
+        if replacement.name == "bash":
+            kwargs.pop("title", None)
+        return original.run(*args, **kwargs)
+
+    return replace(replacement, handler=dispatch)
+
+
 @contextmanager
 def replace_builtin_tools(runtime: ACPClientToolRuntime) -> Generator[None]:
     import_module("bub.builtin.tools")
     originals = {name: REGISTRY.get(name) for name in _TOOL_NAMES}
-    _register_replacements(runtime)
+    token = _active_runtime.set(runtime)
     try:
+        _register_replacements(runtime)
+        for name, original in originals.items():
+            REGISTRY[name] = _scoped_tool(runtime, REGISTRY[name], original)
         yield
     finally:
+        _active_runtime.reset(token)
         for name, original in originals.items():
             if original is None:
                 REGISTRY.pop(name, None)

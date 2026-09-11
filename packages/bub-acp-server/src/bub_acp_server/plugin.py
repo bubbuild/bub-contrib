@@ -11,11 +11,13 @@ from typing import TYPE_CHECKING, Any
 import typer
 from bub import hookimpl
 from bub.builtin.context import default_tape_context
+from bub.channels import Channel
+from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope, field_of
 from bub.tape import TapeContext, TapeEntry
 from bub.turn import TurnState
 
-from bub_acp_server.agent import BubACPAgent, run_acp_agent
+from bub_acp_server.agent import BubACPAgent, active_stream_router, run_acp_agent
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
@@ -87,6 +89,15 @@ class ACPServerPlugin:
         return self.steering_inbox
 
     @hookimpl
+    def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
+        del message_handler
+        try:
+            from bub_acp_server.http import ACPHTTPChannel
+        except ImportError:
+            return []  # HTTP is optional; stdio remains usable without its extra.
+        return [ACPHTTPChannel(self.framework)]
+
+    @hookimpl
     def load_state(self, message: Envelope, session_id: str) -> TurnState:
         del session_id
         context = field_of(message, "context", {})
@@ -111,7 +122,7 @@ class ACPServerPlugin:
     @hookimpl
     def system_prompt(self, prompt: str | list[dict], state: TurnState) -> str:
         del prompt, state
-        return ACP_PLAN_SYSTEM_PROMPT
+        return ACP_PLAN_SYSTEM_PROMPT if active_stream_router.get() is not None else ""
 
     @hookimpl
     def register_cli_commands(self, app: typer.Typer) -> None:

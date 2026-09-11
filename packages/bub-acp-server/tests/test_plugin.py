@@ -235,7 +235,9 @@ def test_cli_without_http_extra(
     monkeypatch.setattr(plugin, "run_acp_agent", run)
     framework = FakeFramework()
     app = typer.Typer()
-    plugin.ACPServerPlugin(cast(Any, framework)).register_cli_commands(app)
+    implementation = plugin.ACPServerPlugin(cast(Any, framework))
+    implementation.register_cli_commands(app)
+    assert implementation.provide_channels(lambda message: None) == []
     result = CliRunner().invoke(app, ["--transport", transport])
     if transport == "stdio":
         assert result.exit_code == 0, result.output
@@ -249,13 +251,16 @@ def test_cli_without_http_extra(
 def test_plan_prompt_is_enabled_for_acp_server_turns() -> None:
     implementation = plugin.ACPServerPlugin(cast(Any, FakeFramework()))
 
-    acp_prompt = implementation.system_prompt(
-        "task", {"context": "channel=$acp-server|chat_id=session-1"}
-    )
+    token = agent_module.active_stream_router.set(ACPStreamRouter(FakeClient()))
+    try:
+        acp_prompt = implementation.system_prompt("task", {})
+    finally:
+        agent_module.active_stream_router.reset(token)
 
     assert "`update_plan` tool" in acp_prompt
     assert "complete plan on every update" in acp_prompt
     assert "latest persisted plan" in acp_prompt
+    assert implementation.system_prompt("task", {}) == ""
 
 
 @pytest.mark.asyncio
@@ -320,8 +325,9 @@ async def test_tape_context_injects_latest_plan_after_last_anchor(
 
 
 @pytest.mark.asyncio
-async def test_initialize_advertises_session_capabilities() -> None:
-    agent = BubACPAgent(FakeFramework())
+@pytest.mark.parametrize("unstable", [False, True])
+async def test_initialize_advertises_session_capabilities(unstable: bool) -> None:
+    agent = BubACPAgent(FakeFramework(), use_unstable_protocol=unstable)
     response = await agent.initialize(protocol_version=1)
 
     assert response.protocol_version == 1
@@ -330,8 +336,12 @@ async def test_initialize_advertises_session_capabilities() -> None:
     assert response.agent_capabilities is not None
     assert response.agent_capabilities.session_capabilities is not None
     assert response.agent_capabilities.session_capabilities.list is not None
-    assert response.agent_capabilities.session_capabilities.close is not None
-    assert response.agent_capabilities.session_capabilities.resume is not None
+    assert (
+        response.agent_capabilities.session_capabilities.close is not None
+    ) is unstable
+    assert (
+        response.agent_capabilities.session_capabilities.resume is not None
+    ) is unstable
     assert response.agent_capabilities.load_session is True
     assert response.agent_capabilities.field_meta == {
         "lody": {

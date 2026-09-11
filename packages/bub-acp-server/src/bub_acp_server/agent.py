@@ -8,6 +8,7 @@ import logging
 import re
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,27 +16,17 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import bub
-from acp import (
-    run_agent,
-    text_block,
-    update_agent_message_text,
-    update_agent_thought_text,
-    update_user_message,
-    update_user_message_text,
-)
-from acp.helpers import (
-    start_tool_call,
-    tool_content,
-    tool_terminal_ref,
-    update_tool_call,
-)
+from acp import run_agent
 from acp.interfaces import Client
 from acp.exceptions import RequestError
 from acp.schema import (
     AgentCapabilities,
+    AgentMessageChunk,
+    AgentThoughtChunk,
     AudioContentBlock,
     ClientCapabilities,
     CloseSessionResponse,
+    ContentToolCallContent,
     EmbeddedResourceContentBlock,
     HttpMcpServer,
     ImageContentBlock,
@@ -58,8 +49,12 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
     SseMcpServer,
     TextContentBlock,
+    TerminalToolCallContent,
+    ToolCallProgress,
+    ToolCallStart,
     ToolKind,
     UsageUpdate,
+    UserMessageChunk,
 )
 from bub.channels.message import ChannelMessage, MediaItem, MediaType
 from bub.envelope import Envelope, content_of, field_of
@@ -269,10 +264,10 @@ class ACPStreamRouter:
                 if event.kind == "text":
                     state.sent_text = True
                 update = {
-                    "text": update_agent_message_text,
-                    "reasoning": update_agent_thought_text,
-                    "user_text": update_user_message_text,
-                }[event.kind](delta)
+                    "text": AgentMessageChunk,
+                    "reasoning": AgentThoughtChunk,
+                    "user_text": UserMessageChunk,
+                }[event.kind](content=TextContentBlock(text=delta))
                 await self._client.session_update(session_id, update)
         elif event.kind == "tool_call":
             await self._send_tool_calls(session_id, event.data)
@@ -311,7 +306,9 @@ class ACPStreamRouter:
     async def _send_agent_text(self, session_id: str, text: str) -> None:
         if not text:
             return
-        await self._client.session_update(session_id, update_agent_message_text(text))
+        await self._client.session_update(
+            session_id, AgentMessageChunk(content=TextContentBlock(text=text))
+        )
 
     async def _send_tool_calls(self, session_id: str, data: StreamPayload) -> None:
         state = self._stream_states[session_id]
@@ -331,14 +328,18 @@ class ACPStreamRouter:
                 if isinstance(command, str) and command:
                     tool.command = command
                     title = command
-                    content = [tool_content(text_block(f"$ {command}\n\n"))]
+                    content = [
+                        ContentToolCallContent(
+                            content=TextContentBlock(text=f"$ {command}\n\n")
+                        )
+                    ]
                 custom_title = _block_value(raw_input, "title")
                 if isinstance(custom_title, str) and custom_title.strip():
                     title = custom_title
             is_context_compaction = tool.name == "tape.handoff"
-            update = start_tool_call(
-                tool.tool_id,
-                "Context compacting" if is_context_compaction else title,
+            update = ToolCallStart(
+                tool_call_id=tool.tool_id,
+                title="Context compacting" if is_context_compaction else title,
                 kind="other" if is_context_compaction else _tool_kind(tool.name),
                 status="in_progress",
                 content=content,
@@ -365,12 +366,14 @@ class ACPStreamRouter:
         tool.terminal_id = terminal_id
         await self._client.session_update(
             session_id,
-            update_tool_call(
-                tool.tool_id,
+            ToolCallProgress(
+                tool_call_id=tool.tool_id,
                 status="in_progress",
                 content=[
-                    tool_content(text_block(f"$ {command}\n\n")),
-                    tool_terminal_ref(terminal_id),
+                    ContentToolCallContent(
+                        content=TextContentBlock(text=f"$ {command}\n\n")
+                    ),
+                    TerminalToolCallContent(terminal_id=terminal_id),
                 ],
             ),
         )
@@ -389,9 +392,11 @@ class ACPStreamRouter:
                 output = _stringify(result)
                 if tool.command is not None:
                     output = f"$ {tool.command}\n\n{output}"
-                content = [tool_content(text_block(output))]
-            update = update_tool_call(
-                tool.tool_id,
+                content = [
+                    ContentToolCallContent(content=TextContentBlock(text=output))
+                ]
+            update = ToolCallProgress(
+                tool_call_id=tool.tool_id,
                 title="Context compacted" if is_context_compaction else None,
                 status="completed",
                 raw_output=result,
@@ -403,6 +408,11 @@ class ACPStreamRouter:
         state.pending_tools = []
 
 
+active_stream_router: ContextVar[ACPStreamRouter | None] = ContextVar(
+    "acp_stream_router", default=None
+)
+
+
 class BubACPAgent:
     def __init__(
         self,
@@ -412,12 +422,16 @@ class BubACPAgent:
         steering_inbox: ACPSteeringInbox | None = None,
         prompt_lock: asyncio.Lock | None = None,
         sessions: dict[str, ACPSession] | None = None,
+        bind_router: bool = True,
+        use_unstable_protocol: bool = True,
     ) -> None:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
         self.client_tools = client_tools or ACPClientToolRuntime()
         self._client: Client | None = None
         self._stream_router: ACPStreamRouter | None = None
+        self._bind_router = bind_router
+        self._use_unstable_protocol = use_unstable_protocol
         self._session_store_path = bub.home.expanduser() / "acp-sessions.json"
         self._sessions = self._load_sessions() if sessions is None else sessions
         self._prompt_lock = prompt_lock if prompt_lock is not None else asyncio.Lock()
@@ -463,9 +477,13 @@ class BubACPAgent:
                     "lody": {"steering": _LODY_STEERING_CAPABILITY},
                 },
                 session_capabilities=SessionCapabilities(
-                    close=SessionCloseCapabilities(),
+                    close=SessionCloseCapabilities()
+                    if self._use_unstable_protocol
+                    else None,
                     list=SessionListCapabilities(),
-                    resume=SessionResumeCapabilities(),
+                    resume=SessionResumeCapabilities()
+                    if self._use_unstable_protocol
+                    else None,
                 ),
             ),
         )
@@ -736,22 +754,26 @@ class BubACPAgent:
                     )
                 run.started.set()
                 router = self._require_stream_router()
+                token = active_stream_router.set(router)
                 try:
-                    # The framework router and Bub tool registry are process-wide.
-                    # HTTP connections share this lock and bind only for their turn.
-                    self.framework.bind_channel_router(router)
+                    # Gateway owns its router; its ACP channel routes this turn's stream.
+                    if self._bind_router:
+                        self.framework.bind_channel_router(router)
                     with replace_builtin_tools(self.client_tools):
                         result = await self.framework.process_inbound(
                             inbound, stream_output=True
                         )
                 finally:
+                    active_stream_router.reset(token)
                     stream_state = router.pop_stream_state(session.session_id)
                 if result.model_output and not (
                     stream_state is not None and stream_state.sent_text
                 ):
                     await client.session_update(
                         session.session_id,
-                        update_agent_message_text(result.model_output),
+                        AgentMessageChunk(
+                            content=TextContentBlock(text=result.model_output)
+                        ),
                     )
             return PromptResponse(stop_reason="end_turn")
         finally:
@@ -987,13 +1009,13 @@ class BubACPAgent:
         client = self._require_client()
         for block in prompt:
             if _block_type(block) == "text":
-                await client.session_update(session_id, update_user_message(block))
+                await client.session_update(session_id, UserMessageChunk(content=block))
 
 
 async def run_acp_agent(
     framework: BubFramework, *, use_unstable_protocol: bool = True
 ) -> None:
-    agent = BubACPAgent(framework)
+    agent = BubACPAgent(framework, use_unstable_protocol=use_unstable_protocol)
     async with framework.running():
         get_steering_inbox = getattr(framework, "get_steering_inbox", None)
         if callable(get_steering_inbox):

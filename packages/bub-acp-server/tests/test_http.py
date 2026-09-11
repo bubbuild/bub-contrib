@@ -5,6 +5,7 @@ import json
 import socket
 import subprocess
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,19 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from bub.model_selection import ModelOptions
+from bub.framework import BubFramework
+from bub import configure
+from bub.channels import Channel, Interface
+from bub.channels.manager import ChannelManager
+from bub.channels.message import ChannelMessage
 from bub.streaming import StreamEvent
+from bub.tape import (
+    AsyncTapeStoreAdapter,
+    InMemoryTapeStore,
+    Tape,
+    TapeContext,
+    TapeEntry,
+)
 from bub.tools import REGISTRY, ToolContext
 from bub.turn import TurnResult
 from hypercorn.asyncio import serve
@@ -30,9 +43,17 @@ from hypercorn.config import Config
 from typer.testing import CliRunner
 
 from bub_acp_server import http as http_module
+from bub_acp_server.agent import BubACPAgent
 from bub_acp_server.plugin import ACPServerPlugin
-from bub_acp_server.http import create_http_app
+from bub_acp_server.http import ACPHTTPChannel, create_http_app
+from bub_acp_server.config import ACPServerSettings
 from bub_acp_server.steering import ACPSteeringInbox
+
+
+@pytest.fixture(autouse=True)
+def isolated_acp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(configure._global_config, "acp-server", [])
+    monkeypatch.setitem(configure._config_data, "acp-server", {})
 
 
 class HTTPFramework:
@@ -46,6 +67,9 @@ class HTTPFramework:
 
     def get_steering_inbox(self) -> ACPSteeringInbox:
         return self.inbox
+
+    def get_tape_store(self):
+        return None
 
     async def get_model_options(self, **kwargs: Any) -> ModelOptions:
         return ModelOptions()
@@ -123,7 +147,7 @@ class HTTPClient:
 
 
 @asynccontextmanager
-async def http_server(tmp_path: Path, *, tls: bool):
+async def http_server(tmp_path: Path, *, tls: bool, framework=None):
     config = Config()
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -158,7 +182,7 @@ async def http_server(tmp_path: Path, *, tls: bool):
     shutdown = asyncio.Event()
     task = asyncio.create_task(
         serve(
-            create_http_app(HTTPFramework(tmp_path)),
+            create_http_app(framework or HTTPFramework(tmp_path)),
             config,
             shutdown_trigger=shutdown.wait,
         )
@@ -215,7 +239,7 @@ async def test_http_connections_keep_tools_and_streams_isolated(
                         protocol_version=1,
                         client_capabilities=ClientCapabilities(terminal=True),
                     )
-                    assert initialized.agent_capabilities.load_session is False
+                    assert initialized.agent_capabilities.load_session is True
                     assert (
                         initialized.agent_capabilities.session_capabilities.resume
                         is None
@@ -225,10 +249,9 @@ async def test_http_connections_keep_tools_and_streams_isolated(
                         initialized.agent_capabilities.session_capabilities.close
                         is None
                     )
-                    with pytest.raises(RequestError):
-                        await one.load_session(
-                            cwd=str(tmp_path), session_id=session1.session_id
-                        )
+                    await one.load_session(
+                        cwd=str(tmp_path), session_id=session1.session_id
+                    )
                     first_prompt = asyncio.create_task(
                         one.prompt(
                             session1.session_id,
@@ -281,6 +304,125 @@ async def test_http_connections_keep_tools_and_streams_isolated(
     assert len(json.loads((tmp_path / "home" / "acp-sessions.json").read_text())) == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("history_size", [0, 1100])
+async def test_http_load_persisted_session_on_fresh_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool, history_size: int
+) -> None:
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    # Persist metadata before starting the HTTP server; its fresh agent must
+    # restore the session without a session/new request on this connection.
+    session = await BubACPAgent(HTTPFramework(tmp_path)).new_session(cwd=str(tmp_path))
+    store = AsyncTapeStoreAdapter(InMemoryTapeStore())
+    tape = Tape(tmp_path, store, TapeContext()).session_tape(
+        f"acp-server:{session.session_id}", tmp_path
+    )
+    for index in range(history_size):
+        await store.append(
+            tape.name,
+            TapeEntry.message({"role": "assistant", "content": f"history-{index}"}),
+        )
+    framework = HTTPFramework(tmp_path)
+    monkeypatch.setattr(framework, "get_tape_store", lambda: store)
+    client = HTTPClient("continued")
+    client.release_command.set()
+    async with http_server(tmp_path, tls=tls, framework=framework) as url:
+        async with httpx.AsyncClient(
+            verify=False, http2=tls, timeout=None, trust_env=False
+        ) as http:
+            connection = connect_to_agent(client, create_http_stream(url, client=http))
+            try:
+                async with asyncio.timeout(15):
+                    await connection.initialize(
+                        protocol_version=1,
+                        client_capabilities=ClientCapabilities(terminal=True),
+                    )
+                    assert (await connection.list_sessions()).sessions[
+                        0
+                    ].session_id == session.session_id
+                    loaded = await connection.load_session(
+                        cwd=str(tmp_path), session_id=session.session_id
+                    )
+                    assert loaded.config_options
+                    # The SDK dispatches notification callbacks asynchronously.
+                    while len(client.updates) < history_size:
+                        await asyncio.sleep(0)
+                    assert [u.content.text for _, u in client.updates] == [
+                        f"history-{i}" for i in range(history_size)
+                    ]
+                    result = await connection.prompt(
+                        session.session_id, [TextContentBlock(text="pwd")]
+                    )
+                    assert result.stop_reason == "end_turn"
+                    while not any(
+                        u.session_update == "agent_message_chunk"
+                        and u.content.text == "continued"
+                        for _, u in client.updates
+                    ):
+                        await asyncio.sleep(0)
+                    assert {sid for sid, _ in client.updates} == {session.session_id}
+                    assert client.commands[0]["session_id"] == session.session_id
+                    await connection.load_session(
+                        cwd=str(tmp_path), session_id=session.session_id
+                    )
+            finally:
+                await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_http_load_failure_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    framework = HTTPFramework(tmp_path)
+
+    def fail_store():
+        raise OSError("store unavailable")
+
+    monkeypatch.setattr(framework, "get_tape_store", fail_store)
+    client = HTTPClient("retried")
+    client.release_command.set()
+    async with http_server(tmp_path, tls=False, framework=framework) as url:
+        async with httpx.AsyncClient(timeout=None, trust_env=False) as http:
+            connection = connect_to_agent(client, create_http_stream(url, client=http))
+            try:
+                async with asyncio.timeout(10):
+                    await connection.initialize(
+                        protocol_version=1,
+                        client_capabilities=ClientCapabilities(terminal=True),
+                    )
+                    with pytest.raises(RequestError):
+                        await connection.load_session(
+                            cwd=str(tmp_path), session_id="history"
+                        )
+                    monkeypatch.setattr(framework, "get_tape_store", lambda: None)
+                    await connection.load_session(
+                        cwd=str(tmp_path), session_id="history"
+                    )
+                    assert (
+                        await connection.prompt(
+                            "history", [TextContentBlock(text="pwd")]
+                        )
+                    ).stop_reason == "end_turn"
+                    monkeypatch.setattr(framework, "get_tape_store", fail_store)
+                    with pytest.raises(RequestError):
+                        await connection.load_session(
+                            cwd=str(tmp_path), session_id="history"
+                        )
+                    assert (
+                        await connection.prompt(
+                            "history", [TextContentBlock(text="pwd")]
+                        )
+                    ).stop_reason == "end_turn"
+            finally:
+                await connection.close()
+
+
 @pytest.fixture
 def http_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Capture the SDK factory to test Bub's state without network scheduling."""
@@ -308,6 +450,7 @@ async def test_http_connections_preserve_interleaved_session_writes(
 ) -> None:
     _, factory = http_app
     one, two = factory(HTTPClient("first")), factory(HTTPClient("second"))
+    assert type(one) is type(two) is BubACPAgent
     first = await one.new_session(cwd=str(tmp_path))
     second = await two.new_session(cwd=str(tmp_path))
     expected = {first.session_id, second.session_id}
@@ -411,7 +554,8 @@ async def test_http_runner_owns_framework_lifetime(
         finally:
             running = False
 
-    async def run(app, config):
+    async def run(app, config, *, shutdown_trigger):
+        assert shutdown_trigger is None
         assert running
         assert callable(app)
         assert config.bind == [f"{host}:0"]
@@ -473,3 +617,285 @@ def test_cli_rejects_invalid_transport_options(tmp_path: Path, args: list[str]) 
     app = typer.Typer()
     ACPServerPlugin(HTTPFramework(tmp_path)).register_cli_commands(app)
     assert CliRunner().invoke(app, args).exit_code == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_source", ["channel", "gateway", "already_stopped"])
+async def test_channel_lifecycle_reuses_gateway_framework(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop_source: str
+) -> None:
+    monkeypatch.setenv("BUB_ACP_SERVER_HOST", "localhost")
+    monkeypatch.setenv("BUB_ACP_SERVER_PORT", "29200")
+    framework = HTTPFramework(tmp_path)  # No running(): gateway owns that lifetime.
+    channel = ACPHTTPChannel(framework)
+    entered = asyncio.Event()
+    calls = []
+
+    async def run(app, config, *, shutdown_trigger):
+        assert shutdown_trigger == stop.wait
+        calls.append(config.bind)
+        entered.set()
+        await shutdown_trigger()
+
+    monkeypatch.setattr(http_module, "serve", run)
+    stop = asyncio.Event()
+    await channel.stop()  # Stopping before startup is harmless.
+    if stop_source == "already_stopped":
+        stop.set()
+    await channel.start(stop)
+    task = channel._task
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        if stop_source == "already_stopped":
+            assert stop.is_set()  # start() must not clear the gateway's event.
+        else:
+            await channel.start(stop)
+            assert channel._task is task
+        if stop_source != "channel":
+            stop.set()
+            await asyncio.wait_for(asyncio.shield(task), 2)
+    finally:
+        await channel.stop()
+    await channel.stop()
+    assert task.done()
+    assert channel._task is None
+    assert stop.is_set()
+    assert calls == [["localhost:29200"]]
+
+
+@pytest.mark.asyncio
+async def test_channel_reports_server_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail(*args, **kwargs):
+        raise OSError("address in use")
+
+    monkeypatch.setattr(http_module, "serve", fail)
+    channel = ACPHTTPChannel(HTTPFramework(tmp_path))
+    stop = asyncio.Event()
+    await channel.start(stop)
+    await asyncio.wait_for(stop.wait(), 2)
+    await channel.stop()
+    assert channel._task is None
+
+
+def test_gateway_discovers_acp_only_when_explicitly_enabled(tmp_path: Path) -> None:
+    framework = HTTPFramework(tmp_path)
+    implementation = ACPServerPlugin(framework)
+    framework.get_channels = lambda handler: {
+        channel.name: channel for channel in implementation.provide_channels(handler)
+    }
+    manager = ChannelManager(framework, enabled_channels=["acp-server"])
+    channel = manager.get_channel("acp-server")
+    assert isinstance(channel, Interface)
+    assert manager.enabled_channels() == [channel]
+    assert not ChannelManager(framework, enabled_channels=["all"]).enabled_channels()
+
+
+def test_gateway_cli_starts_and_stops_acp_channel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework._load_builtin_hooks()
+    framework._plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
+    calls = []
+    shutdown = []
+    original_start = ACPHTTPChannel.start
+
+    async def start(channel, stop_event):
+        shutdown.append(stop_event)
+        await original_start(channel, stop_event)
+
+    async def run(app, config, *, shutdown_trigger):
+        assert framework.get_steering_inbox() is not None
+        assert framework.get_tape_store() is not None
+        calls.append(config.bind)
+        shutdown[0].set()
+        await shutdown_trigger()
+        calls.append("stopped")
+
+    monkeypatch.setattr(ACPHTTPChannel, "start", start)
+    monkeypatch.setattr(http_module, "serve", run)
+    result = CliRunner().invoke(
+        framework.create_cli_app(), ["gateway", "--enable-channel", "acp-server"]
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == [["127.0.0.1:28200"], "stopped"]
+    assert framework.get_tape_store() is None
+    assert framework.get_steering_inbox() is None
+
+
+@pytest.mark.parametrize(
+    "values",
+    [{"port": 0}, {"port": 65536}, {"certfile": "cert.pem"}, {"keyfile": "key.pem"}],
+)
+def test_http_settings_reject_invalid_values(values) -> None:
+    with pytest.raises(ValueError):
+        ACPServerSettings(**values)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tls", [False, True])
+async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool
+) -> None:
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    local_calls = []
+
+    async def local_bash(**kwargs):
+        local_calls.append(kwargs)
+        return "local output"
+
+    original_bash = replace(REGISTRY["bash"], handler=local_bash)
+    monkeypatch.setitem(REGISTRY, "bash", original_bash)
+
+    class OtherChannel(Channel):
+        name = "other"
+
+        async def start(self, stop_event):
+            pass
+
+        async def stop(self):
+            pass
+
+        async def stream_events(self, message, stream):
+            async for event in stream:
+                if event.kind == "text":
+                    other_text.append(event.data["delta"])
+                yield event
+
+    other_text = []
+    framework = HTTPFramework(tmp_path)
+    channel = ACPHTTPChannel(framework)
+    framework.get_channels = lambda handler: {
+        channel.name: channel,
+        "other": OtherChannel(),
+    }
+    entries = []
+
+    @asynccontextmanager
+    async def running():
+        entries.append("start")
+        try:
+            yield
+        finally:
+            entries.append("stop")
+
+    framework.running = running
+    manager = ChannelManager(framework, enabled_channels=["acp-server", "other"])
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    fd = listener.detach()
+
+    if tls:
+        cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                str(key),
+                "-out",
+                str(cert),
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    async def serve_gateway(app, config, **kwargs):
+        config.bind = [f"fd://{fd}"]
+        config.graceful_timeout = 1
+        if tls:
+            config.certfile, config.keyfile = str(cert), str(key)
+        await serve(app, config, **kwargs)
+
+    monkeypatch.setattr(http_module, "serve", serve_gateway)
+    gateway = asyncio.create_task(manager.listen_and_run())
+    client = HTTPClient("remote output")
+    connection = None
+    prompt_task = None
+    url = f"{'https' if tls else 'http'}://127.0.0.1:{port}"
+    try:
+        async with httpx.AsyncClient(
+            verify=False, http2=tls, timeout=None, trust_env=False
+        ) as transport:
+            async with asyncio.timeout(10):
+                while True:
+                    try:
+                        response = await transport.get(url + "/missing")
+                        assert response.status_code == 404
+                        assert response.http_version == (
+                            "HTTP/2" if tls else "HTTP/1.1"
+                        )
+                        break
+                    except httpx.ConnectError:
+                        if gateway.done():
+                            await gateway
+                        await asyncio.sleep(0.01)
+                connection = connect_to_agent(
+                    client, create_http_stream(url + "/acp", client=transport)
+                )
+                await connection.initialize(
+                    protocol_version=1,
+                    client_capabilities=ClientCapabilities(terminal=True),
+                )
+                session = await connection.new_session(cwd=str(tmp_path))
+                prompt_task = asyncio.create_task(
+                    connection.prompt(
+                        session.session_id,
+                        [TextContentBlock(type="text", text="remote command")],
+                    )
+                )
+                await client.command_started.wait()
+                assert framework.router is manager
+                result = await framework.process_inbound(
+                    ChannelMessage(
+                        session_id="other:local",
+                        channel="other",
+                        chat_id="local",
+                        content="local command",
+                        is_active=True,
+                        kind="normal",
+                    ),
+                    stream_output=True,
+                )
+                assert result.model_output == "local output"
+                assert other_text == ["local output"]
+                assert len(local_calls) == 1
+                assert local_calls[0]["cmd"] == "local command"
+                assert len(client.commands) == 1
+                client.release_command.set()
+                assert (await prompt_task).stop_reason == "end_turn"
+                assert [
+                    update.content.text
+                    for _, update in client.updates
+                    if update.session_update == "agent_message_chunk"
+                ] == ["remote output"]
+                assert framework.router is manager
+                assert REGISTRY["bash"] is original_bash
+                await connection.close()
+                connection = None
+    finally:
+        client.release_command.set()
+        if connection is not None:
+            await connection.close()
+        if prompt_task is not None:
+            prompt_task.cancel()
+            await asyncio.gather(prompt_task, return_exceptions=True)
+        gateway.cancel()
+        await asyncio.wait_for(gateway, 5)
+    assert entries == ["start", "stop"]
+    assert channel._task is None
+    assert framework.router is None

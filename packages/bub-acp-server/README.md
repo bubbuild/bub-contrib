@@ -7,6 +7,7 @@ Expose Bub as an Agent Client Protocol agent.
 - Bub plugin entry point: `acp-server`
 - CLI command registered on Bub: `bub acp`
 - Optional Streamable HTTP transport at `/acp`, served by Hypercorn with HTTP/2 support
+- Gateway channel: `acp-server`, with HTTP startup and shutdown managed by Bub
 - ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, and `session/prompt`
 - Streaming ACP `session/update` events from Bub stream events
 - ACP client-backed replacements for Bub's `bash`, `fs.read`, `fs.write`, and `fs.edit` tools while the ACP server is running
@@ -68,7 +69,30 @@ HTTP uses the SDK's experimental [web transport](https://agentclientprotocol.git
 uv pip install -e 'packages/bub-acp-server[http]'
 ```
 
-Start the server:
+Start the HTTP channel with the gateway:
+
+```bash
+bub gateway --enable-channel acp-server
+```
+
+Or set `BUB_ENABLED_CHANNELS=acp-server` and run `bub gateway`. The ACP channel is an `Interface`: it must be explicitly enabled and is not started by `all`. Other channels can be enabled alongside it with additional `--enable-channel` options. Gateway owns the framework/tape-store lifetime and stops the HTTP server and its background steering tasks on shutdown.
+
+Gateway settings use the `BUB_ACP_SERVER_` prefix:
+
+- `HOST`: listen address, default `127.0.0.1`
+- `PORT`: listen port, default `28200`
+- `CERTFILE` / `KEYFILE`: optional TLS certificate and private key; provide both
+
+The same fields can be configured under `acp-server` in Bub's YAML configuration:
+
+```yaml
+enabled_channels: acp-server
+acp-server:
+  host: 127.0.0.1
+  port: 28200
+```
+
+The existing standalone HTTP command remains available:
 
 ```bash
 bub acp --transport http
@@ -105,9 +129,13 @@ finally:
     await connection.close()
 ```
 
-Clients must advertise and implement filesystem/terminal capabilities to use Bub's client-backed tools. Each connection has its own client capabilities and stream router. Prompt execution is serialized across connections because Bub's tool registry and framework router are shared; session metadata is shared so one connection cannot overwrite another's newly created sessions.
+Clients must advertise and implement filesystem/terminal capabilities to use Bub's client-backed tools. Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools and plan instructions are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
 
-With SDK **0.12.1**, HTTP supports initialization, new sessions, session listing, config options, prompts, tool callbacks, and steering. Session load/resume/close are not advertised in HTTP mode: the adapter does not enable unstable close/resume routes, and its stream registration requires a `sessionId` in the response that the standard load response lacks. `connection.close()` terminates the HTTP connection with `DELETE`. Stdio retains load, resume, and close support. Automatic SSE reconnection is also not provided by the SDK.
+The dependency is pinned to **agent-client-protocol 1.0.0rc1**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc1 or an equivalent implementation of load request/response correlation, including sessions with empty history.
+
+After initializing a new connection, load an existing session with `await connection.load_session(cwd="/path/to/workspace", session_id="existing-session-id")`, then continue with `connection.prompt(...)`. Keep the same Bub home and tape store when restarting the server to retain metadata and history.
+
+HTTP does not advertise session resume/close because the SDK web adapter still does not enable those unstable routes. Stdio enables them by default. `connection.close()` terminates the HTTP connection with `DELETE`; automatic SSE reconnection is not provided by the SDK.
 
 ## Steering
 

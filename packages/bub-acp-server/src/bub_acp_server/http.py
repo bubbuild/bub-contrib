@@ -3,45 +3,33 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
-from acp.exceptions import RequestError
+import bub
 from acp.http.asgi import create_asgi_app
 from acp.interfaces import Client
-from acp.schema import InitializeResponse
+from bub.channels import Interface
+from bub.channels.message import ChannelMessage
+from bub.streaming import StreamEvent
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
+from loguru import logger
 
-from bub_acp_server.agent import ACPSession, BubACPAgent
+from bub_acp_server.agent import ACPSession, BubACPAgent, active_stream_router
+from bub_acp_server.config import ACPServerSettings
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
     from bub.framework import BubFramework
 
 
-class _HTTPAgent(BubACPAgent):
-    async def initialize(self, *args: Any, **kwargs: Any) -> InitializeResponse:
-        response = await super().initialize(*args, **kwargs)
-        # The SDK registers HTTP session streams from a response's sessionId,
-        # which the standard LoadSessionResponse does not contain.
-        response.agent_capabilities.load_session = False
-        # SDK 0.12.1's HTTP adapter does not enable unstable protocol routes.
-        capabilities = response.agent_capabilities.session_capabilities
-        if capabilities is not None:
-            capabilities.close = None
-            capabilities.resume = None
-        return response
-
-    async def load_session(self, *args: Any, **kwargs: Any) -> None:
-        raise RequestError.method_not_found(
-            "session/load is unavailable over HTTP in SDK 0.12.1"
-        )
-
-
-def create_http_app(framework: BubFramework) -> Callable:
+def create_http_app(
+    framework: BubFramework, *, channel_managed: bool = False
+) -> Callable:
     """Create a /acp endpoint; the caller owns framework.running()."""
     prompt_lock = asyncio.Lock()
     sessions: dict[str, ACPSession] | None = None
@@ -50,11 +38,14 @@ def create_http_app(framework: BubFramework) -> Callable:
     def agent_factory(client: Client) -> BubACPAgent:
         nonlocal sessions
         inbox = framework.get_steering_inbox()
-        agent = _HTTPAgent(
+        agent = BubACPAgent(
             framework,
             steering_inbox=inbox if isinstance(inbox, ACPSteeringInbox) else None,
             prompt_lock=prompt_lock,
             sessions=sessions,
+            bind_router=not channel_managed,
+            # Match the SDK web adapter's stable-only protocol routes.
+            use_unstable_protocol=False,
         )
         sessions = agent._sessions
         agents.add(agent)
@@ -63,15 +54,6 @@ def create_http_app(framework: BubFramework) -> Callable:
     sdk_app = create_asgi_app(agent_factory)
 
     async def app(scope: dict[str, Any], receive: Callable, send: Callable) -> None:
-        if scope["type"] != "lifespan" and scope.get("path") != "/acp":
-            if scope["type"] == "websocket":
-                await send({"type": "websocket.close", "code": 1008})
-            else:
-                await send(
-                    {"type": "http.response.start", "status": 404, "headers": []}
-                )
-                await send({"type": "http.response.body", "body": b"Not found"})
-            return
         try:
             await sdk_app(scope, receive, send)
         finally:
@@ -84,6 +66,62 @@ def create_http_app(framework: BubFramework) -> Callable:
     return app
 
 
+class ACPHTTPChannel(Interface):
+    name = "acp-server"
+
+    def __init__(self, framework: BubFramework) -> None:
+        self.framework = framework
+        self.settings = bub.ensure_config(ACPServerSettings)
+        self.name = self.settings.channel_name
+        self._task: asyncio.Task[None] | None = None
+        self._stop_event: asyncio.Event | None = None
+
+    async def start(self, stop_event: asyncio.Event) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        self._stop_event = stop_event
+        self._task = asyncio.create_task(
+            run_acp_http(
+                self.framework,
+                host=self.settings.host,
+                port=self.settings.port,
+                certfile=self.settings.certfile,
+                keyfile=self.settings.keyfile,
+                channel_managed=True,
+                shutdown_trigger=stop_event.wait,
+            ),
+            name="bub-acp-server.http",
+        )
+
+        def stopped(task: asyncio.Task[None]) -> None:
+            if not task.cancelled() and (error := task.exception()) is not None:
+                logger.opt(exception=error).error("ACP HTTP server failed")
+                stop_event.set()
+
+        self._task.add_done_callback(stopped)
+
+    async def stop(self) -> None:
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._task is not None:
+            try:
+                # Failures are reported by the done callback. Do not prevent
+                # the gateway from shutting down its remaining channels.
+                await asyncio.gather(self._task, return_exceptions=True)
+            finally:
+                self._task = None
+
+    def stream_events(
+        self, message: ChannelMessage, stream: AsyncIterable[StreamEvent]
+    ) -> AsyncIterable[StreamEvent]:
+        router = active_stream_router.get()
+        return router.wrap_stream(message, stream) if router is not None else stream
+
+    async def send(self, message: ChannelMessage) -> None:
+        if (router := active_stream_router.get()) is not None:
+            await router.dispatch_output(message)
+
+
 async def run_acp_http(
     framework: BubFramework,
     *,
@@ -91,11 +129,17 @@ async def run_acp_http(
     port: int = 28200,
     certfile: Path | None = None,
     keyfile: Path | None = None,
+    channel_managed: bool = False,
+    shutdown_trigger: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     config = Config()
     config.bind = [f"{host}:{port}"]
     if certfile is not None:
         config.certfile = str(certfile)
         config.keyfile = str(keyfile) if keyfile is not None else None
-    async with framework.running():
-        await serve(create_http_app(framework), config)
+    async with nullcontext() if channel_managed else framework.running():
+        await serve(
+            create_http_app(framework, channel_managed=channel_managed),
+            config,
+            shutdown_trigger=shutdown_trigger,
+        )

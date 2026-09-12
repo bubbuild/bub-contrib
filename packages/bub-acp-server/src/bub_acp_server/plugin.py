@@ -29,6 +29,7 @@ __all__ = ["ACPServerPlugin", "BubACPAgent", "run_acp_agent"]
 class Transport(str, Enum):
     stdio = "stdio"
     http = "http"
+    websocket = "websocket"
 
 
 ACP_PLAN_SYSTEM_PROMPT = """\
@@ -126,17 +127,23 @@ class ACPServerPlugin:
 
     @hookimpl
     def register_cli_commands(self, app: typer.Typer) -> None:
-        @app.command("acp", help="Run Bub as an ACP agent over stdio or HTTP.")
+        @app.command(
+            "acp", help="Run Bub as an ACP agent over stdio, HTTP or WebSocket."
+        )
         def acp(
             command: str | None = typer.Argument(None, metavar="[serve]"),
             transport: Transport = typer.Option(Transport.stdio, help="ACP transport."),
-            host: str = typer.Option("127.0.0.1", help="HTTP listen address."),
-            port: int = typer.Option(28200, min=1, max=65535, help="HTTP listen port."),
+            host: str = typer.Option(
+                "127.0.0.1", help="HTTP/WebSocket listen address."
+            ),
+            port: int = typer.Option(
+                28200, min=1, max=65535, help="HTTP/WebSocket listen port."
+            ),
             certfile: Path | None = typer.Option(
                 None,
                 exists=True,
                 dir_okay=False,
-                help="TLS certificate for HTTPS/HTTP2.",
+                help="TLS certificate for HTTPS/HTTP2 or WSS.",
             ),
             keyfile: Path | None = typer.Option(
                 None, exists=True, dir_okay=False, help="TLS private key."
@@ -159,7 +166,7 @@ class ACPServerPlugin:
                     or keyfile is not None
                 ):
                     raise typer.BadParameter(
-                        "HTTP listen and TLS options require --transport http"
+                        "Listen and TLS options require --transport http or websocket"
                     )
                 asyncio.run(run_acp_agent(self.framework))
                 return
@@ -171,8 +178,9 @@ class ACPServerPlugin:
                 from bub_acp_server.http import run_acp_http
             except ImportError as error:
                 raise typer.BadParameter(
-                    "HTTP requires the http extra: uv pip install 'bub-acp-server[http]'"
+                    "HTTP/WebSocket requires the http extra: uv pip install 'bub-acp-server[http]'"
                 ) from error
+            # The SDK serves HTTP and WebSocket on the same /acp endpoint.
             asyncio.run(
                 run_acp_http(
                     self.framework,

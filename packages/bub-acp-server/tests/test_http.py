@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import ssl
 import subprocess
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ import typer
 from acp import connect_to_agent
 from acp.exceptions import RequestError
 from acp.http import create_http_stream
+from acp.ws import create_websocket_stream
 from acp.schema import (
     ClientCapabilities,
     CreateTerminalResponse,
@@ -423,6 +426,99 @@ async def test_http_load_failure_can_retry(
                 await connection.close()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tls", [False, True])
+async def test_websocket_load_and_tool_callbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool
+) -> None:
+    from acp.ws import client as ws_client
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = HTTPFramework(tmp_path)
+    store = AsyncTapeStoreAdapter(InMemoryTapeStore())
+    monkeypatch.setattr(framework, "get_tape_store", lambda: store)
+    async with http_server(tmp_path, tls=tls, framework=framework) as url:
+        # Trust only this test server's self-signed certificate. The SDK's
+        # convenience client does not expose an SSL-context argument.
+        connect_options = {"proxy": None}
+        if tls:
+            context = ssl.create_default_context(cafile=str(tmp_path / "cert.pem"))
+            context.check_hostname = False  # Test certificate is for localhost.
+            connect_options["ssl"] = context
+        monkeypatch.setattr(
+            ws_client, "ws_connect", partial(ws_client.ws_connect, **connect_options)
+        )
+        ws_url = url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        client = HTTPClient("websocket output")
+        client.release_command.set()
+        connection = connect_to_agent(client, await create_websocket_stream(ws_url))
+        try:
+            async with asyncio.timeout(10):
+                initialized = await connection.initialize(
+                    protocol_version=1,
+                    client_capabilities=ClientCapabilities(terminal=True),
+                )
+                assert initialized.agent_capabilities.load_session is True
+                assert (
+                    initialized.agent_capabilities.session_capabilities.resume is None
+                )
+                session = await connection.new_session(cwd=str(tmp_path))
+                assert (
+                    await connection.prompt(
+                        session.session_id, [TextContentBlock(text="pwd")]
+                    )
+                ).stop_reason == "end_turn"
+                while not any(
+                    u.session_update == "agent_message_chunk" for _, u in client.updates
+                ):
+                    await asyncio.sleep(0)
+                assert client.commands[0]["session_id"] == session.session_id
+                assert client.commands[0]["args"] == ["-lc", "pwd"]
+                assert any(u.session_update == "tool_call" for _, u in client.updates)
+        finally:
+            await connection.close()
+
+        tape = Tape(tmp_path, store, TapeContext()).session_tape(
+            f"acp-server:{session.session_id}", tmp_path
+        )
+        await store.append(
+            tape.name,
+            TapeEntry.message({"role": "assistant", "content": "saved history"}),
+        )
+        # Reconnect and load on a fresh WebSocket, then continue the same session.
+        client = HTTPClient("reconnected output")
+        client.release_command.set()
+        connection = connect_to_agent(client, await create_websocket_stream(ws_url))
+        try:
+            async with asyncio.timeout(10):
+                await connection.initialize(
+                    protocol_version=1,
+                    client_capabilities=ClientCapabilities(terminal=True),
+                )
+                await connection.load_session(
+                    cwd=str(tmp_path), session_id=session.session_id
+                )
+                while not client.updates:
+                    await asyncio.sleep(0)
+                assert client.updates[0][1].content.text == "saved history"
+                assert (
+                    await connection.prompt(
+                        session.session_id, [TextContentBlock(text="ls")]
+                    )
+                ).stop_reason == "end_turn"
+                while not any(
+                    u.session_update == "agent_message_chunk"
+                    and u.content.text == client.label
+                    for _, u in client.updates
+                ):
+                    await asyncio.sleep(0)
+                assert {sid for sid, _ in client.updates} == {session.session_id}
+                assert client.commands[0]["args"] == ["-lc", "ls"]
+        finally:
+            await connection.close()
+
+
 @pytest.fixture
 def http_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Capture the SDK factory to test Bub's state without network scheduling."""
@@ -583,8 +679,9 @@ async def test_http_runner_owns_framework_lifetime(
 
 
 @pytest.mark.parametrize("port", [None, 9000])
-def test_cli_selects_http(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: int | None
+@pytest.mark.parametrize("transport", ["http", "websocket"])
+def test_cli_selects_web_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: int | None, transport: str
 ) -> None:
     calls = []
 
@@ -601,7 +698,7 @@ def test_cli_selects_http(
     ACPServerPlugin(HTTPFramework(tmp_path)).register_cli_commands(app)
     result = CliRunner().invoke(
         app,
-        ["acp", "--transport", "http"]
+        ["acp", "--transport", transport]
         + (["--port", str(port)] if port is not None else []),
     )
     assert result.exit_code == 0, result.output
@@ -617,6 +714,39 @@ def test_cli_rejects_invalid_transport_options(tmp_path: Path, args: list[str]) 
     app = typer.Typer()
     ACPServerPlugin(HTTPFramework(tmp_path)).register_cli_commands(app)
     assert CliRunner().invoke(app, args).exit_code == 2
+
+
+@pytest.mark.parametrize("transport", ["http", "websocket"])
+@pytest.mark.parametrize("tls_files", ["both", "cert", "key"])
+def test_cli_web_tls_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str, tls_files: str
+) -> None:
+    calls = []
+
+    async def run(framework, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(http_module, "run_acp_http", run)
+    app = typer.Typer()
+    ACPServerPlugin(HTTPFramework(tmp_path)).register_cli_commands(app)
+    # Existing files satisfy CLI path validation; the mocked runner never reads them.
+    cert = Path(__file__)
+    key = Path(http_module.__file__)
+    args = ["--transport", transport, "--host", "localhost", "--port", "29200"]
+    if tls_files in ("both", "cert"):
+        args.extend(["--certfile", str(cert)])
+    if tls_files in ("both", "key"):
+        args.extend(["--keyfile", str(key)])
+    result = CliRunner().invoke(app, args)
+    if tls_files == "both":
+        assert result.exit_code == 0, result.output
+        assert calls == [
+            {"host": "localhost", "port": 29200, "certfile": cert, "keyfile": key}
+        ]
+    else:
+        assert result.exit_code == 2
+        assert "must be provided together" in result.output
+        assert not calls
 
 
 @pytest.mark.asyncio

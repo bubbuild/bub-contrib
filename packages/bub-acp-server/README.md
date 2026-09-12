@@ -6,7 +6,7 @@ Expose Bub as an Agent Client Protocol agent.
 
 - Bub plugin entry point: `acp-server`
 - CLI command registered on Bub: `bub acp`
-- Optional Streamable HTTP transport at `/acp`, served by Hypercorn with HTTP/2 support
+- Optional Streamable HTTP and WebSocket transports at `/acp`, served by Hypercorn with HTTP/2 support
 - Gateway channel: `acp-server`, with HTTP startup and shutdown managed by Bub
 - ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, and `session/prompt`
 - Streaming ACP `session/update` events from Bub stream events
@@ -61,7 +61,7 @@ ACP session metadata is stored under Bub home as `acp-sessions.json` so compatib
 
 History is read through Bub's configured tape store. Store errors are reported instead of falling back to a separate local JSONL reader.
 
-## HTTP transport
+## HTTP and WebSocket transports
 
 HTTP uses the SDK's experimental [web transport](https://agentclientprotocol.github.io/python-sdk/web-transport/), including POST requests, SSE streams, and connection IDs. Install the optional dependencies from a checkout:
 
@@ -136,6 +136,26 @@ The dependency is pinned to **agent-client-protocol 1.0.0rc1**. HTTP uses `BubAC
 After initializing a new connection, load an existing session with `await connection.load_session(cwd="/path/to/workspace", session_id="existing-session-id")`, then continue with `connection.prompt(...)`. Keep the same Bub home and tape store when restarting the server to retain metadata and history.
 
 HTTP does not advertise session resume/close because the SDK web adapter still does not enable those unstable routes. Stdio enables them by default. `connection.close()` terminates the HTTP connection with `DELETE`; automatic SSE reconnection is not provided by the SDK.
+
+### WebSocket
+
+Start the same web server using the explicit WebSocket option:
+
+```bash
+bub acp --transport websocket
+```
+
+The default WebSocket endpoint is `ws://127.0.0.1:28200/acp`. Use the same `--host`, `--port`, `--certfile`, and `--keyfile` options as HTTP; with TLS, connect using `wss://`. Both `--transport http` and `--transport websocket` start the SDK's combined HTTP/WebSocket endpoint, not protocol-exclusive listeners. The gateway's `acp-server` channel also accepts WebSocket connections without additional configuration. The same `bub-acp-server[http]` extra supplies all required dependencies.
+
+In the SDK example above, replace transport creation with:
+
+```python
+from acp.ws import create_websocket_stream
+
+transport = await create_websocket_stream("ws://127.0.0.1:28200/acp")
+```
+
+Initialization, session loading, prompts and tool callbacks work over the socket; `connection.close()` closes it. WebSocket does not require HTTP/2. Like HTTP, it does not advertise the SDK's disabled unstable resume/close routes and adds no authentication.
 
 ## Steering
 

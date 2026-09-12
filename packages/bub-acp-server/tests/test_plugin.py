@@ -215,7 +215,7 @@ def test_register_cli_accepts_only_deprecated_serve_argument(
     assert calls == [framework] * expected_calls
 
 
-@pytest.mark.parametrize("transport", ["stdio", "http"])
+@pytest.mark.parametrize("transport", ["stdio", "http", "websocket"])
 def test_cli_without_http_extra(
     monkeypatch: pytest.MonkeyPatch, transport: str
 ) -> None:
@@ -244,7 +244,7 @@ def test_cli_without_http_extra(
         assert calls == [framework]
     else:
         assert result.exit_code == 2
-        assert "HTTP requires the http extra" in result.output
+        assert "HTTP/WebSocket requires the http extra" in result.output
         assert not calls
 
 

@@ -49,6 +49,8 @@ The agent sends an ACP `usage_update` whenever the streamed usage snapshot chang
 
 ACP clients can select both the model and reasoning effort for each session. Reasoning effort defaults to `auto`; the selected value is persisted with the ACP session and passed into Bub's turn state for subsequent model calls.
 
+Available reasoning efforts are `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`. Values are passed through to the model provider; actual support depends on the selected model and provider.
+
 The ACP stream router reports Bub's built-in `tape.handoff` as a context-compaction tool call. Compatible clients receive `Context compacting` and `Context compacted` updates marked with `_meta.contextCompaction`.
 
 Bub keeps using its own configuration, tools, skills, and tapes. The ACP client starts the process and displays the session; it does not replace Bub's model setup.

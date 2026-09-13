@@ -95,6 +95,8 @@ REASONING_EFFORT_OPTIONS = (
     ("medium", "Medium"),
     ("high", "High"),
     ("xhigh", "Extra high"),
+    ("max", "Max"),
+    ("ultra", "Ultra"),
 )
 
 _PROMPT_ADAPTER = TypeAdapter(list[ACPPromptBlock])

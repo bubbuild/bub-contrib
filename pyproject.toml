@@ -17,6 +17,7 @@ dependencies = [
     "bub-env",
     "bub-extism",
     "bub-github-copilot",
+    "bub-hol-guard",
     "bub-kimi",
     "bub-mcp",
     "bub-mcp-server",
@@ -51,6 +52,7 @@ bub-dsh = { workspace = true }
 bub-env = { workspace = true }
 bub-extism = { workspace = true }
 bub-github-copilot = { workspace = true }
+bub-hol-guard = { workspace = true }
 bub-kimi = { workspace = true }
 bub-mcp = { workspace = true }
 bub-mcp-server = { workspace = true }

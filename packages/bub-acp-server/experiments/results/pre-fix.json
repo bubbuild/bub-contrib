@@ -1,0 +1,144 @@
+{
+  "source_commit": "0842b0a18678bf6fc364f4d8f84c8f65f74c2e3f",
+  "note": "Diagnostic before fix; measured while event loop remained alive; harness also used __aexit__ and did not close transports.",
+  "result": {
+    "variant": "full",
+    "calls": [
+      {
+        "expected": "a",
+        "passed": true,
+        "returned": {
+          "label": "a",
+          "pid": 69581,
+          "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+        }
+      },
+      {
+        "expected": "b",
+        "passed": true,
+        "returned": {
+          "label": "b",
+          "pid": 69597,
+          "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+        }
+      },
+      {
+        "expected": "a",
+        "passed": true,
+        "returned": {
+          "label": "a",
+          "pid": 69581,
+          "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+        }
+      },
+      {
+        "expected": "a2",
+        "passed": true,
+        "returned": {
+          "label": "a2",
+          "pid": 69658,
+          "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+        }
+      }
+    ],
+    "isolation_checks": [
+      {
+        "session": "a",
+        "visible": [
+          "mcp_shared_identify",
+          "mcp_shared_only_a"
+        ],
+        "unexpected": [],
+        "passed": true
+      },
+      {
+        "session": "b",
+        "visible": [
+          "mcp_shared_identify",
+          "mcp_shared_only_b"
+        ],
+        "unexpected": [],
+        "passed": true
+      },
+      {
+        "session": "a",
+        "visible": [
+          "mcp_shared_identify",
+          "mcp_shared_only_a"
+        ],
+        "unexpected": [],
+        "passed": true
+      },
+      {
+        "session": "empty",
+        "visible": [],
+        "unexpected": [],
+        "passed": true
+      },
+      {
+        "session": "ordinary_before",
+        "visible": [],
+        "unexpected": [],
+        "passed": true
+      },
+      {
+        "session": "ordinary_after",
+        "visible": [],
+        "unexpected": [],
+        "passed": true
+      }
+    ],
+    "capabilities": {
+      "http": true,
+      "sse": true
+    },
+    "global_registry_changed": false,
+    "distinct_runtime_agents": 3,
+    "replacement": {
+      "eligible": 1,
+      "alive_pids": [
+        69581
+      ]
+    },
+    "shutdown": {
+      "eligible": 3,
+      "connected_clients": 0,
+      "alive_pids": [
+        69581,
+        69658,
+        69597
+      ]
+    },
+    "servers": [
+      {
+        "label": "a",
+        "pid": 69581,
+        "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+      },
+      {
+        "label": "a2",
+        "pid": 69658,
+        "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+      },
+      {
+        "label": "b",
+        "pid": 69597,
+        "cwd": "/private/tmp/acp-ablation-diagnostic/workspace"
+      }
+    ],
+    "harness_cleanup_alive_pids": [
+      69658,
+      69597,
+      69581
+    ],
+    "call_successes": 4,
+    "isolation_passes": 6,
+    "versions": {
+      "bub": "0.4.5.dev7+ge4578a443",
+      "bub-acp-server": "0.1.0",
+      "bub-mcp": "0.3.0",
+      "fastmcp": "3.3.1",
+      "agent-client-protocol": "1.0.0rc1"
+    }
+  }
+}

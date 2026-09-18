@@ -431,9 +431,10 @@ async def test_real_agents_keep_acp_tools_connection_local(
         assert response.stop_reason == "end_turn"
         inbound = server._build_inbound([], server._sessions[session_id])
         state = await framework.build_state(inbound, inbound.session_id)
-        assert state["_runtime_agent"] is server._runtime_agent
+        assert state["_runtime_agent"] is server._runtime_agents[session_id]
         assert "update_plan" in {
-            t.name for t in model_tools(server._runtime_agent.tools.values())
+            t.name
+            for t in model_tools(server._runtime_agents[session_id].tools.values())
         }
         assert REGISTRY == original_registry
         assert default.tools == original_tools

@@ -84,6 +84,14 @@ from bub_mcp.plugin import MCPChannel
 channel = MCPChannel.from_server_configs(
     {"weather": {"url": "https://weather.example.com/mcp"}}
 )
+
+# Inside the embedding application's async lifecycle:
+await channel.connect()
+try:
+    channel.bind_agent(agent)
+    # Run the agent while its MCP connections are open.
+finally:
+    await channel.stop()
 ```
 
 Discovered tools belong to the channel and are available through `channel.tools`; discovery does

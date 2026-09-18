@@ -383,6 +383,7 @@ version = "0.1.0"
 source = { editable = "packages/bub-acp-server" }
 dependencies = [
     { name = "agent-client-protocol" },
+    { name = "bub-mcp" },
 ]
 
 [package.optional-dependencies]
@@ -401,6 +402,7 @@ dev = [
 requires-dist = [
     { name = "agent-client-protocol", specifier = "==1.0.0rc1" },
     { name = "agent-client-protocol", extras = ["http"], marker = "extra == 'http'", specifier = "==1.0.0rc1" },
+    { name = "bub-mcp", editable = "packages/bub-mcp" },
     { name = "hypercorn", marker = "extra == 'http'", specifier = ">=0.17,<0.19" },
 ]
 provides-extras = ["http"]

@@ -96,8 +96,7 @@ class HTTPFramework:
                             "id": "bash-1",
                             "name": "bash",
                             "arguments": {
-                                "cmd": inbound.content,
-                                "title": "Run command",
+                                "command": inbound.content,
                             },
                         }
                     ]
@@ -109,7 +108,7 @@ class HTTPFramework:
                 else REGISTRY
             )
             output = await tools["bash"].run(
-                cmd=inbound.content,
+                command=inbound.content,
                 context=ToolContext(
                     tape=None,
                     state={
@@ -1012,7 +1011,7 @@ async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
                 assert result.model_output == "local output"
                 assert other_text == ["local output"]
                 assert len(local_calls) == 1
-                assert local_calls[0]["cmd"] == "local command"
+                assert local_calls[0]["command"] == "local command"
                 assert len(client.commands) == 1
                 client.release_command.set()
                 assert (await prompt_task).stop_reason == "end_turn"

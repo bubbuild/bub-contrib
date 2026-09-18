@@ -144,6 +144,12 @@ class MCPChannel(Lifecycle):
             self._bootstrap(stop_event), name="bub-mcp.bootstrap"
         )
 
+    async def connect(self) -> None:
+        """Wait for discovery when embedded without Bub's channel manager."""
+        await self.start(asyncio.Event())
+        if self._bootstrap_task is not None:
+            await self._bootstrap_task
+
     async def stop(self) -> None:
         task = self._bootstrap_task
         self._bootstrap_task = None
@@ -183,10 +189,15 @@ class MCPChannel(Lifecycle):
     def bind_agent(self, agent: Agent) -> None:
         """Refresh this channel's tools on an Agent, preserving name collisions."""
         previous = self._bindings.pop(agent, {})
-        self._restore_tools(agent, previous)
+        tools = self.tools
+        self._restore_tools(
+            agent,
+            {name: binding for name, binding in previous.items() if name not in tools},
+        )
         bindings = {}
-        for name, remote_tool in self.tools.items():
-            bindings[name] = (remote_tool, agent.tools.get(name))
+        for name, remote_tool in tools.items():
+            original = previous[name][1] if name in previous else agent.tools.get(name)
+            bindings[name] = (remote_tool, original)
             agent.tools[name] = remote_tool
         if bindings:
             self._bindings[agent] = bindings
@@ -280,12 +291,25 @@ class MCPChannel(Lifecycle):
                     return
 
                 config_items = list(config.items())
-                server_states = await asyncio.gather(
-                    *[
+                tasks = [
+                    asyncio.create_task(
                         self._connect_server(server_name, server_config)
-                        for server_name, server_config in config_items
-                    ]
-                )
+                    )
+                    for server_name, server_config in config_items
+                ]
+                try:
+                    server_states = await asyncio.gather(*tasks)
+                except BaseException:
+                    for task in tasks:
+                        task.cancel()
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for result in results:
+                        if (
+                            isinstance(result, MCPServerState)
+                            and result.client is not None
+                        ):
+                            await self._close_client(result.client)
+                    raise
 
                 self._servers = {
                     server_name: server_state

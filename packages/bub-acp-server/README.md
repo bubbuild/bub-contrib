@@ -14,6 +14,7 @@ Expose Bub as an Agent Client Protocol agent.
 - An ACP-aware `update_plan` tool that updates the client plan UI and records each complete plan as a `plan` event in the session tape
 - Automatic recovery of the latest persisted plan into the next ACP turn's model context
 - Session-scoped model and reasoning-effort selection through ACP config options
+- Session MCP servers over stdio, Streamable HTTP, and SSE via `bub-mcp`
 - ACP context-compaction notifications when `tape.handoff` runs
 - Mid-turn steering through the `_lody/session/steer` ACP extension
 
@@ -55,7 +56,7 @@ The ACP stream router reports Bub's built-in `tape.handoff` as a context-compact
 
 Bub keeps using its own configuration, tools, skills, and tapes. The ACP client starts the process and displays the session; it does not replace Bub's model setup.
 
-Each ACP connection owns a Bub `Agent` with client filesystem, terminal, and plan tools. The agent
+Each ACP connection owns a Bub `Agent` for each session, with client filesystem, terminal, and plan tools. The agent
 is passed through the inbound message's `_runtime_agent` field so tape recovery, tool descriptions,
 and execution use the same instance. Client tools never modify the global `REGISTRY`, and other
 agents keep their own tools. This requires Bub's instance-tool API introduced in upstream PR #311.
@@ -67,6 +68,37 @@ ACP session metadata is stored under Bub home as `acp-sessions.json` so compatib
 `bub-acp-server` supports both ACP session load and resume. `session/load` restores the matching Bub history through the same ACP streaming path used by live turns. `session/resume` attaches the editor back to the Bub session without replaying history, so later turns keep streaming through Bub's normal hook pipeline.
 
 History is read through Bub's configured tape store. Store errors are reported instead of falling back to a separate local JSONL reader.
+
+## Session MCP servers
+
+`bub-acp-server` depends on `bub-mcp>=0.3.0`. Initialization advertises
+`mcpCapabilities: {"http": true, "sse": true}`; stdio support is implicit in ACP.
+Pass servers in `mcpServers` when creating, loading, or resuming a session:
+
+```json
+{
+  "cwd": "/path/to/workspace",
+  "mcpServers": [
+    {"name": "local", "command": "/path/to/mcp-server", "args": [], "env": []},
+    {"type": "http", "name": "remote", "url": "https://example.com/mcp", "headers": []}
+  ]
+}
+```
+
+Stdio processes use the session's working directory and supplied environment variables. HTTP/SSE
+connections receive the supplied headers. Setup waits for tool discovery; a connection failure
+returns an ACP error and closes the newly opened connections, preserving any previous session
+connections. Tools use bub-mcp names such as `mcp.remote_search` and are available only to that
+session's Agent. Session tools take precedence over configured MCP tools with the same name.
+
+Loading or resuming replaces the entire server list; an omitted or empty list clears it. Active
+prompts finish before their connections are replaced. Closing a session cancels its pending turns
+and closes its MCP connections. Stdio, HTTP, and WebSocket server shutdown also releases all MCP
+connections. HTTP connections share the active session resources, so reconnecting clients can
+replace them without leaving the old connections running.
+
+MCP server configuration, environment values, and headers are kept in memory and are not written
+to `acp-sessions.json` or `mcp.json`. Clients must resend configuration after a server restart.
 
 ## HTTP and WebSocket transports
 

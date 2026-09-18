@@ -6,7 +6,8 @@ import json
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
+from weakref import WeakKeyDictionary
 
 import fastmcp
 import mcp.types
@@ -14,13 +15,17 @@ import typer
 import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
-from bub.tools import REGISTRY, Tool, ToolContext
+from bub.tools import Tool, ToolContext
 from bub.channels.contracts import MessageHandler
-from bub.envelope import Envelope
+from bub.envelope import Envelope, field_of
 from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
+
+if TYPE_CHECKING:
+    from bub.builtin.agent import Agent
+    from bub.framework import BubFramework
 
 TOOL_PREFIX = "mcp."
 LIFECYCLE_CHANNEL_NAME = "mcp.lifecycle"
@@ -113,6 +118,9 @@ class MCPChannel(Lifecycle):
         self._lock = asyncio.Lock()
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
+        self._bindings: WeakKeyDictionary[
+            Agent, dict[str, tuple[Tool, Tool | None]]
+        ] = WeakKeyDictionary()
         self._stop_event: asyncio.Event | None = None
 
     @classmethod
@@ -136,6 +144,12 @@ class MCPChannel(Lifecycle):
             self._bootstrap(stop_event), name="bub-mcp.bootstrap"
         )
 
+    async def connect(self) -> None:
+        """Wait for discovery when embedded without Bub's channel manager."""
+        await self.start(asyncio.Event())
+        if self._bootstrap_task is not None:
+            await self._bootstrap_task
+
     async def stop(self) -> None:
         task = self._bootstrap_task
         self._bootstrap_task = None
@@ -155,8 +169,65 @@ class MCPChannel(Lifecycle):
                 server.client = None
                 server.connected = False
 
+        for agent, bindings in list(self._bindings.items()):
+            self._restore_tools(agent, bindings)
+        self._bindings.clear()
+
         for client in clients:
             await self._close_client(client)
+
+    @property
+    def tools(self) -> dict[str, Tool]:
+        """Tools from currently connected servers; never registered globally."""
+        return {
+            tool.name: tool
+            for server in self._servers.values()
+            if server.connected
+            for tool in server.tools
+        }
+
+    def bind_agent(self, agent: Agent) -> None:
+        """Refresh this channel's tools on an Agent, preserving name collisions."""
+        previous = self._bindings.pop(agent, {})
+        tools = self.tools
+        self._restore_tools(
+            agent,
+            {name: binding for name, binding in previous.items() if name not in tools},
+        )
+        bindings = {}
+        for name, remote_tool in tools.items():
+            original = previous[name][1] if name in previous else agent.tools.get(name)
+            bindings[name] = (remote_tool, original)
+            agent.tools[name] = remote_tool
+        if bindings:
+            self._bindings[agent] = bindings
+
+    @staticmethod
+    def _restore_tools(
+        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]
+    ) -> None:
+        for name, (installed, original) in bindings.items():
+            if agent.tools.get(name) is not installed:
+                continue
+            if original is None:
+                agent.tools.pop(name, None)
+            else:
+                agent.tools[name] = original
+
+    async def bind_runtime_tools(
+        self, framework: BubFramework, message: Envelope
+    ) -> None:
+        # Discovery may still be running when the first message arrives.
+        if self._bootstrap_task is not None:
+            await asyncio.shield(self._bootstrap_task)
+        agent = field_of(message, "_runtime_agent")
+        if agent is None:
+            builtin = framework.plugin_manager.get_plugin("builtin")
+            if builtin is None:
+                return
+            # Bub currently exposes its default Agent only through BuiltinImpl.
+            agent = builtin._get_agent()
+        self.bind_agent(agent)
 
     def list(self) -> dict[str, MCPServerState]:
         return self._servers.copy()
@@ -220,12 +291,25 @@ class MCPChannel(Lifecycle):
                     return
 
                 config_items = list(config.items())
-                server_states = await asyncio.gather(
-                    *[
+                tasks = [
+                    asyncio.create_task(
                         self._connect_server(server_name, server_config)
-                        for server_name, server_config in config_items
-                    ]
-                )
+                    )
+                    for server_name, server_config in config_items
+                ]
+                try:
+                    server_states = await asyncio.gather(*tasks)
+                except BaseException:
+                    for task in tasks:
+                        task.cancel()
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for result in results:
+                        if (
+                            isinstance(result, MCPServerState)
+                            and result.client is not None
+                        ):
+                            await self._close_client(result.client)
+                    raise
 
                 self._servers = {
                     server_name: server_state
@@ -233,10 +317,6 @@ class MCPChannel(Lifecycle):
                         config_items, server_states, strict=False
                     )
                 }
-
-                for server_name, server in self._servers.items():
-                    for tool in server.tools:
-                        REGISTRY[tool.name] = tool
 
                 if (
                     self.stop_when_all_failed
@@ -333,16 +413,18 @@ class MCPChannel(Lifecycle):
     @staticmethod
     async def _close_client(client: Any) -> None:
         with contextlib.suppress(Exception):
-            await client.__aexit__(None, None, None)
+            # __aexit__ leaves keep-alive stdio transports running.
+            await client.close()
 
 
 class MCPPlugin:
     def __init__(self, framework: Any) -> None:
-        del framework
+        self.framework = framework
         self._manager = MCPChannel()
 
     @hookimpl
-    def load_state(self, message: Envelope, session_id: str) -> TurnState:
+    async def load_state(self, message: Envelope, session_id: str) -> TurnState:
+        await self._manager.bind_runtime_tools(self.framework, message)
         return {"mcp": self._manager}
 
     @hookimpl

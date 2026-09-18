@@ -356,8 +356,8 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.4.3.dev9+gfe1d8f01b"
-source = { git = "https://github.com/bubbuild/bub.git#fe1d8f01b67ab27a010fa32dfbc44839afb2b2f1" }
+version = "0.4.5.dev7+ge4578a443"
+source = { git = "https://github.com/bubbuild/bub.git#e4578a44354c773447cef854892742af9eb7cc13" }
 dependencies = [
     { name = "aiohttp" },
     { name = "any-llm-sdk" },
@@ -383,6 +383,7 @@ version = "0.1.0"
 source = { editable = "packages/bub-acp-server" }
 dependencies = [
     { name = "agent-client-protocol" },
+    { name = "bub-mcp" },
 ]
 
 [package.optional-dependencies]
@@ -401,6 +402,7 @@ dev = [
 requires-dist = [
     { name = "agent-client-protocol", specifier = "==1.0.0rc1" },
     { name = "agent-client-protocol", extras = ["http"], marker = "extra == 'http'", specifier = "==1.0.0rc1" },
+    { name = "bub-mcp", editable = "packages/bub-mcp" },
     { name = "hypercorn", marker = "extra == 'http'", specifier = ">=0.17,<0.19" },
 ]
 provides-extras = ["http"]
@@ -686,7 +688,7 @@ source = { editable = "packages/bub-kimi" }
 
 [[package]]
 name = "bub-mcp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/bub-mcp" }
 dependencies = [
     { name = "fastmcp" },

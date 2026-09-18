@@ -55,6 +55,11 @@ The ACP stream router reports Bub's built-in `tape.handoff` as a context-compact
 
 Bub keeps using its own configuration, tools, skills, and tapes. The ACP client starts the process and displays the session; it does not replace Bub's model setup.
 
+Each ACP connection owns a Bub `Agent` with client filesystem, terminal, and plan tools. The agent
+is passed through the inbound message's `_runtime_agent` field so tape recovery, tool descriptions,
+and execution use the same instance. Client tools never modify the global `REGISTRY`, and other
+agents keep their own tools. This requires Bub's instance-tool API introduced in upstream PR #311.
+
 ACP session IDs remain the protocol-facing `chat_id`. Bub namespaces its internal session ID with the ACP channel before selecting a tape, so an equal session ID from another channel cannot reuse the ACP tape.
 
 ACP session metadata is stored under Bub home as `acp-sessions.json` so compatible clients can list sessions again after restarting. Keep `BUB_HOME` stable if you want the same ACP thread list across editor launches.

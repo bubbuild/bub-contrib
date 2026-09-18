@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Generator
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import replace
-from importlib import import_module
+from collections.abc import Awaitable, Callable
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,17 +16,8 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from pydantic import BaseModel, Field
-from bub.tools import REGISTRY, Tool, ToolContext, tool
+from bub.tools import Tool, ToolContext
 
-_TOOL_NAMES = (
-    "bash",
-    "bash.output",
-    "bash.kill",
-    "fs.read",
-    "fs.write",
-    "fs.edit",
-    "update_plan",
-)
 type TerminalObserver = Callable[[str, str, str], Awaitable[None]]
 type PlanStatus = Literal["pending", "in_progress", "completed"]
 type PlanPriority = Literal["high", "medium", "low"]
@@ -253,47 +241,10 @@ class ACPClientToolRuntime:
         return client
 
 
-_active_runtime: ContextVar[ACPClientToolRuntime | None] = ContextVar(
-    "acp_tool_runtime", default=None
-)
+def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
+    """Build connection-owned tools without changing Bub's global registry."""
 
-
-def _scoped_tool(
-    runtime: ACPClientToolRuntime, replacement: Tool, original: Tool | None
-) -> Tool:
-    def dispatch(*args: Any, **kwargs: Any) -> Any:
-        if _active_runtime.get() is runtime:
-            return replacement.run(*args, **kwargs)
-        if original is None:
-            raise RuntimeError(f"{replacement.name} is only available in an ACP turn")
-        if replacement.name == "bash":
-            kwargs.pop("title", None)
-        return original.run(*args, **kwargs)
-
-    return replace(replacement, handler=dispatch)
-
-
-@contextmanager
-def replace_builtin_tools(runtime: ACPClientToolRuntime) -> Generator[None]:
-    import_module("bub.builtin.tools")
-    originals = {name: REGISTRY.get(name) for name in _TOOL_NAMES}
-    token = _active_runtime.set(runtime)
-    try:
-        _register_replacements(runtime)
-        for name, original in originals.items():
-            REGISTRY[name] = _scoped_tool(runtime, REGISTRY[name], original)
-        yield
-    finally:
-        _active_runtime.reset(token)
-        for name, original in originals.items():
-            if original is None:
-                REGISTRY.pop(name, None)
-            else:
-                REGISTRY[name] = original
-
-
-def _register_replacements(runtime: ACPClientToolRuntime) -> None:
-    @tool(name="bash", context=True)
+    @partial(Tool.from_callable, name="bash", context=True)
     async def bash(
         cmd: str,
         cwd: str | None = None,
@@ -312,7 +263,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         del title
         return await runtime.bash(cmd, cwd, timeout_seconds, background, context)
 
-    @tool(name="bash.output", context=True)
+    @partial(Tool.from_callable, name="bash.output", context=True)
     async def bash_output(
         shell_id: str,
         offset: int = 0,
@@ -323,12 +274,12 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Read buffered output from an ACP client terminal."""
         return await runtime.bash_output(shell_id, offset, limit, context)
 
-    @tool(name="bash.kill", context=True)
+    @partial(Tool.from_callable, name="bash.kill", context=True)
     async def kill_bash(shell_id: str, *, context: ToolContext) -> str:
         """Terminate an ACP client terminal process."""
         return await runtime.kill_bash(shell_id, context)
 
-    @tool(name="fs.read", context=True)
+    @partial(Tool.from_callable, name="fs.read", context=True)
     async def fs_read(
         path: str,
         offset: int = 0,
@@ -339,7 +290,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Read a text file through the ACP client filesystem."""
         return await runtime.read_file(path, offset, limit, context)
 
-    @tool(name="fs.write", context=True)
+    @partial(Tool.from_callable, name="fs.write", context=True)
     async def fs_write(
         path: str,
         content: str,
@@ -349,7 +300,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Write a text file through the ACP client filesystem."""
         return await runtime.write_file(path, content, context)
 
-    @tool(name="fs.edit", context=True)
+    @partial(Tool.from_callable, name="fs.edit", context=True)
     async def fs_edit(
         path: str,
         old: str,
@@ -361,14 +312,28 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Edit a text file through the ACP client filesystem."""
         return await runtime.edit_file(path, old, new, start, context)
 
-    @tool(name="update_plan", context=True, model=PlanInput)
-    async def update_plan_tool(
-        request: PlanInput,
-        *,
-        context: ToolContext,
-    ) -> str:
-        """Replace the ACP session plan and persist it to the current tape."""
-        return await runtime.update_plan(request, context)
+    async def update_plan_tool(*, context: ToolContext, **payload: Any) -> str:
+        return await runtime.update_plan(PlanInput.model_validate(payload), context)
+
+    plan_tool = Tool(
+        name="update_plan",
+        description="Replace the ACP session plan and persist it to the current tape.",
+        parameters=PlanInput.model_json_schema(),
+        handler=update_plan_tool,
+        context=True,
+    )
+    return {
+        item.name: item
+        for item in (
+            bash,
+            bash_output,
+            kill_bash,
+            fs_read,
+            fs_write,
+            fs_edit,
+            plan_tool,
+        )
+    }
 
 
 def _session_id(context: ToolContext) -> str:

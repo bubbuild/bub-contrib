@@ -44,6 +44,9 @@ class FakeClient:
 
 
 class FakeFramework:
+    def get_agent_hooks(self):
+        return None
+
     def __init__(self) -> None:
         self.workspace = Path.cwd()
         self.router = None

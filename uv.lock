@@ -356,8 +356,8 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.4.3.dev9+gfe1d8f01b"
-source = { git = "https://github.com/bubbuild/bub.git#fe1d8f01b67ab27a010fa32dfbc44839afb2b2f1" }
+version = "0.4.5.dev7+ge4578a443"
+source = { git = "https://github.com/bubbuild/bub.git#e4578a44354c773447cef854892742af9eb7cc13" }
 dependencies = [
     { name = "aiohttp" },
     { name = "any-llm-sdk" },
@@ -686,7 +686,7 @@ source = { editable = "packages/bub-kimi" }
 
 [[package]]
 name = "bub-mcp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/bub-mcp" }
 dependencies = [
     { name = "fastmcp" },

@@ -140,7 +140,7 @@ class ExtismPlugin:
         self._register_hook_adapters()
 
     def _register_hook_adapters(self) -> None:
-        plugin_manager = getattr(self.framework, "_plugin_manager", None)
+        plugin_manager = getattr(self.framework, "plugin_manager", None)
         if plugin_manager is None:
             return
 

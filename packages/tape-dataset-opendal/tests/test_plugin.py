@@ -29,8 +29,8 @@ def test_plugin_registers_bub_cli_export_command(tmp_path: Path) -> None:
         "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
     )
 
-    framework._plugin_manager.register(_StorePlugin(store), name="test-store")
-    framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
+    framework.plugin_manager.register(_StorePlugin(store), name="test-store")
+    framework.plugin_manager.register(plugin, name="tape-dataset-opendal")
     framework._tape_store = store
 
     app = framework.create_cli_app()
@@ -74,8 +74,8 @@ def test_plugin_cli_accepts_cel_filter_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    framework._plugin_manager.register(_StorePlugin(store), name="test-store")
-    framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
+    framework.plugin_manager.register(_StorePlugin(store), name="test-store")
+    framework.plugin_manager.register(plugin, name="tape-dataset-opendal")
     framework._tape_store = store
 
     app = framework.create_cli_app()

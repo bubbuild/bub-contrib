@@ -25,13 +25,16 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name == "bub_mcp":
         raise RuntimeError(
-            "bub-agent-plugins requires bub-mcp>=0.2.0 in the Bub runtime environment"
+            "bub-agent-plugins requires bub-mcp>=0.3.0 in the Bub runtime environment"
         ) from exc
     raise
 
-if not callable(getattr(MCPChannel, "from_server_configs", None)):
+if not all(
+    callable(getattr(MCPChannel, name, None))
+    for name in ("from_server_configs", "bind_runtime_tools")
+):
     raise RuntimeError(
-        "bub-agent-plugins requires bub-mcp>=0.2.0 in the Bub runtime environment"
+        "bub-agent-plugins requires bub-mcp>=0.3.0 in the Bub runtime environment"
     )
 
 
@@ -106,11 +109,12 @@ class AgentPluginsPlugin:
         return self.catalog
 
     @hookimpl
-    def load_state(self, message: Envelope, session_id: str) -> TurnState:
-        del message, session_id
+    async def load_state(self, message: Envelope, session_id: str) -> TurnState:
+        del session_id
         catalog = self.load()
         state: TurnState = {"agent_plugins": catalog}
         if self._mcp_channel is not None:
+            await self._mcp_channel.bind_runtime_tools(self.framework, message)
             state["agent_plugins_mcp"] = self._mcp_channel
         return state
 

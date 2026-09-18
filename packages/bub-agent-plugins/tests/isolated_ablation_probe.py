@@ -82,17 +82,8 @@ def _write_runtime_files(
     return config_file
 
 
-async def _wait_for_tool(name: str, timeout: float = 30) -> Any:
-    from bub.tools import REGISTRY
-
-    async with asyncio.timeout(timeout):
-        while name not in REGISTRY:
-            await asyncio.sleep(0.05)
-    return REGISTRY[name]
-
-
 async def _exercise_channels(
-    channels: dict[str, Any], mcp_enabled: bool
+    framework: Any, channels: dict[str, Any], mcp_enabled: bool
 ) -> dict[str, Any]:
     from bub.tools import REGISTRY
 
@@ -108,13 +99,17 @@ async def _exercise_channels(
         for channel in active_channels:
             await channel.start(asyncio.Event())
 
-        baseline_tool = await _wait_for_tool("mcp.baseline_ping")
+        state = await framework.build_state({}, "probe:tools")
+        agent = state["_runtime_agent"]
+        baseline_tool = agent.tools["mcp.baseline_ping"]
+        assert "mcp.baseline_ping" not in REGISTRY
         baseline_result = await baseline_tool.run(value="baseline")
         assert baseline_result == "basic-mcp-ok:baseline"
 
         plugin_result = None
         if plugin_channel is not None:
-            plugin_tool = await _wait_for_tool("mcp.basic-agent-plugin.basic_ping")
+            plugin_tool = agent.tools["mcp.basic-agent-plugin.basic_ping"]
+            assert "mcp.basic-agent-plugin.basic_ping" not in REGISTRY
             plugin_result = await plugin_tool.run(value="plugin")
             assert plugin_result == "basic-mcp-ok:plugin"
         else:
@@ -228,7 +223,7 @@ def main() -> None:
             == "Return `basic-skill-ok` when this skill is invoked."
         )
 
-    mcp_results = asyncio.run(_exercise_channels(channels, mcp_enabled))
+    mcp_results = asyncio.run(_exercise_channels(framework, channels, mcp_enabled))
     print(
         json.dumps(
             {

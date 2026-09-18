@@ -69,12 +69,13 @@ from bub.tape import (
 )
 from pydantic import TypeAdapter, ValidationError
 
-from bub_acp_server.client_tools import ACPClientToolRuntime, replace_builtin_tools
+from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 from bub_acp_server.config import ACPServerSettings
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
     from bub.framework import BubFramework
+    from bub.builtin.agent import Agent
 
 type ACPPromptBlock = (
     TextContentBlock
@@ -415,6 +416,11 @@ active_stream_router: ContextVar[ACPStreamRouter | None] = ContextVar(
 )
 
 
+@dataclass
+class ACPInboundMessage(ChannelMessage):
+    _runtime_agent: Agent | None = None
+
+
 class BubACPAgent:
     def __init__(
         self,
@@ -430,6 +436,7 @@ class BubACPAgent:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
         self.client_tools = client_tools or ACPClientToolRuntime()
+        self._runtime_agent: Agent | None = None
         self._client: Client | None = None
         self._stream_router: ACPStreamRouter | None = None
         self._bind_router = bind_router
@@ -761,10 +768,9 @@ class BubACPAgent:
                     # Gateway owns its router; its ACP channel routes this turn's stream.
                     if self._bind_router:
                         self.framework.bind_channel_router(router)
-                    with replace_builtin_tools(self.client_tools):
-                        result = await self.framework.process_inbound(
-                            inbound, stream_output=True
-                        )
+                    result = await self.framework.process_inbound(
+                        inbound, stream_output=True
+                    )
                 finally:
                     active_stream_router.reset(token)
                     stream_state = router.pop_stream_state(session.session_id)
@@ -791,7 +797,7 @@ class BubACPAgent:
         if reasoning_effort := session.runtime.get(REASONING_EFFORT_CONFIG_ID):
             context["_runtime_reasoning_effort"] = reasoning_effort
         context["_runtime_workspace"] = str(session.cwd)
-        return ChannelMessage(
+        inbound = ACPInboundMessage(
             session_id=_bub_session_id(self.settings.channel_name, session.session_id),
             channel=self.settings.channel_name,
             chat_id=session.session_id,
@@ -801,6 +807,14 @@ class BubACPAgent:
             media=media,
             context=context,
         )
+        if self._runtime_agent is None:
+            from bub.builtin.agent import Agent
+
+            self._runtime_agent = Agent(self.framework)
+            self._runtime_agent.tools.update(build_client_tools(self.client_tools))
+        # Bub's builtin load_state uses this instance for recovery and execution.
+        inbound._runtime_agent = self._runtime_agent
+        return inbound
 
     def _register_prompt_run(self, session_id: str) -> ACPPromptRun:
         run = ACPPromptRun(session_id=session_id)

@@ -60,6 +60,9 @@ def isolated_acp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class HTTPFramework:
+    def get_agent_hooks(self):
+        return None
+
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
         self.router: Any = None
@@ -100,7 +103,12 @@ class HTTPFramework:
                     ]
                 },
             )
-            output = await REGISTRY["bash"].run(
+            tools = (
+                inbound._runtime_agent.tools
+                if hasattr(inbound, "_runtime_agent")
+                else REGISTRY
+            )
+            output = await tools["bash"].run(
                 cmd=inbound.content,
                 context=ToolContext(
                     tape=None,
@@ -827,8 +835,8 @@ def test_gateway_cli_starts_and_stops_acp_channel(
 ) -> None:
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     framework = BubFramework(config_file=tmp_path / "config.yml")
-    framework._load_builtin_hooks()
-    framework._plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
+    framework.load_builtin_hooks()
+    framework.plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
     calls = []
     shutdown = []
     original_start = ACPHTTPChannel.start

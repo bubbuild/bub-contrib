@@ -19,22 +19,22 @@ class ParentPlugin:
 
 class Framework:
     def __init__(self) -> None:
-        self._plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
-        self._plugin_manager.add_hookspecs(BubHookSpecs)
+        self.plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
+        self.plugin_manager.add_hookspecs(BubHookSpecs)
 
 
 def test_plugin_wraps_parent_tape_store(monkeypatch) -> None:
     framework = Framework()
     otel_plugin = OTelTapeStorePlugin(framework)  # type: ignore[arg-type]
-    framework._plugin_manager.register(ParentPlugin(), "parent")
-    framework._plugin_manager.register(otel_plugin, "otel")
+    framework.plugin_manager.register(ParentPlugin(), "parent")
+    framework.plugin_manager.register(otel_plugin, "otel")
     monkeypatch.setattr(
         plugin.bub,
         "ensure_config",
         lambda _: OTelTapeStoreSettings(enabled=True),
     )
 
-    store = framework._plugin_manager.hook.provide_tape_store()
+    store = framework.plugin_manager.hook.provide_tape_store()
 
     assert isinstance(store, OTelTapeStore)
     assert isinstance(store._inner, ParentStore)
@@ -43,14 +43,14 @@ def test_plugin_wraps_parent_tape_store(monkeypatch) -> None:
 def test_plugin_can_be_disabled(monkeypatch) -> None:
     framework = Framework()
     otel_plugin = OTelTapeStorePlugin(framework)  # type: ignore[arg-type]
-    framework._plugin_manager.register(ParentPlugin(), "parent")
-    framework._plugin_manager.register(otel_plugin, "otel")
+    framework.plugin_manager.register(ParentPlugin(), "parent")
+    framework.plugin_manager.register(otel_plugin, "otel")
     monkeypatch.setattr(
         plugin.bub,
         "ensure_config",
         lambda _: OTelTapeStoreSettings(enabled=False),
     )
 
-    store = framework._plugin_manager.hook.provide_tape_store()
+    store = framework.plugin_manager.hook.provide_tape_store()
 
     assert isinstance(store, ParentStore)

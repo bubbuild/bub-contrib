@@ -413,7 +413,8 @@ class MCPChannel(Lifecycle):
     @staticmethod
     async def _close_client(client: Any) -> None:
         with contextlib.suppress(Exception):
-            await client.__aexit__(None, None, None)
+            # __aexit__ leaves keep-alive stdio transports running.
+            await client.close()
 
 
 class MCPPlugin:

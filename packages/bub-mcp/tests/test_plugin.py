@@ -52,9 +52,8 @@ class FakeClient:
         self.entered = True
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> bool:
+    async def close(self) -> None:
         self.exited = True
-        return False
 
     async def list_tools(self) -> list[FakeRemoteTool]:
         return [

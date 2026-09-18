@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,7 +49,7 @@ class MCPClient:
             raise RuntimeError("secret connection detail")
         return self
 
-    async def __aexit__(self, *args):
+    async def close(self):
         self.closed = True
 
     async def list_tools(self):
@@ -370,7 +371,9 @@ async def test_reload_waits_for_active_tool(framework, clients, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_real_stdio_server_runs_with_session_cwd_and_env(framework, tmp_path):
+async def test_real_stdio_server_runs_with_session_cwd_and_env_and_exits(
+    framework, tmp_path
+):
     script = Path(__file__).parent / "fixtures" / "mcp_tool_server.py"
     agent = make_agent(framework)
     session = await agent.new_session(
@@ -388,6 +391,22 @@ async def test_real_stdio_server_runs_with_session_cwd_and_env(framework, tmp_pa
         tools = await runtime_tools(agent, session.session_id)
         result = await tools["mcp.local_describe"].run()
         assert result == f"{tmp_path}:session-env"
+        pid = int(await tools["mcp.local_process_id"].run())
+        channel = agent._mcp_channels[session.session_id]
+        clients = [server.client for server in channel.list().values()]
+        try:
+            await agent.shutdown()
+            # Client.is_connected() can be false while its stdio process is alive.
+            for _ in range(40):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                pytest.fail(f"MCP child {pid} survived shutdown")
+        finally:
+            await asyncio.gather(*(client.close() for client in clients))
     finally:
         await agent.shutdown()
 

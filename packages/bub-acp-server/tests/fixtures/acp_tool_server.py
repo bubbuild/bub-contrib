@@ -85,6 +85,19 @@ class E2EFramework:
             ],
             context=context,
         )
+        ask_result = None
+        if "ask_user" in inbound._runtime_agent.tools:
+            ask_result = await inbound._runtime_agent.tools["ask_user"].run(
+                message="Choose an approach",
+                requested_schema={
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string", "enum": ["minimal", "full"]}
+                    },
+                    "required": ["answer"],
+                },
+                context=context,
+            )
         model_output = json.dumps(
             {
                 "read": read_result,
@@ -93,6 +106,7 @@ class E2EFramework:
                 "bash": bash_result,
                 "plan": plan_result,
                 "tape_events": tape.events,
+                "ask_user": ask_result,
             },
             sort_keys=True,
         )

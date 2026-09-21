@@ -12,8 +12,10 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from bub.tools import REGISTRY, ToolContext
+from bub.streaming import StreamEvent
 
-from bub_acp_server.client_tools import ACPClientToolRuntime, replace_builtin_tools
+from bub_acp_server.agent import ACPStreamRouter
+from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 
 
 class FakeClient:
@@ -97,9 +99,7 @@ class FakeTape:
     ) -> None:
         self.events.append((name, payload, meta))
 
-    async def handoff(
-        self, *, name: str, state: dict[str, object]
-    ) -> list[object]:
+    async def handoff(self, *, name: str, state: dict[str, object]) -> list[object]:
         self.handoffs.append((name, state))
         return []
 
@@ -112,17 +112,17 @@ async def test_replaces_file_tools_with_acp_client_calls(tmp_path: Path) -> None
     context = _context(tmp_path)
     originals = {name: REGISTRY[name] for name in ("fs.read", "fs.write")}
 
-    with replace_builtin_tools(_runtime(client)):
-        assert REGISTRY["fs.read"] is not originals["fs.read"]
-        assert REGISTRY["fs.write"] is not originals["fs.write"]
-        assert REGISTRY["fs.read"].parameters == originals["fs.read"].parameters
-        assert REGISTRY["fs.write"].parameters == originals["fs.write"].parameters
-        read_result = await REGISTRY["fs.read"].run(
-            path="notes.txt", offset=1, limit=3, context=context
-        )
-        write_result = await REGISTRY["fs.write"].run(
-            path="result.txt", content="done", context=context
-        )
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    assert client_tools["fs.read"] is not originals["fs.read"]
+    assert client_tools["fs.write"] is not originals["fs.write"]
+    assert client_tools["fs.read"].parameters == originals["fs.read"].parameters
+    assert client_tools["fs.write"].parameters == originals["fs.write"].parameters
+    read_result = await client_tools["fs.read"].run(
+        path="notes.txt", offset=1, limit=3, context=context
+    )
+    write_result = await client_tools["fs.write"].run(
+        path="result.txt", content="done", context=context
+    )
 
     assert REGISTRY["fs.read"] is originals["fs.read"]
     assert REGISTRY["fs.write"] is originals["fs.write"]
@@ -154,16 +154,16 @@ async def test_replaces_file_edit_with_acp_read_and_write_calls(
     context = _context(tmp_path)
     original = REGISTRY["fs.edit"]
 
-    with replace_builtin_tools(_runtime(client)):
-        assert REGISTRY["fs.edit"] is not original
-        assert REGISTRY["fs.edit"].parameters == original.parameters
-        result = await REGISTRY["fs.edit"].run(
-            path="notes.txt",
-            old="old",
-            new="new",
-            start=1,
-            context=context,
-        )
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    assert client_tools["fs.edit"] is not original
+    assert client_tools["fs.edit"].parameters == original.parameters
+    result = await client_tools["fs.edit"].run(
+        path="notes.txt",
+        old="old",
+        new="new",
+        start=1,
+        context=context,
+    )
 
     assert REGISTRY["fs.edit"] is original
     assert result == f"edited: {tmp_path / 'notes.txt'}"
@@ -190,14 +190,14 @@ async def test_edit_preserves_missing_trailing_newline(tmp_path: Path) -> None:
     client.read_content = "before\nold value\nafter"
     context = _context(tmp_path)
 
-    with replace_builtin_tools(_runtime(client)):
-        await REGISTRY["fs.edit"].run(
-            path="notes.txt",
-            old="old",
-            new="new",
-            start=1,
-            context=context,
-        )
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    await client_tools["fs.edit"].run(
+        path="notes.txt",
+        old="old",
+        new="new",
+        start=1,
+        context=context,
+    )
 
     assert client.write_requests == [
         {
@@ -209,9 +209,8 @@ async def test_edit_preserves_missing_trailing_newline(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("extra_args", [{}, {"title": "Show working directory"}])
 async def test_replaces_bash_with_acp_terminal_calls(
-    tmp_path: Path, extra_args: dict[str, str]
+    tmp_path: Path,
 ) -> None:
     from bub.builtin import tools as builtin_tools  # noqa: F401
 
@@ -225,18 +224,18 @@ async def test_replaces_bash_with_acp_terminal_calls(
         observed_terminals.append((session_id, command, terminal_id))
 
     runtime.set_terminal_observer(observe_terminal)
-    with replace_builtin_tools(runtime):
-        assert REGISTRY["bash"] is not original
-        parameters = REGISTRY["bash"].parameters
-        assert "title" in parameters["properties"]
-        assert "title" not in parameters.get("required", [])
-        assert {
-            name: schema
-            for name, schema in parameters["properties"].items()
-            if name != "title"
-        } == original.parameters["properties"]
-        assert parameters.get("required") == original.parameters.get("required")
-        result = await REGISTRY["bash"].run(cmd="pwd", context=context, **extra_args)
+    client_tools = REGISTRY | build_client_tools(runtime)
+    assert client_tools["bash"] is not original
+    parameters = client_tools["bash"].parameters
+    assert set(parameters["properties"]) == {
+        "command",
+        "cwd",
+        "timeout_seconds",
+        "background",
+    }
+    assert parameters["properties"]["command"] == {"type": "string"}
+    assert parameters["required"] == ["command"]
+    result = await client_tools["bash"].run(command="pwd", context=context)
 
     assert REGISTRY["bash"] is original
     assert result == "hello"
@@ -256,18 +255,75 @@ async def test_replaces_bash_with_acp_terminal_calls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["hello\n", "first\nsecond\n", ""])
+async def test_bash_completion_preserves_output_after_terminal_release(
+    tmp_path: Path, output: str
+) -> None:
+    class ReleasingClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.terminals = {"terminal-1": output}
+
+        async def terminal_output(self, **kwargs: Any) -> TerminalOutputResponse:
+            return TerminalOutputResponse(
+                output=self.terminals[kwargs["terminal_id"]], truncated=False
+            )
+
+        async def release_terminal(self, **kwargs: Any) -> None:
+            await super().release_terminal(**kwargs)
+            del self.terminals[kwargs["terminal_id"]]
+
+    client = ReleasingClient()
+    router = ACPStreamRouter(cast(Any, client))
+    runtime = _runtime(client)
+    runtime.set_terminal_observer(router.attach_terminal)
+    bash = build_client_tools(runtime)["bash"]
+
+    async def stream():
+        yield StreamEvent(
+            "tool_call",
+            {
+                "tool_calls": [
+                    {
+                        "id": "bash-1",
+                        "name": "bash",
+                        "arguments": {"command": "printf hello"},
+                    }
+                ]
+            },
+        )
+        result = await bash.run(command="printf hello", context=_context(tmp_path))
+        assert client.release_requests
+        assert client.terminals == {}
+        yield StreamEvent("tool_result", {"tool_results": [result]})
+
+    async for _ in router.wrap_stream({"chat_id": "session-1"}, stream()):
+        pass
+
+    start, attached, completed = [update for _, update in client.session_updates]
+    assert attached.content[0].type == "terminal"
+    assert completed.tool_call_id == start.tool_call_id == "bash-1"
+    assert completed.title == "printf hello"
+    assert completed.status == "completed"
+    assert completed.raw_output == (output.strip() or "(no output)")
+    assert len(completed.content) == 1
+    assert completed.content[0].type == "content"
+    assert completed.content[0].content.text == (output.strip() or "(no output)")
+
+
+@pytest.mark.asyncio
 async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
     client = FakeClient()
     context = _context(tmp_path)
 
-    with replace_builtin_tools(_runtime(client)):
-        started = await REGISTRY["bash"].run(
-            cmd="sleep 10", background=True, context=context
-        )
-        output = await REGISTRY["bash.output"].run(
-            shell_id="terminal-1", context=context
-        )
-        killed = await REGISTRY["bash.kill"].run(shell_id="terminal-1", context=context)
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    started = await client_tools["bash"].run(
+        command="sleep 10", background=True, context=context
+    )
+    output = await client_tools["bash.output"].run(
+        shell_id="terminal-1", context=context
+    )
+    killed = await client_tools["bash.kill"].run(shell_id="terminal-1", context=context)
 
     terminal_request = {"session_id": "session-1", "terminal_id": "terminal-1"}
     assert started == "started: terminal-1"
@@ -292,19 +348,19 @@ async def test_update_plan_updates_acp_ui_and_persists_tape(tmp_path: Path) -> N
     )
     assert "update_plan" not in REGISTRY
 
-    with replace_builtin_tools(_runtime(client)):
-        result = await REGISTRY["update_plan"].run(
-            explanation="Start implementation",
-            plan=[
-                {"step": "Inspect the code", "status": "completed"},
-                {
-                    "step": "Implement the change",
-                    "status": "in_progress",
-                    "priority": "high",
-                },
-            ],
-            context=context,
-        )
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    result = await client_tools["update_plan"].run(
+        explanation="Start implementation",
+        plan=[
+            {"step": "Inspect the code", "status": "completed"},
+            {
+                "step": "Implement the change",
+                "status": "in_progress",
+                "priority": "high",
+            },
+        ],
+        context=context,
+    )
 
     assert "update_plan" not in REGISTRY
     assert result == "Plan updated with 2 steps"
@@ -359,19 +415,17 @@ async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
     )
     original = REGISTRY["tape.handoff"]
 
-    with replace_builtin_tools(_runtime(client)):
-        assert REGISTRY["tape.handoff"] is original
-        result = await REGISTRY["tape.handoff"].run(
-            name="phase-1",
-            summary="Implementation complete",
-            context=context,
-        )
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    assert client_tools["tape.handoff"] is original
+    result = await client_tools["tape.handoff"].run(
+        name="phase-1",
+        summary="Implementation complete",
+        context=context,
+    )
 
     assert REGISTRY["tape.handoff"] is original
     assert result == "anchor added: phase-1"
-    assert tape.handoffs == [
-        ("phase-1", {"summary": "Implementation complete"})
-    ]
+    assert tape.handoffs == [("phase-1", {"summary": "Implementation complete"})]
 
 
 @pytest.mark.asyncio
@@ -383,15 +437,148 @@ async def test_update_plan_rejects_multiple_in_progress_steps(tmp_path: Path) ->
         state={"session_id": "session-1", "_runtime_workspace": str(tmp_path)},
     )
 
-    with replace_builtin_tools(_runtime(client)):
-        with pytest.raises(ValueError, match="at most one in_progress step"):
-            await REGISTRY["update_plan"].run(
-                plan=[
-                    {"step": "First", "status": "in_progress"},
-                    {"step": "Second", "status": "in_progress"},
-                ],
-                context=context,
-            )
+    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    with pytest.raises(ValueError, match="at most one in_progress step"):
+        await client_tools["update_plan"].run(
+            plan=[
+                {"step": "First", "status": "in_progress"},
+                {"step": "Second", "status": "in_progress"},
+            ],
+            context=context,
+        )
 
     assert tape.events == []
     assert client.session_updates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", [False, True])
+@pytest.mark.parametrize("write", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_initialize_selects_client_tools_by_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read: bool,
+    write: bool,
+    terminal: bool,
+) -> None:
+    from bub.framework import BubFramework
+    from bub_acp_server.agent import BubACPAgent
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    originals = REGISTRY.copy()
+    server = BubACPAgent(framework)
+    server.on_connect(cast(Any, FakeClient()))
+    await server.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(
+            fs={"readTextFile": read, "writeTextFile": write},
+            terminal=terminal,
+        ),
+    )
+    session = await server.new_session(cwd=str(tmp_path))
+    inbound = server._build_inbound([], server._sessions[session.session_id])
+    selected = inbound._runtime_agent.tools
+    for name, client_backed in {
+        "fs.read": read,
+        "fs.write": write,
+        "fs.edit": read and write,
+        "bash": terminal,
+        "bash.output": terminal,
+        "bash.kill": terminal,
+    }.items():
+        assert (selected[name] is not originals[name]) == client_backed, name
+    assert "update_plan" in selected
+    assert REGISTRY == originals
+
+
+@pytest.mark.parametrize(
+    "capabilities", [None, ClientCapabilities(), ClientCapabilities(fs={})]
+)
+def test_missing_capabilities_only_adds_plan_tool(capabilities) -> None:
+    runtime = ACPClientToolRuntime()
+    runtime.set_capabilities(capabilities)
+    assert set(build_client_tools(runtime)) == {"update_plan"}
+
+
+@pytest.mark.asyncio
+async def test_missing_capabilities_keeps_local_filesystem_working(
+    tmp_path: Path,
+) -> None:
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    client = FakeClient()
+    runtime = ACPClientToolRuntime()
+    runtime.connect(cast(Any, client))
+    selected = REGISTRY | build_client_tools(runtime)
+    context = _context(tmp_path)
+    target = tmp_path / "notes.txt"
+    await selected["fs.write"].run(
+        path=str(target), content="old value", context=context
+    )
+    assert target.read_text() == "old value"
+    await selected["fs.edit"].run(
+        path=str(target), old="old", new="new", context=context
+    )
+    assert target.read_text() == "new value"
+    assert "new value" in await selected["fs.read"].run(
+        path=str(target), context=context
+    )
+    assert client.read_requests == []
+    assert client.write_requests == []
+
+
+@pytest.mark.asyncio
+async def test_real_agents_keep_acp_tools_connection_local(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from acp.schema import TextContentBlock
+    from bub.builtin.agent import Agent
+    from bub.framework import BubFramework
+    from bub.tools import model_tools
+
+    from bub_acp_server.agent import BubACPAgent
+    from bub_acp_server.plugin import ACPServerPlugin
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    framework.plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
+    # Force the default Agent to snapshot tools before either ACP connection exists.
+    default = framework.plugin_manager.get_plugin("builtin")._get_agent()
+    original_tools = default.tools.copy()
+    original_registry = REGISTRY.copy()
+    first_client, second_client = FakeClient(), FakeClient()
+    first_client.read_content = "first connection"
+    second_client.read_content = "second connection"
+    servers = []
+    for client in (first_client, second_client):
+        server = BubACPAgent(framework, client_tools=_runtime(client))
+        server.on_connect(cast(Any, client))
+        session = await server.new_session(cwd=str(tmp_path))
+        servers.append((server, session.session_id))
+
+    for server, session_id in (servers[0], servers[1], servers[0]):
+        response = await server.prompt(
+            session_id=session_id,
+            prompt=[TextContentBlock(text=',fs.read path="notes.txt"')],
+        )
+        assert response.stop_reason == "end_turn"
+        inbound = server._build_inbound([], server._sessions[session_id])
+        state = await framework.build_state(inbound, inbound.session_id)
+        assert state["_runtime_agent"] is server._runtime_agents[session_id]
+        assert "update_plan" in {
+            t.name
+            for t in model_tools(server._runtime_agents[session_id].tools.values())
+        }
+        assert REGISTRY == original_registry
+        assert default.tools == original_tools
+        # Even an Agent created during an ACP connection gets only default tools.
+        assert "update_plan" not in Agent(framework).tools
+
+    assert len(first_client.read_requests) == 2
+    assert len(second_client.read_requests) == 1
+    assert {r["session_id"] for r in first_client.read_requests} == {servers[0][1]}
+    assert {r["session_id"] for r in second_client.read_requests} == {servers[1][1]}

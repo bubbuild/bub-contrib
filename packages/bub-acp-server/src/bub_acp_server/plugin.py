@@ -17,7 +17,12 @@ from bub.envelope import Envelope, field_of
 from bub.tape import TapeContext, TapeEntry
 from bub.turn import TurnState
 
-from bub_acp_server.agent import BubACPAgent, active_stream_router, run_acp_agent
+from bub_acp_server.agent import (
+    ACPInboundMessage,
+    BubACPAgent,
+    active_stream_router,
+    run_acp_agent,
+)
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
@@ -97,6 +102,16 @@ class ACPServerPlugin:
         except ImportError:
             return []  # HTTP is optional; stdio remains usable without its extra.
         return [ACPHTTPChannel(self.framework)]
+
+    @hookimpl(specname="load_state", trylast=True)
+    def bind_session_mcp_tools(self, message: Envelope) -> None:
+        # Apply session tools after process-configured MCP providers have bound theirs.
+        if (
+            isinstance(message, ACPInboundMessage)
+            and message._mcp_channel is not None
+            and message._runtime_agent is not None
+        ):
+            message._mcp_channel.bind_agent(message._runtime_agent)
 
     @hookimpl
     def load_state(self, message: Envelope, session_id: str) -> TurnState:

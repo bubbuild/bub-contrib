@@ -75,7 +75,7 @@ def _runtime(config_path: Path) -> HookRuntime:
     settings = ExtismSettings(config_path=config_path)
     plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
     plugin_manager.add_hookspecs(BubHookSpecs)
-    framework = SimpleNamespace(_plugin_manager=plugin_manager)
+    framework = SimpleNamespace(plugin_manager=plugin_manager)
     plugin = ExtismPlugin(framework, settings=settings)
     plugin_manager.register(plugin, name="extism")
     return HookRuntime(plugin_manager)

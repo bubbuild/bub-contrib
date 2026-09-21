@@ -27,27 +27,27 @@ from acp.schema import (
     ClientCapabilities,
     CloseSessionResponse,
     ContentToolCallContent,
+    DeleteSessionResponse,
     EmbeddedResourceContentBlock,
-    HttpMcpServer,
     ImageContentBlock,
     Implementation,
     InitializeResponse,
     ListSessionsResponse,
     LoadSessionResponse,
-    McpServerStdio,
+    McpCapabilities,
     NewSessionResponse,
     PromptResponse,
     ResourceContentBlock,
     ResumeSessionResponse,
     SessionCapabilities,
     SessionCloseCapabilities,
+    SessionDeleteCapabilities,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionInfo,
     SessionListCapabilities,
     SessionResumeCapabilities,
     SetSessionConfigOptionResponse,
-    SseMcpServer,
     TextContentBlock,
     TerminalToolCallContent,
     ToolCallProgress,
@@ -59,6 +59,7 @@ from acp.schema import (
 from bub.channels.message import ChannelMessage, MediaItem, MediaType
 from bub.envelope import Envelope, content_of, field_of
 from bub.model_selection import ModelChoice, ModelOptions
+from bub.sidecars import sidecar_tape_name
 from bub.streaming import StreamEvent
 from bub.tape import (
     AsyncTapeStoreAdapter,
@@ -69,12 +70,15 @@ from bub.tape import (
 )
 from pydantic import TypeAdapter, ValidationError
 
-from bub_acp_server.client_tools import ACPClientToolRuntime, replace_builtin_tools
+from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 from bub_acp_server.config import ACPServerSettings
+from bub_acp_server.mcp import ACPMcpServer, connect_session_mcp, server_configs
+from bub_mcp.plugin import MCPChannel
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
     from bub.framework import BubFramework
+    from bub.builtin.agent import Agent
 
 type ACPPromptBlock = (
     TextContentBlock
@@ -83,7 +87,6 @@ type ACPPromptBlock = (
     | ResourceContentBlock
     | EmbeddedResourceContentBlock
 )
-type ACPMcpServer = HttpMcpServer | SseMcpServer | McpServerStdio
 type StreamPayload = Mapping[str, object]
 
 REASONING_EFFORT_CONFIG_ID = "reasoning_effort"
@@ -324,27 +327,17 @@ class ACPStreamRouter:
             state.pending_tools.append(tool)
             raw_input = _tool_raw_input(call)
             title = tool.name
-            content = None
             if tool.name == "bash":
-                command = _block_value(raw_input, "cmd")
+                command = _block_value(raw_input, "command")
                 if isinstance(command, str) and command:
                     tool.command = command
                     title = command
-                    content = [
-                        ContentToolCallContent(
-                            content=TextContentBlock(text=f"$ {command}\n\n")
-                        )
-                    ]
-                custom_title = _block_value(raw_input, "title")
-                if isinstance(custom_title, str) and custom_title.strip():
-                    title = custom_title
             is_context_compaction = tool.name == "tape.handoff"
             update = ToolCallStart(
                 tool_call_id=tool.tool_id,
                 title="Context compacting" if is_context_compaction else title,
                 kind="other" if is_context_compaction else _tool_kind(tool.name),
                 status="in_progress",
-                content=content,
                 raw_input=raw_input,
             )
             if is_context_compaction:
@@ -370,11 +363,9 @@ class ACPStreamRouter:
             session_id,
             ToolCallProgress(
                 tool_call_id=tool.tool_id,
+                title=tool.command,
                 status="in_progress",
                 content=[
-                    ContentToolCallContent(
-                        content=TextContentBlock(text=f"$ {command}\n\n")
-                    ),
                     TerminalToolCallContent(terminal_id=terminal_id),
                 ],
             ),
@@ -390,16 +381,16 @@ class ACPStreamRouter:
                 state.next_tool_index += 1
             content = None
             is_context_compaction = tool.name == "tape.handoff"
-            if tool.terminal_id is None and not is_context_compaction:
+            # The client may discard terminal output on release before this event.
+            # Persist a text snapshot even when a live terminal was attached.
+            if not is_context_compaction:
                 output = _stringify(result)
-                if tool.command is not None:
-                    output = f"$ {tool.command}\n\n{output}"
                 content = [
                     ContentToolCallContent(content=TextContentBlock(text=output))
                 ]
             update = ToolCallProgress(
                 tool_call_id=tool.tool_id,
-                title="Context compacted" if is_context_compaction else None,
+                title="Context compacted" if is_context_compaction else tool.command,
                 status="completed",
                 raw_output=result,
                 content=content,
@@ -415,6 +406,12 @@ active_stream_router: ContextVar[ACPStreamRouter | None] = ContextVar(
 )
 
 
+@dataclass
+class ACPInboundMessage(ChannelMessage):
+    _runtime_agent: Agent | None = None
+    _mcp_channel: MCPChannel | None = None
+
+
 class BubACPAgent:
     def __init__(
         self,
@@ -424,12 +421,19 @@ class BubACPAgent:
         steering_inbox: ACPSteeringInbox | None = None,
         prompt_lock: asyncio.Lock | None = None,
         sessions: dict[str, ACPSession] | None = None,
+        mcp_channels: dict[str, MCPChannel] | None = None,
+        prompt_runs: dict[str, deque[ACPPromptRun]] | None = None,
+        closing_sessions: set[str] | None = None,
         bind_router: bool = True,
         use_unstable_protocol: bool = True,
     ) -> None:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
         self.client_tools = client_tools or ACPClientToolRuntime()
+        self._runtime_agents: dict[str, Agent] = {}
+        self._mcp_channels = mcp_channels if mcp_channels is not None else {}
+        self._mcp_connect_tasks: set[asyncio.Task[MCPChannel | None]] = set()
+        self._closed = False
         self._client: Client | None = None
         self._stream_router: ACPStreamRouter | None = None
         self._bind_router = bind_router
@@ -438,10 +442,12 @@ class BubACPAgent:
         self._sessions = self._load_sessions() if sessions is None else sessions
         self._prompt_lock = prompt_lock if prompt_lock is not None else asyncio.Lock()
         self._steering_inbox = steering_inbox or ACPSteeringInbox()
-        self._prompt_runs: dict[str, deque[ACPPromptRun]] = {}
+        self._prompt_runs = prompt_runs if prompt_runs is not None else {}
         self._steering_locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task[PromptResponse]] = set()
-        self._closing_sessions: set[str] = set()
+        self._closing_sessions = (
+            closing_sessions if closing_sessions is not None else set()
+        )
 
     def set_steering_inbox(self, steering_inbox: ACPSteeringInbox) -> None:
         self._steering_inbox = steering_inbox
@@ -475,10 +481,12 @@ class BubACPAgent:
             field_meta={"steering": {"supported": True}},
             agent_capabilities=AgentCapabilities(
                 load_session=True,
+                mcp_capabilities=McpCapabilities(http=True, sse=True),
                 field_meta={
                     "lody": {"steering": _LODY_STEERING_CAPABILITY},
                 },
                 session_capabilities=SessionCapabilities(
+                    delete=SessionDeleteCapabilities(),
                     close=SessionCloseCapabilities()
                     if self._use_unstable_protocol
                     else None,
@@ -497,12 +505,18 @@ class BubACPAgent:
         mcp_servers: list[ACPMcpServer] | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
-        del mcp_servers, kwargs
+        del kwargs
         session = self._load_or_adopt_session(
             session_id=uuid4().hex,
             cwd=cwd,
             additional_directories=additional_directories,
         )
+        try:
+            await self._replace_session_mcp(session, mcp_servers)
+        except BaseException:
+            self._sessions.pop(session.session_id, None)
+            self._save_sessions()
+            raise
         return NewSessionResponse(
             session_id=session.session_id,
             config_options=await self._session_config_options(session),
@@ -516,16 +530,18 @@ class BubACPAgent:
         mcp_servers: list[ACPMcpServer] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse:
-        del mcp_servers, kwargs
-        session = self._load_or_adopt_session(
-            session_id=session_id,
-            cwd=cwd,
-            additional_directories=additional_directories,
-        )
-        await self._attach_session_history(session)
-        return LoadSessionResponse(
-            config_options=await self._session_config_options(session)
-        )
+        del kwargs
+        async with self._prompt_lock:
+            session = self._load_or_adopt_session(
+                session_id=session_id,
+                cwd=cwd,
+                additional_directories=additional_directories,
+            )
+            await self._replace_session_mcp(session, mcp_servers)
+            await self._attach_session_history(session)
+            return LoadSessionResponse(
+                config_options=await self._session_config_options(session)
+            )
 
     async def resume_session(
         self,
@@ -535,15 +551,17 @@ class BubACPAgent:
         mcp_servers: list[ACPMcpServer] | None = None,
         **kwargs: Any,
     ) -> ResumeSessionResponse:
-        del mcp_servers, kwargs
-        session = self._load_or_adopt_session(
-            session_id=session_id,
-            cwd=cwd,
-            additional_directories=additional_directories,
-        )
-        return ResumeSessionResponse(
-            config_options=await self._session_config_options(session)
-        )
+        del kwargs
+        async with self._prompt_lock:
+            session = self._load_or_adopt_session(
+                session_id=session_id,
+                cwd=cwd,
+                additional_directories=additional_directories,
+            )
+            await self._replace_session_mcp(session, mcp_servers)
+            return ResumeSessionResponse(
+                config_options=await self._session_config_options(session)
+            )
 
     async def list_sessions(
         self,
@@ -563,22 +581,61 @@ class BubACPAgent:
         )
         return ListSessionsResponse(sessions=[session.info() for session in sessions])
 
+    async def delete_session(
+        self, session_id: str, **kwargs: Any
+    ) -> DeleteSessionResponse:
+        """Remove the session, its tape, and its active runtime resources."""
+        del kwargs
+        await self._end_session(session_id, delete_tape=True)
+        return DeleteSessionResponse()
+
     async def close_session(
         self, session_id: str, **kwargs: Any
     ) -> CloseSessionResponse | None:
         del kwargs
+        await self._end_session(session_id, delete_tape=False)
+        return CloseSessionResponse()
+
+    async def _end_session(self, session_id: str, *, delete_tape: bool) -> None:
+        if session_id in self._closing_sessions:
+            raise RequestError.invalid_request({"sessionId": session_id})
+        session = self._sessions.get(session_id) or self._load_sessions().get(
+            session_id
+        )
         self._closing_sessions.add(session_id)
         try:
             self._sessions.pop(session_id, None)
             self._save_sessions()
-            run = self._current_prompt_run(session_id)
-            if run is not None and not run.started.is_set() and run.task is not None:
-                run.task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await run.task
+            runs = list(self._prompt_runs.get(session_id, ()))
+            tasks = [run.task for run in runs if run.task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for run in runs:
                 # A task cancelled before its first step never enters its finally block.
                 self._complete_prompt_run(run)
-            return CloseSessionResponse()
+            channel = self._mcp_channels.pop(session_id, None)
+            if channel is not None:
+                await channel.stop()
+            self._runtime_agents.pop(session_id, None)
+            if delete_tape and session is not None:
+                tape = self._session_tape(session)
+                if tape is not None:
+                    sidecars = getattr(
+                        self.framework, "get_tape_sidecars", lambda: ()
+                    )()
+                    for sidecar in sidecars:
+                        await tape.store.reset(
+                            sidecar_tape_name(tape.name, sidecar.name)
+                        )
+                    # Tape.reset() creates a new session/start entry; deletion must not.
+                    await tape.store.reset(tape.name)
+        except BaseException:
+            if delete_tape and session is not None:
+                # Keep the workspace metadata so a failed deletion can be retried.
+                self._sessions[session_id] = session
+                self._save_sessions()
+            raise
         finally:
             self._steering_locks.pop(session_id, None)
             self._closing_sessions.discard(session_id)
@@ -614,6 +671,7 @@ class BubACPAgent:
         session.touch()
         self._save_sessions()
         run = self._register_prompt_run(session_id)
+        run.task = asyncio.current_task()
         return await self._execute_prompt(prompt, session, run)
 
     async def ext_method(
@@ -743,7 +801,6 @@ class BubACPAgent:
     ) -> PromptResponse:
         try:
             client = self._require_client()
-            inbound = self._build_inbound(prompt, session)
             if self.settings.send_user_message_updates:
                 await self._send_user_message_updates(prompt, session.session_id)
             async with self._prompt_lock:
@@ -754,6 +811,7 @@ class BubACPAgent:
                     raise RequestError.invalid_request(
                         {"sessionId": session.session_id}
                     )
+                inbound = self._build_inbound(prompt, session)
                 run.started.set()
                 router = self._require_stream_router()
                 token = active_stream_router.set(router)
@@ -761,10 +819,9 @@ class BubACPAgent:
                     # Gateway owns its router; its ACP channel routes this turn's stream.
                     if self._bind_router:
                         self.framework.bind_channel_router(router)
-                    with replace_builtin_tools(self.client_tools):
-                        result = await self.framework.process_inbound(
-                            inbound, stream_output=True
-                        )
+                    result = await self.framework.process_inbound(
+                        inbound, stream_output=True
+                    )
                 finally:
                     active_stream_router.reset(token)
                     stream_state = router.pop_stream_state(session.session_id)
@@ -791,7 +848,7 @@ class BubACPAgent:
         if reasoning_effort := session.runtime.get(REASONING_EFFORT_CONFIG_ID):
             context["_runtime_reasoning_effort"] = reasoning_effort
         context["_runtime_workspace"] = str(session.cwd)
-        return ChannelMessage(
+        inbound = ACPInboundMessage(
             session_id=_bub_session_id(self.settings.channel_name, session.session_id),
             channel=self.settings.channel_name,
             chat_id=session.session_id,
@@ -801,6 +858,60 @@ class BubACPAgent:
             media=media,
             context=context,
         )
+        runtime_agent = self._runtime_agents.get(session.session_id)
+        if runtime_agent is None:
+            from bub.builtin.agent import Agent
+
+            runtime_agent = Agent(self.framework)
+            runtime_agent.tools.update(build_client_tools(self.client_tools))
+            self._runtime_agents[session.session_id] = runtime_agent
+        # Bub's builtin load_state uses this instance for recovery and execution.
+        inbound._runtime_agent = runtime_agent
+        inbound._mcp_channel = self._mcp_channels.get(session.session_id)
+        return inbound
+
+    async def _replace_session_mcp(
+        self, session: ACPSession, servers: list[ACPMcpServer] | None
+    ) -> None:
+        if self._closed:
+            raise RequestError.invalid_request({"reason": "Agent is shutting down"})
+        configs = server_configs(servers, session.cwd)
+        task = asyncio.create_task(connect_session_mcp(configs))
+        self._mcp_connect_tasks.add(task)
+        try:
+            channel = await task
+        finally:
+            self._mcp_connect_tasks.discard(task)
+        if session.session_id not in self._sessions:
+            if channel is not None:
+                await channel.stop()
+            raise RequestError.invalid_request({"sessionId": session.session_id})
+        previous = self._mcp_channels.pop(session.session_id, None)
+        if channel is not None:
+            self._mcp_channels[session.session_id] = channel
+        if previous is not None:
+            await previous.stop()
+
+    async def shutdown(self) -> None:
+        """Cancel pending turns and release session MCP resources."""
+        self._closed = True
+        tasks = (
+            {
+                run.task
+                for runs in self._prompt_runs.values()
+                for run in runs
+                if run.task is not None and run.task is not asyncio.current_task()
+            }
+            | self._background_tasks
+            | self._mcp_connect_tasks
+        )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        channels = list(self._mcp_channels.values())
+        self._mcp_channels.clear()
+        await asyncio.gather(*(channel.stop() for channel in channels))
+        self._runtime_agents.clear()
 
     def _register_prompt_run(self, session_id: str) -> ACPPromptRun:
         run = ACPPromptRun(session_id=session_id)
@@ -861,6 +972,8 @@ class BubACPAgent:
         return self._stream_router
 
     def _adopt_session(self, session_id: str) -> ACPSession:
+        if session_id in self._closing_sessions:
+            raise RequestError.invalid_request({"sessionId": session_id})
         session = ACPSession(session_id=session_id, cwd=self.framework.workspace)
         session.touch()
         self._sessions[session_id] = session
@@ -874,6 +987,8 @@ class BubACPAgent:
         cwd: str,
         additional_directories: list[str] | None,
     ) -> ACPSession:
+        if session_id in self._closing_sessions:
+            raise RequestError.invalid_request({"sessionId": session_id})
         workspace = Path(cwd).expanduser().resolve()
         session = self._sessions.get(session_id) or ACPSession(session_id, workspace)
         session.cwd = workspace
@@ -955,10 +1070,14 @@ class BubACPAgent:
                 )
 
     async def _load_tape_entries(self, session: ACPSession) -> list[TapeEntry]:
+        tape = self._session_tape(session)
+        return await tape.search(tape.query()) if tape is not None else []
+
+    def _session_tape(self, session: ACPSession) -> Tape | None:
         store = self.framework.get_tape_store()
         if store is None:
-            return []
-        tape = Tape(
+            return None
+        return Tape(
             archive_path=bub.home / "tapes",
             store=store if is_async_tape_store(store) else AsyncTapeStoreAdapter(store),
             context=TapeContext(),
@@ -966,7 +1085,6 @@ class BubACPAgent:
             _bub_session_id(self.settings.channel_name, session.session_id),
             session.cwd,
         )
-        return await tape.search(tape.query())
 
     async def _session_config_options(
         self, session: ACPSession
@@ -1024,7 +1142,10 @@ async def run_acp_agent(
             steering_inbox = get_steering_inbox()
             if isinstance(steering_inbox, ACPSteeringInbox):
                 agent.set_steering_inbox(steering_inbox)
-        await run_agent(agent, use_unstable_protocol=use_unstable_protocol)
+        try:
+            await run_agent(agent, use_unstable_protocol=use_unstable_protocol)
+        finally:
+            await agent.shutdown()
 
 
 def _message_chat_id(message: Envelope) -> str:

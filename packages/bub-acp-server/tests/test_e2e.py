@@ -9,8 +9,12 @@ from typing import Any
 import pytest
 from acp import PROTOCOL_VERSION, spawn_agent_process
 from acp.schema import (
+    AcceptElicitationResponse,
+    CancelElicitationResponse,
     ClientCapabilities,
     CreateTerminalResponse,
+    DeclineElicitationResponse,
+    ElicitationFormSessionMode,
     ReadTextFileResponse,
     TerminalOutputResponse,
     TextContentBlock,
@@ -27,6 +31,19 @@ class E2EClient:
         self.create_requests: list[dict[str, object]] = []
         self.session_updates: list[tuple[str, object]] = []
         self.ext_notifications: list[tuple[str, dict[str, Any]]] = []
+        self.elicitation_action: str | None = None
+        self.elicitation_requests: list[tuple[str, ElicitationFormSessionMode]] = []
+
+    async def create_elicitation(self, message, mode, **kwargs):
+        assert isinstance(mode, ElicitationFormSessionMode)
+        self.elicitation_requests.append((message, mode))
+        if self.elicitation_action == "accept":
+            return AcceptElicitationResponse(content={"answer": "minimal"})
+        if self.elicitation_action == "decline":
+            return DeclineElicitationResponse()
+        if self.elicitation_action == "cancel":
+            return CancelElicitationResponse()
+        raise AssertionError("Client did not advertise elicitation support")
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         self.ext_notifications.append((method, params))
@@ -113,12 +130,16 @@ class E2EClient:
 
 
 @pytest.mark.asyncio
-async def test_acp_prompt_executes_bub_tools_through_client(tmp_path: Path) -> None:
+@pytest.mark.parametrize("elicitation_action", [None, "accept", "decline", "cancel"])
+async def test_acp_prompt_executes_bub_tools_through_client(
+    tmp_path: Path, elicitation_action: str | None
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     target_path = workspace / "target.txt"
     created_path = workspace / "created.txt"
     client = E2EClient({str(target_path): "before\nold value\nafter\n"})
+    client.elicitation_action = elicitation_action
     server_script = Path(__file__).parent / "fixtures" / "acp_tool_server.py"
 
     async with spawn_agent_process(
@@ -137,6 +158,7 @@ async def test_acp_prompt_executes_bub_tools_through_client(tmp_path: Path) -> N
                 client_capabilities=ClientCapabilities(
                     fs={"readTextFile": True, "writeTextFile": True},
                     terminal=True,
+                    elicitation={"form": {}} if elicitation_action else None,
                 ),
             )
             session = await connection.new_session(cwd=str(workspace))
@@ -170,6 +192,19 @@ async def test_acp_prompt_executes_bub_tools_through_client(tmp_path: Path) -> N
         if update.session_update == "agent_message_chunk"
     ]
     payload = json.loads("".join(text_updates))
+    if elicitation_action:
+        assert len(client.elicitation_requests) == 1
+        message, mode = client.elicitation_requests[0]
+        assert message == "Choose an approach"
+        assert mode.session_id == session.session_id
+        assert mode.requested_schema.properties["answer"].enum == ["minimal", "full"]
+        expected = {"action": elicitation_action}
+        if elicitation_action == "accept":
+            expected["content"] = {"answer": "minimal"}
+        assert json.loads(payload["ask_user"]) == expected
+    else:
+        assert client.elicitation_requests == []
+        assert payload["ask_user"] is None
     assert payload["read"] == "old value"
     assert payload["bash"] == "e2e-command"
     assert payload["write"] == f"wrote: {created_path}"
@@ -215,6 +250,34 @@ async def test_acp_prompt_executes_bub_tools_through_client(tmp_path: Path) -> N
     )
     assert usage_update.used == 34
     assert usage_update.size == 128_000
+
+
+@pytest.mark.asyncio
+async def test_delete_session_over_stable_stdio(tmp_path: Path) -> None:
+    client = E2EClient({})
+    server_script = Path(__file__).parent / "fixtures" / "acp_tool_server.py"
+    async with spawn_agent_process(
+        client,
+        sys.executable,
+        str(server_script),
+        env={
+            "BUB_ACP_E2E_WORKSPACE": str(tmp_path),
+            "BUB_HOME": str(tmp_path / ".bub"),
+        },
+        use_unstable_protocol=False,
+    ) as (connection, process):
+        async with asyncio.timeout(10):
+            initialized = await connection.initialize(protocol_version=PROTOCOL_VERSION)
+            assert (
+                initialized.agent_capabilities.session_capabilities.delete is not None
+            )
+            session = await connection.new_session(cwd=str(tmp_path))
+            await connection.delete_session(session.session_id)
+            await connection.delete_session(session.session_id)
+            await connection.delete_session("never-existed")
+            assert (await connection.list_sessions()).sessions == []
+        assert process.returncode is None
+    assert json.loads((tmp_path / ".bub" / "acp-sessions.json").read_text()) == []
 
 
 @pytest.mark.asyncio

@@ -177,6 +177,40 @@ Client-backed tools are selected from the capabilities advertised during initial
 
 Missing or false capabilities leave the corresponding Bub local tools in place. The ACP `update_plan` tool is always available.
 
+### Asking the user
+
+Clients that advertise `clientCapabilities.elicitation.form: {}` also enable the
+session's `ask_user` tool. The tool sends `elicitation/create` with the current ACP
+session ID and waits for the client's form response. For example:
+
+```json
+{
+  "message": "Which approach should I use?",
+  "requested_schema": {
+    "type": "object",
+    "properties": {
+      "approach": {"type": "string", "enum": ["minimal", "full"]}
+    },
+    "required": ["approach"]
+  }
+}
+```
+
+Use ACP's form JSON Schema for `requested_schema`; string fields without an enum
+allow free text. The tool's parameter schema exposes the SDK's `ElicitationSchema`
+and its referenced field definitions so the model can see the supported form structure.
+The tool returns JSON such as
+`{"action":"accept","content":{"approach":"minimal"}}`,
+`{"action":"decline"}`, or `{"action":"cancel"}`. Decline and cancel do not
+supply an answer. Cancelling the active turn interrupts the pending request.
+
+An omitted/null `elicitation.form`, an empty `elicitation` object, or URL-only
+support does not enable this tool. In those cases the agent can ask in its normal
+reply and wait for the user's next message. Clients must implement form elicitation
+to display the UI; tool-execution permission dialogs are a separate mechanism.
+
+### Connection isolation
+
 Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools and plan instructions are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
 
 The dependency is pinned to **agent-client-protocol 1.0.0rc1**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc1 or an equivalent implementation of load request/response correlation, including sessions with empty history.

@@ -11,6 +11,8 @@ from acp.interfaces import Client
 from acp.schema import (
     AgentPlanUpdate,
     ClientCapabilities,
+    ElicitationFormSessionMode,
+    ElicitationSchema,
     PlanEntry,
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
@@ -32,6 +34,11 @@ class PlanItem(BaseModel):
 class PlanInput(BaseModel):
     explanation: str | None = None
     plan: list[PlanItem]
+
+
+class AskUserInput(BaseModel):
+    message: str
+    requested_schema: ElicitationSchema
 
 
 class ACPClientToolRuntime:
@@ -238,6 +245,25 @@ class ACPClientToolRuntime:
             raise RuntimeError("ACP client is not connected")
         return self._client
 
+    async def ask_user(self, request: AskUserInput, context: ToolContext) -> str:
+        client = self._require_client()
+        elicitation = self._capabilities.elicitation
+        if elicitation is None or elicitation.form is None:
+            raise RuntimeError("ACP client does not support form elicitation")
+        response = await client.create_elicitation(
+            message=request.message,
+            mode=ElicitationFormSessionMode(
+                session_id=_session_id(context),
+                requested_schema=request.requested_schema,
+            ),
+        )
+        return response.model_dump_json(
+            include={"action", "content"}
+            if response.action == "accept"
+            else {"action"},
+            exclude_none=True,
+        )
+
     def _require_terminal_client(self) -> Client:
         client = self._require_client()
         if not self._capabilities.terminal:
@@ -319,6 +345,22 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
     async def update_plan_tool(*, context: ToolContext, **payload: Any) -> str:
         return await runtime.update_plan(PlanInput.model_validate(payload), context)
 
+    async def ask_user_tool(*, context: ToolContext, **payload: Any) -> str:
+        return await runtime.ask_user(AskUserInput.model_validate(payload), context)
+
+    ask_user = Tool(
+        name="ask_user",
+        description=(
+            "Ask the user a question through the ACP client's form UI and wait for a response. "
+            "Use string fields for free text or string enums for choices. "
+            "Returns JSON with action accept, decline, or cancel; accepted answers are in content. "
+            "Decline and cancel are not answers or approval."
+        ),
+        parameters=AskUserInput.model_json_schema(),
+        handler=ask_user_tool,
+        context=True,
+    )
+
     plan_tool = Tool(
         name="update_plan",
         description="Replace the ACP session plan and persist it to the current tape.",
@@ -328,6 +370,11 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
     )
     tools = [plan_tool]
     capabilities = runtime.capabilities
+    if (
+        capabilities.elicitation is not None
+        and capabilities.elicitation.form is not None
+    ):
+        tools.append(ask_user)
     if capabilities.terminal:
         tools.extend((bash, bash_output, kill_bash))
     if fs := capabilities.fs:

@@ -28,6 +28,9 @@ class E2EFramework:
     def get_agent_hooks(self):
         return None
 
+    def get_tape_store(self):
+        return None
+
     def __init__(self) -> None:
         self.workspace = Path(os.environ["BUB_ACP_E2E_WORKSPACE"]).resolve()
         self._channel_router: Any = None

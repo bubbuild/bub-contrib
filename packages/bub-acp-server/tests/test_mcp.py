@@ -317,8 +317,9 @@ async def test_mcp_configuration_is_not_persisted(framework, clients, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["close_session", "delete_session"])
 async def test_close_cancels_active_tool_before_closing_client(
-    framework, clients, tmp_path
+    framework, clients, tmp_path, method
 ):
     agent = make_agent(framework)
     session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[stdio("blocked")])
@@ -326,7 +327,7 @@ async def test_close_cancels_active_tool_before_closing_client(
     try:
         async with asyncio.timeout(2):
             await clients[0].started.wait()
-            await agent.close_session(session.session_id)
+            await getattr(agent, method)(session.session_id)
         assert prompt.cancelled()
         assert clients[0].closed
         assert agent._mcp_channels == {}

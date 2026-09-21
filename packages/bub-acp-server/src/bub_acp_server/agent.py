@@ -324,27 +324,17 @@ class ACPStreamRouter:
             state.pending_tools.append(tool)
             raw_input = _tool_raw_input(call)
             title = tool.name
-            content = None
             if tool.name == "bash":
-                command = _block_value(raw_input, "cmd")
+                command = _block_value(raw_input, "command")
                 if isinstance(command, str) and command:
                     tool.command = command
                     title = command
-                    content = [
-                        ContentToolCallContent(
-                            content=TextContentBlock(text=f"$ {command}\n\n")
-                        )
-                    ]
-                custom_title = _block_value(raw_input, "title")
-                if isinstance(custom_title, str) and custom_title.strip():
-                    title = custom_title
             is_context_compaction = tool.name == "tape.handoff"
             update = ToolCallStart(
                 tool_call_id=tool.tool_id,
                 title="Context compacting" if is_context_compaction else title,
                 kind="other" if is_context_compaction else _tool_kind(tool.name),
                 status="in_progress",
-                content=content,
                 raw_input=raw_input,
             )
             if is_context_compaction:
@@ -370,11 +360,9 @@ class ACPStreamRouter:
             session_id,
             ToolCallProgress(
                 tool_call_id=tool.tool_id,
+                title=tool.command,
                 status="in_progress",
                 content=[
-                    ContentToolCallContent(
-                        content=TextContentBlock(text=f"$ {command}\n\n")
-                    ),
                     TerminalToolCallContent(terminal_id=terminal_id),
                 ],
             ),
@@ -390,16 +378,16 @@ class ACPStreamRouter:
                 state.next_tool_index += 1
             content = None
             is_context_compaction = tool.name == "tape.handoff"
-            if tool.terminal_id is None and not is_context_compaction:
+            # The client may discard terminal output on release before this event.
+            # Persist a text snapshot even when a live terminal was attached.
+            if not is_context_compaction:
                 output = _stringify(result)
-                if tool.command is not None:
-                    output = f"$ {tool.command}\n\n{output}"
                 content = [
                     ContentToolCallContent(content=TextContentBlock(text=output))
                 ]
             update = ToolCallProgress(
                 tool_call_id=tool.tool_id,
-                title="Context compacted" if is_context_compaction else None,
+                title="Context compacted" if is_context_compaction else tool.command,
                 status="completed",
                 raw_output=result,
                 content=content,

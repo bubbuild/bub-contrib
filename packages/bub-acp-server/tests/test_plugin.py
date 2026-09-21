@@ -89,7 +89,7 @@ class FakeFramework:
                             "type": "function",
                             "function": {
                                 "name": "bash",
-                                "arguments": '{"cmd":"pwd"}',
+                                "arguments": '{"command":"pwd"}',
                             },
                         },
                         {
@@ -400,7 +400,7 @@ async def test_load_session_attaches_tape_history_through_streaming_router(
                     {
                         "id": "call-1",
                         "name": "bash",
-                        "arguments": {"cmd": "printf ok", "title": "Print greeting"},
+                        "arguments": {"command": "printf ok"},
                     }
                 ]
             },
@@ -441,9 +441,10 @@ async def test_load_session_attaches_tape_history_through_streaming_router(
     ]
     assert client.updates[0][1].content.text == "HELLO"
     assert client.updates[1][1].content.text == "Hi"
-    assert client.updates[2][1].title == "Print greeting"
-    assert client.updates[2][1].content[0].content.text == "$ printf ok\n\n"
-    assert client.updates[3][1].content[0].content.text == "$ printf ok\n\nok"
+    assert client.updates[2][1].title == "printf ok"
+    assert client.updates[2][1].content is None
+    assert client.updates[3][1].title == "printf ok"
+    assert client.updates[3][1].content[0].content.text == "ok"
     assert client.updates[3][1].raw_output == "ok"
 
 
@@ -467,7 +468,7 @@ async def test_load_session_uses_bub_tape_store(
             [
                 {
                     "name": "bash",
-                    "arguments": {"cmd": "pwd", "title": "Show directory"},
+                    "arguments": {"command": "pwd"},
                 },
                 {"name": "fs.read", "arguments": {"path": "README.md"}},
             ]
@@ -506,8 +507,9 @@ async def test_load_session_uses_bub_tape_store(
         "tool-2",
         "tool-2",
     ]
-    assert updates[0].title == "Show directory"
-    assert updates[2].content[0].content.text == "$ pwd\n\n/workspace"
+    assert updates[0].title == "pwd"
+    assert updates[2].title == "pwd"
+    assert updates[2].content[0].content.text == "/workspace"
     assert updates[3].content[0].content.text == "readme"
     assert updates[4].title == "Context compacting"
     assert updates[5].title == "Context compacted"
@@ -815,13 +817,14 @@ async def test_prompt_streams_bub_events_to_acp_client() -> None:
     assert first_call.tool_call_id == "call-1"
     assert first_call.title == "pwd"
     assert first_call.kind == "execute"
-    assert first_call.raw_input == {"cmd": "pwd"}
+    assert first_call.raw_input == {"command": "pwd"}
     assert second_call.tool_call_id == "call-2"
     assert second_call.title == "fs.read"
     assert second_call.kind == "read"
     assert first_result.tool_call_id == "call-1"
     assert first_result.raw_output == "/workspace"
-    assert first_result.content[0].content.text == "$ pwd\n\n/workspace"
+    assert first_result.title == "pwd"
+    assert first_result.content[0].content.text == "/workspace"
     assert second_result.tool_call_id == "call-2"
     assert second_result.raw_output == "README content"
     assert second_result.content[0].content.text == "README content"
@@ -829,29 +832,15 @@ async def test_prompt_streams_bub_events_to_acp_client() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("extra_args", "expected_title"),
-    [
-        ({}, "pwd"),
-        ({"title": "Show working directory"}, "Show working directory"),
-        ({"title": None}, "pwd"),
-        ({"title": ""}, "pwd"),
-        ({"title": "   "}, "pwd"),
-    ],
-)
 @pytest.mark.parametrize("serialize_arguments", [False, True])
 @pytest.mark.parametrize("command", ["pwd", "pwd\nprintf 'done\\n'"])
 async def test_bash_tool_call_attaches_acp_terminal_content(
-    extra_args: dict[str, object],
-    expected_title: str,
     serialize_arguments: bool,
     command: str,
 ) -> None:
     client = FakeClient()
     router = ACPStreamRouter(client)
-    arguments = {"cmd": command, **extra_args}
-    if expected_title == "pwd":
-        expected_title = command
+    arguments = {"command": command}
 
     async def stream():
         yield StreamEvent(
@@ -882,19 +871,21 @@ async def test_bash_tool_call_attaches_acp_terminal_content(
     start = client.updates[0][1]
     terminal_update = client.updates[1][1]
     result_update = client.updates[2][1]
-    assert start.title == expected_title
+    assert start.title == command
     assert start.raw_input == arguments
-    assert start.content[0].content.text == f"$ {command}\n\n"
+    assert start.content is None
     assert terminal_update.tool_call_id == "call-1"
     assert terminal_update.status == "in_progress"
-    assert len(terminal_update.content) == 2
-    assert terminal_update.content[0].content.text == f"$ {command}\n\n"
-    assert terminal_update.content[1].type == "terminal"
-    assert terminal_update.content[1].terminal_id == "terminal-1"
+    assert terminal_update.title == command
+    assert len(terminal_update.content) == 1
+    assert terminal_update.content[0].type == "terminal"
+    assert terminal_update.content[0].terminal_id == "terminal-1"
     assert result_update.tool_call_id == "call-1"
     assert result_update.status == "completed"
+    assert result_update.title == command
     assert result_update.raw_output == "/workspace"
-    assert result_update.content is None
+    assert len(result_update.content) == 1
+    assert result_update.content[0].content.text == "/workspace"
 
 
 @pytest.mark.asyncio
@@ -997,9 +988,9 @@ async def test_terminal_association_handles_reordering_duplicates_and_new_batche
             "tool_call",
             {
                 "tool_calls": [
-                    {"name": "bash", "arguments": {"cmd": "pwd"}},
-                    {"name": "bash", "arguments": {"cmd": "ls"}},
-                    {"name": "bash", "arguments": {"cmd": "pwd"}},
+                    {"name": "bash", "arguments": {"command": "pwd"}},
+                    {"name": "bash", "arguments": {"command": "ls"}},
+                    {"name": "bash", "arguments": {"command": "pwd"}},
                 ]
             },
         )
@@ -1011,7 +1002,7 @@ async def test_terminal_association_handles_reordering_duplicates_and_new_batche
             "tool_call",
             {
                 "tool_calls": [
-                    {"name": "bash", "arguments": {"cmd": "pwd"}},
+                    {"name": "bash", "arguments": {"command": "pwd"}},
                 ]
             },
         )
@@ -1022,15 +1013,20 @@ async def test_terminal_association_handles_reordering_duplicates_and_new_batche
 
     updates = [update for _, update in client.updates]
     assert [
-        (update.tool_call_id, update.content[1].terminal_id) for update in updates[3:6]
+        (update.tool_call_id, update.content[0].terminal_id) for update in updates[3:6]
     ] == [
         ("tool-1", "terminal-ls"),
         ("tool-0", "terminal-pwd-1"),
         ("tool-2", "terminal-pwd-2"),
     ]
-    assert all(update.content is None for update in updates[6:9])
+    assert [update.content[0].content.text for update in updates[6:9]] == [
+        "cwd",
+        "files",
+        "cwd",
+    ]
     assert updates[-1].tool_call_id == "tool-3"
-    assert updates[-1].content[0].content.text == "$ pwd\n\ncwd"
+    assert updates[-1].title == "pwd"
+    assert updates[-1].content[0].content.text == "cwd"
     assert router.pop_stream_state("session").pending_tools == []
 
 

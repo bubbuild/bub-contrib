@@ -8,7 +8,7 @@ Expose Bub as an Agent Client Protocol agent.
 - CLI command registered on Bub: `bub acp`
 - Optional Streamable HTTP and WebSocket transports at `/acp`, served by Hypercorn with HTTP/2 support
 - Gateway channel: `acp-server`, with HTTP startup and shutdown managed by Bub
-- ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, and `session/prompt`
+- ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/delete`, `session/close`, and `session/prompt`
 - Streaming ACP `session/update` events from Bub stream events
 - ACP client-backed replacements for Bub's `bash`, `fs.read`, `fs.write`, and `fs.edit` tools while the ACP server is running
 - An ACP-aware `update_plan` tool that updates the client plan UI and records each complete plan as a `plan` event in the session tape
@@ -64,6 +64,14 @@ agents keep their own tools. This requires Bub's instance-tool API introduced in
 ACP session IDs remain the protocol-facing `chat_id`. Bub namespaces its internal session ID with the ACP channel before selecting a tape, so an equal session ID from another channel cannot reuse the ACP tape.
 
 ACP session metadata is stored under Bub home as `acp-sessions.json` so compatible clients can list sessions again after restarting. Keep `BUB_HOME` stable if you want the same ACP thread list across editor launches.
+
+`session/delete` is available over stdio, HTTP, and WebSocket and is advertised as
+`sessionCapabilities.delete: {}`. It removes the session from the persisted list,
+cancels active and queued turns, releases session MCP resources, and clears the
+session's tape and configured sidecar tapes through Bub's tape store. Deleting an
+unknown or already-deleted session succeeds with an empty result. Explicitly loading
+or resuming the deleted ID starts with empty history. Store failures are reported and
+the session metadata is retained for retry. `session/close` retains tape history.
 
 `bub-acp-server` supports both ACP session load and resume. `session/load` restores the matching Bub history through the same ACP streaming path used by live turns. `session/resume` attaches the editor back to the Bub session without replaying history, so later turns keep streaming through Bub's normal hook pipeline.
 
@@ -213,7 +221,7 @@ to display the UI; tool-execution permission dialogs are a separate mechanism.
 
 Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools and plan instructions are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
 
-The dependency is pinned to **agent-client-protocol 1.0.0rc1**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc1 or an equivalent implementation of load request/response correlation, including sessions with empty history.
+The dependency is pinned to **agent-client-protocol 1.0.0rc2**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc2 or an equivalent implementation of load request/response correlation, including sessions with empty history.
 
 After initializing a new connection, load an existing session with `await connection.load_session(cwd="/path/to/workspace", session_id="existing-session-id")`, then continue with `connection.prompt(...)`. Keep the same Bub home and tape store when restarting the server to retain metadata and history.
 

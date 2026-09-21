@@ -27,6 +27,7 @@ from acp.schema import (
     ClientCapabilities,
     CloseSessionResponse,
     ContentToolCallContent,
+    DeleteSessionResponse,
     EmbeddedResourceContentBlock,
     ImageContentBlock,
     Implementation,
@@ -40,6 +41,7 @@ from acp.schema import (
     ResumeSessionResponse,
     SessionCapabilities,
     SessionCloseCapabilities,
+    SessionDeleteCapabilities,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionInfo,
@@ -57,6 +59,7 @@ from acp.schema import (
 from bub.channels.message import ChannelMessage, MediaItem, MediaType
 from bub.envelope import Envelope, content_of, field_of
 from bub.model_selection import ModelChoice, ModelOptions
+from bub.sidecars import sidecar_tape_name
 from bub.streaming import StreamEvent
 from bub.tape import (
     AsyncTapeStoreAdapter,
@@ -420,6 +423,7 @@ class BubACPAgent:
         sessions: dict[str, ACPSession] | None = None,
         mcp_channels: dict[str, MCPChannel] | None = None,
         prompt_runs: dict[str, deque[ACPPromptRun]] | None = None,
+        closing_sessions: set[str] | None = None,
         bind_router: bool = True,
         use_unstable_protocol: bool = True,
     ) -> None:
@@ -441,7 +445,9 @@ class BubACPAgent:
         self._prompt_runs = prompt_runs if prompt_runs is not None else {}
         self._steering_locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task[PromptResponse]] = set()
-        self._closing_sessions: set[str] = set()
+        self._closing_sessions = (
+            closing_sessions if closing_sessions is not None else set()
+        )
 
     def set_steering_inbox(self, steering_inbox: ACPSteeringInbox) -> None:
         self._steering_inbox = steering_inbox
@@ -480,6 +486,7 @@ class BubACPAgent:
                     "lody": {"steering": _LODY_STEERING_CAPABILITY},
                 },
                 session_capabilities=SessionCapabilities(
+                    delete=SessionDeleteCapabilities(),
                     close=SessionCloseCapabilities()
                     if self._use_unstable_protocol
                     else None,
@@ -574,10 +581,27 @@ class BubACPAgent:
         )
         return ListSessionsResponse(sessions=[session.info() for session in sessions])
 
+    async def delete_session(
+        self, session_id: str, **kwargs: Any
+    ) -> DeleteSessionResponse:
+        """Remove the session, its tape, and its active runtime resources."""
+        del kwargs
+        await self._end_session(session_id, delete_tape=True)
+        return DeleteSessionResponse()
+
     async def close_session(
         self, session_id: str, **kwargs: Any
     ) -> CloseSessionResponse | None:
         del kwargs
+        await self._end_session(session_id, delete_tape=False)
+        return CloseSessionResponse()
+
+    async def _end_session(self, session_id: str, *, delete_tape: bool) -> None:
+        if session_id in self._closing_sessions:
+            raise RequestError.invalid_request({"sessionId": session_id})
+        session = self._sessions.get(session_id) or self._load_sessions().get(
+            session_id
+        )
         self._closing_sessions.add(session_id)
         try:
             self._sessions.pop(session_id, None)
@@ -594,7 +618,24 @@ class BubACPAgent:
             if channel is not None:
                 await channel.stop()
             self._runtime_agents.pop(session_id, None)
-            return CloseSessionResponse()
+            if delete_tape and session is not None:
+                tape = self._session_tape(session)
+                if tape is not None:
+                    sidecars = getattr(
+                        self.framework, "get_tape_sidecars", lambda: ()
+                    )()
+                    for sidecar in sidecars:
+                        await tape.store.reset(
+                            sidecar_tape_name(tape.name, sidecar.name)
+                        )
+                    # Tape.reset() creates a new session/start entry; deletion must not.
+                    await tape.store.reset(tape.name)
+        except BaseException:
+            if delete_tape and session is not None:
+                # Keep the workspace metadata so a failed deletion can be retried.
+                self._sessions[session_id] = session
+                self._save_sessions()
+            raise
         finally:
             self._steering_locks.pop(session_id, None)
             self._closing_sessions.discard(session_id)
@@ -931,6 +972,8 @@ class BubACPAgent:
         return self._stream_router
 
     def _adopt_session(self, session_id: str) -> ACPSession:
+        if session_id in self._closing_sessions:
+            raise RequestError.invalid_request({"sessionId": session_id})
         session = ACPSession(session_id=session_id, cwd=self.framework.workspace)
         session.touch()
         self._sessions[session_id] = session
@@ -944,6 +987,8 @@ class BubACPAgent:
         cwd: str,
         additional_directories: list[str] | None,
     ) -> ACPSession:
+        if session_id in self._closing_sessions:
+            raise RequestError.invalid_request({"sessionId": session_id})
         workspace = Path(cwd).expanduser().resolve()
         session = self._sessions.get(session_id) or ACPSession(session_id, workspace)
         session.cwd = workspace
@@ -1025,10 +1070,14 @@ class BubACPAgent:
                 )
 
     async def _load_tape_entries(self, session: ACPSession) -> list[TapeEntry]:
+        tape = self._session_tape(session)
+        return await tape.search(tape.query()) if tape is not None else []
+
+    def _session_tape(self, session: ACPSession) -> Tape | None:
         store = self.framework.get_tape_store()
         if store is None:
-            return []
-        tape = Tape(
+            return None
+        return Tape(
             archive_path=bub.home / "tapes",
             store=store if is_async_tape_store(store) else AsyncTapeStoreAdapter(store),
             context=TapeContext(),
@@ -1036,7 +1085,6 @@ class BubACPAgent:
             _bub_session_id(self.settings.channel_name, session.session_id),
             session.cwd,
         )
-        return await tape.search(tape.query())
 
     async def _session_config_options(
         self, session: ACPSession

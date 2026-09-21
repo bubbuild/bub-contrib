@@ -253,6 +253,34 @@ async def test_acp_prompt_executes_bub_tools_through_client(
 
 
 @pytest.mark.asyncio
+async def test_delete_session_over_stable_stdio(tmp_path: Path) -> None:
+    client = E2EClient({})
+    server_script = Path(__file__).parent / "fixtures" / "acp_tool_server.py"
+    async with spawn_agent_process(
+        client,
+        sys.executable,
+        str(server_script),
+        env={
+            "BUB_ACP_E2E_WORKSPACE": str(tmp_path),
+            "BUB_HOME": str(tmp_path / ".bub"),
+        },
+        use_unstable_protocol=False,
+    ) as (connection, process):
+        async with asyncio.timeout(10):
+            initialized = await connection.initialize(protocol_version=PROTOCOL_VERSION)
+            assert (
+                initialized.agent_capabilities.session_capabilities.delete is not None
+            )
+            session = await connection.new_session(cwd=str(tmp_path))
+            await connection.delete_session(session.session_id)
+            await connection.delete_session(session.session_id)
+            await connection.delete_session("never-existed")
+            assert (await connection.list_sessions()).sessions == []
+        assert process.returncode is None
+    assert json.loads((tmp_path / ".bub" / "acp-sessions.json").read_text()) == []
+
+
+@pytest.mark.asyncio
 async def test_acknowledged_steering_starts_turn_over_extension_route(
     tmp_path: Path,
 ) -> None:

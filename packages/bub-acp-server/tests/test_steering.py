@@ -32,6 +32,9 @@ class FakeClient:
 
 
 class ControlledFramework:
+    def get_tape_store(self):
+        return None
+
     def get_agent_hooks(self):
         return None
 
@@ -431,9 +434,11 @@ async def test_steer_waits_for_pending_prompt_then_injects(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task_entered", [False, True])
+@pytest.mark.parametrize("method", ["close_session", "delete_session"])
 async def test_closing_session_cancels_queued_background_turn(
     tmp_path: Path,
     task_entered: bool,
+    method: str,
 ) -> None:
     framework = ControlledFramework(ACPSteeringInbox())
     agent = BubACPAgent(cast(Any, framework), steering_inbox=framework.inbox)
@@ -452,7 +457,7 @@ async def test_closing_session_cancels_queued_background_turn(
                 await asyncio.sleep(0)
             if task_entered:
                 await asyncio.sleep(0)
-            await agent.close_session(session.session_id)
+            await getattr(agent, method)(session.session_id)
             with pytest.raises(asyncio.CancelledError):
                 await steer_task
         assert framework.messages == []

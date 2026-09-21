@@ -37,6 +37,7 @@ def create_http_app(
     agents: WeakSet[BubACPAgent] = WeakSet()
     mcp_channels: dict[str, MCPChannel] = {}
     prompt_runs = {}
+    closing_sessions: set[str] = set()
 
     def agent_factory(client: Client) -> BubACPAgent:
         nonlocal sessions
@@ -48,6 +49,7 @@ def create_http_app(
             sessions=sessions,
             mcp_channels=mcp_channels,
             prompt_runs=prompt_runs,
+            closing_sessions=closing_sessions,
             bind_router=not channel_managed,
             # Match the SDK web adapter's stable-only protocol routes.
             use_unstable_protocol=False,

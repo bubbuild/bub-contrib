@@ -124,7 +124,7 @@ class ACPClientToolRuntime:
 
     async def bash(
         self,
-        cmd: str,
+        command: str,
         cwd: str | None,
         timeout_seconds: int,
         background: bool,
@@ -135,12 +135,12 @@ class ACPClientToolRuntime:
         target_cwd = _resolve_cwd(context, cwd)
         terminal = await client.create_terminal(
             command="bash",
-            args=["-lc", cmd],
+            args=["-lc", command],
             cwd=str(target_cwd),
             session_id=session_id,
         )
         if self._terminal_observer is not None:
-            await self._terminal_observer(session_id, cmd, terminal.terminal_id)
+            await self._terminal_observer(session_id, command, terminal.terminal_id)
         if background:
             return f"started: {terminal.terminal_id}"
 
@@ -276,22 +276,15 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
 
     @partial(Tool.from_callable, name="bash", context=True)
     async def bash(
-        cmd: str,
+        command: str,
         cwd: str | None = None,
         timeout_seconds: int = 30,
         background: bool = False,
-        title: str | None = None,
         *,
         context: ToolContext,
     ) -> str:
-        """Run a shell command through the ACP client terminal.
-
-        Set title to a short description displayed as the ACP tool call title.
-        If omitted, the command is used as the title.
-        """
-        # ACPStreamRouter reads the title from the streamed tool call arguments.
-        del title
-        return await runtime.bash(cmd, cwd, timeout_seconds, background, context)
+        """Run a shell command through the ACP client terminal."""
+        return await runtime.bash(command, cwd, timeout_seconds, background, context)
 
     @partial(Tool.from_callable, name="bash.output", context=True)
     async def bash_output(

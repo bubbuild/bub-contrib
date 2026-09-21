@@ -12,7 +12,9 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from bub.tools import REGISTRY, ToolContext
+from bub.streaming import StreamEvent
 
+from bub_acp_server.agent import ACPStreamRouter
 from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 
 
@@ -207,9 +209,8 @@ async def test_edit_preserves_missing_trailing_newline(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("extra_args", [{}, {"title": "Show working directory"}])
 async def test_replaces_bash_with_acp_terminal_calls(
-    tmp_path: Path, extra_args: dict[str, str]
+    tmp_path: Path,
 ) -> None:
     from bub.builtin import tools as builtin_tools  # noqa: F401
 
@@ -226,15 +227,15 @@ async def test_replaces_bash_with_acp_terminal_calls(
     client_tools = REGISTRY | build_client_tools(runtime)
     assert client_tools["bash"] is not original
     parameters = client_tools["bash"].parameters
-    assert "title" in parameters["properties"]
-    assert "title" not in parameters.get("required", [])
-    assert {
-        name: schema
-        for name, schema in parameters["properties"].items()
-        if name != "title"
-    } == original.parameters["properties"]
-    assert parameters.get("required") == original.parameters.get("required")
-    result = await client_tools["bash"].run(cmd="pwd", context=context, **extra_args)
+    assert set(parameters["properties"]) == {
+        "command",
+        "cwd",
+        "timeout_seconds",
+        "background",
+    }
+    assert parameters["properties"]["command"] == {"type": "string"}
+    assert parameters["required"] == ["command"]
+    result = await client_tools["bash"].run(command="pwd", context=context)
 
     assert REGISTRY["bash"] is original
     assert result == "hello"
@@ -254,13 +255,70 @@ async def test_replaces_bash_with_acp_terminal_calls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["hello\n", "first\nsecond\n", ""])
+async def test_bash_completion_preserves_output_after_terminal_release(
+    tmp_path: Path, output: str
+) -> None:
+    class ReleasingClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.terminals = {"terminal-1": output}
+
+        async def terminal_output(self, **kwargs: Any) -> TerminalOutputResponse:
+            return TerminalOutputResponse(
+                output=self.terminals[kwargs["terminal_id"]], truncated=False
+            )
+
+        async def release_terminal(self, **kwargs: Any) -> None:
+            await super().release_terminal(**kwargs)
+            del self.terminals[kwargs["terminal_id"]]
+
+    client = ReleasingClient()
+    router = ACPStreamRouter(cast(Any, client))
+    runtime = _runtime(client)
+    runtime.set_terminal_observer(router.attach_terminal)
+    bash = build_client_tools(runtime)["bash"]
+
+    async def stream():
+        yield StreamEvent(
+            "tool_call",
+            {
+                "tool_calls": [
+                    {
+                        "id": "bash-1",
+                        "name": "bash",
+                        "arguments": {"command": "printf hello"},
+                    }
+                ]
+            },
+        )
+        result = await bash.run(command="printf hello", context=_context(tmp_path))
+        assert client.release_requests
+        assert client.terminals == {}
+        yield StreamEvent("tool_result", {"tool_results": [result]})
+
+    async for _ in router.wrap_stream({"chat_id": "session-1"}, stream()):
+        pass
+
+    start, attached, completed = [update for _, update in client.session_updates]
+    assert attached.content[0].type == "terminal"
+    assert completed.tool_call_id == start.tool_call_id == "bash-1"
+    assert completed.title == "printf hello"
+    assert completed.status == "completed"
+    assert completed.raw_output == (output.strip() or "(no output)")
+    assert len(completed.content) == 1
+    assert completed.content[0].type == "content"
+    assert completed.content[0].content.text == (output.strip() or "(no output)")
+
+
+@pytest.mark.asyncio
 async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
     client = FakeClient()
     context = _context(tmp_path)
 
     client_tools = REGISTRY | build_client_tools(_runtime(client))
     started = await client_tools["bash"].run(
-        cmd="sleep 10", background=True, context=context
+        command="sleep 10", background=True, context=context
     )
     output = await client_tools["bash.output"].run(
         shell_id="terminal-1", context=context

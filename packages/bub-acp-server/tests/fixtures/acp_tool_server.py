@@ -75,7 +75,7 @@ class E2EFramework:
             context=context,
         )
         bash_result = await inbound._runtime_agent.tools["bash"].run(
-            cmd="printf e2e-command", context=context
+            command="printf e2e-command", context=context
         )
         plan_result = await inbound._runtime_agent.tools["update_plan"].run(
             explanation="Exercise ACP plan updates",

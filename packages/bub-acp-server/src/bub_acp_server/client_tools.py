@@ -46,6 +46,10 @@ class ACPClientToolRuntime:
     def set_capabilities(self, capabilities: ClientCapabilities | None) -> None:
         self._capabilities = capabilities or ClientCapabilities()
 
+    @property
+    def capabilities(self) -> ClientCapabilities:
+        return self._capabilities
+
     def set_terminal_observer(self, observer: TerminalObserver | None) -> None:
         self._terminal_observer = observer
 
@@ -242,7 +246,7 @@ class ACPClientToolRuntime:
 
 
 def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
-    """Build connection-owned tools without changing Bub's global registry."""
+    """Build supported client tools, leaving unsupported tools on the agent intact."""
 
     @partial(Tool.from_callable, name="bash", context=True)
     async def bash(
@@ -322,18 +326,18 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         handler=update_plan_tool,
         context=True,
     )
-    return {
-        item.name: item
-        for item in (
-            bash,
-            bash_output,
-            kill_bash,
-            fs_read,
-            fs_write,
-            fs_edit,
-            plan_tool,
-        )
-    }
+    tools = [plan_tool]
+    capabilities = runtime.capabilities
+    if capabilities.terminal:
+        tools.extend((bash, bash_output, kill_bash))
+    if fs := capabilities.fs:
+        if fs.read_text_file:
+            tools.append(fs_read)
+        if fs.write_text_file:
+            tools.append(fs_write)
+        if fs.read_text_file and fs.write_text_file:
+            tools.append(fs_edit)
+    return {item.name: item for item in tools}
 
 
 def _session_id(context: ToolContext) -> str:

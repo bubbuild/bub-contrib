@@ -168,7 +168,16 @@ finally:
     await connection.close()
 ```
 
-Clients must advertise and implement filesystem/terminal capabilities to use Bub's client-backed tools. Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools and plan instructions are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
+Client-backed tools are selected from the capabilities advertised during initialization:
+
+- `fs.readTextFile` enables client-backed `fs.read`.
+- `fs.writeTextFile` enables client-backed `fs.write`.
+- Both filesystem capabilities are required for client-backed `fs.edit`.
+- `terminal` enables client-backed `bash`, `bash.output`, and `bash.kill` together.
+
+Missing or false capabilities leave the corresponding Bub local tools in place. The ACP `update_plan` tool is always available.
+
+Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools and plan instructions are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
 
 The dependency is pinned to **agent-client-protocol 1.0.0rc1**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc1 or an equivalent implementation of load request/response correlation, including sessions with empty history.
 

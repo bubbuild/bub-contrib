@@ -394,6 +394,85 @@ async def test_update_plan_rejects_multiple_in_progress_steps(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("read", [False, True])
+@pytest.mark.parametrize("write", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_initialize_selects_client_tools_by_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read: bool,
+    write: bool,
+    terminal: bool,
+) -> None:
+    from bub.framework import BubFramework
+    from bub_acp_server.agent import BubACPAgent
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    originals = REGISTRY.copy()
+    server = BubACPAgent(framework)
+    server.on_connect(cast(Any, FakeClient()))
+    await server.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(
+            fs={"readTextFile": read, "writeTextFile": write},
+            terminal=terminal,
+        ),
+    )
+    session = await server.new_session(cwd=str(tmp_path))
+    inbound = server._build_inbound([], server._sessions[session.session_id])
+    selected = inbound._runtime_agent.tools
+    for name, client_backed in {
+        "fs.read": read,
+        "fs.write": write,
+        "fs.edit": read and write,
+        "bash": terminal,
+        "bash.output": terminal,
+        "bash.kill": terminal,
+    }.items():
+        assert (selected[name] is not originals[name]) == client_backed, name
+    assert "update_plan" in selected
+    assert REGISTRY == originals
+
+
+@pytest.mark.parametrize(
+    "capabilities", [None, ClientCapabilities(), ClientCapabilities(fs={})]
+)
+def test_missing_capabilities_only_adds_plan_tool(capabilities) -> None:
+    runtime = ACPClientToolRuntime()
+    runtime.set_capabilities(capabilities)
+    assert set(build_client_tools(runtime)) == {"update_plan"}
+
+
+@pytest.mark.asyncio
+async def test_missing_capabilities_keeps_local_filesystem_working(
+    tmp_path: Path,
+) -> None:
+    from bub.builtin import tools as builtin_tools  # noqa: F401
+
+    client = FakeClient()
+    runtime = ACPClientToolRuntime()
+    runtime.connect(cast(Any, client))
+    selected = REGISTRY | build_client_tools(runtime)
+    context = _context(tmp_path)
+    target = tmp_path / "notes.txt"
+    await selected["fs.write"].run(
+        path=str(target), content="old value", context=context
+    )
+    assert target.read_text() == "old value"
+    await selected["fs.edit"].run(
+        path=str(target), old="old", new="new", context=context
+    )
+    assert target.read_text() == "new value"
+    assert "new value" in await selected["fs.read"].run(
+        path=str(target), context=context
+    )
+    assert client.read_requests == []
+    assert client.write_requests == []
+
+
+@pytest.mark.asyncio
 async def test_real_agents_keep_acp_tools_connection_local(
     tmp_path: Path, monkeypatch
 ) -> None:

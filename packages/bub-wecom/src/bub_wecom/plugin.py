@@ -7,6 +7,8 @@ from bub import inquirer as bub_inquirer
 from bub.channels import Channel
 from bub.channels.contracts import MessageHandler
 
+from .channel import WeComChannel
+
 CHANNEL_NAME = "wecom"
 POLICIES = ["open", "disabled", "allowlist"]
 
@@ -30,8 +32,6 @@ def _policy_default(value: object) -> str:
 
 @hookimpl
 def provide_channels(message_handler: MessageHandler) -> list[Channel]:
-    from .channel import WeComChannel
-
     return [WeComChannel(message_handler)]
 
 

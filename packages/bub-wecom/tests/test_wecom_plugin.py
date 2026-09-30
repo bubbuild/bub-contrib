@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from bub_wecom import plugin
 
 
@@ -40,3 +43,16 @@ def test_onboard_config_collects_wecom_settings(monkeypatch) -> None:
 
 def test_onboard_config_skips_when_wecom_is_disabled() -> None:
     assert plugin.onboard_config({"enabled_channels": "qq"}) is None
+
+
+def test_importing_plugin_registers_settings_before_channels_are_created() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from bub_wecom import plugin\n"
+            "from bub.configure import CONFIG_MAP\n"
+            "assert any(cls.__name__ == 'WeComSettings' for cls in CONFIG_MAP['wecom'])",
+        ],
+        check=True,
+    )

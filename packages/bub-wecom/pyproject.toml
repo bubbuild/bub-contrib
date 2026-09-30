@@ -8,6 +8,10 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub>=0.5.0,<0.6.0",
+    "loguru>=0.7.3",
+    "pydantic>=2",
+    "pydantic-settings>=2.10.1",
     "wecom-aibot-python-sdk>=1.0.2",
 ]
 

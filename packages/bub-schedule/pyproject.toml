@@ -10,8 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "apscheduler>=3.11.2",
     "bub",
-    "loguru>=0.7.3",
-    "pydantic>=2.0.0",
+    "loguru",
+    "pydantic",
 ]
 
 [project.entry-points.bub]

@@ -13,7 +13,7 @@ dependencies = [
     "extism-sys>=1.12.0,<1.13.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.10.1",
-    "typer>=0.24.1",
+    "typer",
 ]
 
 [project.entry-points.bub]

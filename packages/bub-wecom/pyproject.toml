@@ -9,9 +9,9 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "bub",
-    "loguru>=0.7.3",
-    "pydantic>=2",
-    "pydantic-settings>=2.10.1",
+    "loguru",
+    "pydantic",
+    "pydantic-settings",
     "wecom-aibot-python-sdk>=1.0.2",
 ]
 

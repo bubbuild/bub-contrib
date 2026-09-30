@@ -8,9 +8,8 @@ requires-python = ">=3.12"
 dependencies = [
     "bub",
     "dingtalk-stream>=0.24.0",
-    "loguru>=0.7.3",
-    "pydantic-settings>=2.10.1",
-    "requests>=2.31.0",
+    "loguru",
+    "pydantic-settings",
 ]
 
 [project.entry-points.bub]

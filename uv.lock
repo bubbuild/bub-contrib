@@ -425,10 +425,10 @@ requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "bub-mcp", editable = "packages/bub-mcp" },
     { name = "hypercorn", marker = "extra == 'http'", specifier = ">=0.17,<0.19" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "typer", specifier = ">=0.24.1" },
+    { name = "loguru" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "typer" },
 ]
 provides-extras = ["http"]
 
@@ -461,12 +461,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "fastmcp", specifier = ">=3.2.0,<4" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "fastmcp" },
+    { name = "httpx" },
     { name = "jsonschema", specifier = ">=4.23.0" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mcp", specifier = ">=1.27.1,<2" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "loguru" },
+    { name = "mcp" },
+    { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
 
@@ -486,8 +486,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
 ]
 
 [[package]]
@@ -618,9 +618,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
-    { name = "typer", specifier = ">=0.24.1" },
+    { name = "typer" },
 ]
 
 [[package]]
@@ -632,16 +632,14 @@ dependencies = [
     { name = "dingtalk-stream" },
     { name = "loguru" },
     { name = "pydantic-settings" },
-    { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "dingtalk-stream", specifier = ">=0.24.0" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "requests", specifier = ">=2.31.0" },
+    { name = "loguru" },
+    { name = "pydantic-settings" },
 ]
 
 [[package]]
@@ -659,8 +657,8 @@ dependencies = [
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "discord-py", specifier = ">=2.7.1" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
+    { name = "loguru" },
+    { name = "pydantic-settings" },
 ]
 
 [[package]]
@@ -678,7 +676,7 @@ dependencies = [
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "deepseek-harness-sdk", specifier = ">=0.1.0rc7,<0.2.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
 ]
 
@@ -723,7 +721,7 @@ requires-dist = [
     { name = "extism-sys", specifier = ">=1.12.0,<1.13.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "typer", specifier = ">=0.24.1" },
+    { name = "typer" },
 ]
 
 [package.metadata.requires-dev]
@@ -749,7 +747,7 @@ requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lark-oapi", specifier = ">=1.4.20" },
-    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "loguru" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
 
@@ -771,9 +769,9 @@ requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "github-copilot-sdk", specifier = ">=0.2.1,<0.3.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
-    { name = "typer", specifier = ">=0.24.1" },
+    { name = "typer" },
 ]
 
 [[package]]
@@ -789,8 +787,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
 ]
 
 [[package]]
@@ -816,11 +814,11 @@ dev = [
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "fastmcp", specifier = ">=3.2.0,<4" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mcp", specifier = ">=1.27.1,<2" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "loguru" },
+    { name = "mcp" },
+    { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "typer", specifier = ">=0.24.1" },
+    { name = "typer" },
 ]
 
 [package.metadata.requires-dev]
@@ -846,7 +844,7 @@ dev = [
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "fastmcp", specifier = ">=3.2.0,<4" },
-    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "loguru" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
 
@@ -871,8 +869,8 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "cryptography", specifier = ">=45.0.0" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic", specifier = ">=2" },
+    { name = "loguru" },
+    { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
 
@@ -897,8 +895,8 @@ dev = [
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.11.2" },
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "loguru" },
+    { name = "pydantic" },
 ]
 
 [package.metadata.requires-dev]
@@ -958,12 +956,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "opentelemetry-api", specifier = ">=1.39.0" },
+    { name = "loguru" },
+    { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.39.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
 ]
 
 [[package]]
@@ -980,7 +978,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "redis", specifier = ">=6.0.0" },
 ]
@@ -999,8 +997,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
 ]
 
@@ -1022,8 +1020,8 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "any-llm-sdk" },
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
 ]
 
@@ -1068,8 +1066,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "typer", specifier = ">=0.24.1" },
+    { name = "loguru" },
+    { name = "typer" },
     { name = "weixin-bot-sdk", specifier = ">=0.2.0" },
 ]
 
@@ -1088,9 +1086,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic", specifier = ">=2" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
+    { name = "loguru" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "wecom-aibot-python-sdk", specifier = ">=1.0.2" },
 ]
 

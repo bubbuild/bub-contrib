@@ -74,7 +74,7 @@ def _runtime(config_path: Path) -> HookRuntime:
     settings = ExtismSettings(config_path=config_path)
     plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
     plugin_manager.add_hookspecs(BubHookSpecs)
-    framework = SimpleNamespace(_plugin_manager=plugin_manager)
+    framework = SimpleNamespace(plugin_manager=plugin_manager)
     plugin = ExtismPlugin(framework, settings=settings)
     plugin_manager.register(plugin, name="extism")
     return HookRuntime(plugin_manager)
@@ -592,7 +592,7 @@ def test_plugin_reads_registered_bub_configuration(tmp_path: Path, monkeypatch) 
     )
     plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
     plugin_manager.add_hookspecs(BubHookSpecs)
-    plugin = ExtismPlugin(SimpleNamespace(_plugin_manager=plugin_manager))
+    plugin = ExtismPlugin(SimpleNamespace(plugin_manager=plugin_manager))
 
     assert ExtismSettings in configure.CONFIG_MAP["extism"]
     assert plugin.settings.config_path == config_path

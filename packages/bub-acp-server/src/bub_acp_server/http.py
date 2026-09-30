@@ -21,6 +21,7 @@ from loguru import logger
 
 from bub_acp_server.agent import ACPSession, BubACPAgent, active_stream_router
 from bub_acp_server.config import ACPServerSettings
+from bub_mcp.plugin import MCPChannel
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
@@ -34,6 +35,9 @@ def create_http_app(
     prompt_lock = asyncio.Lock()
     sessions: dict[str, ACPSession] | None = None
     agents: WeakSet[BubACPAgent] = WeakSet()
+    mcp_channels: dict[str, MCPChannel] = {}
+    prompt_runs = {}
+    closing_sessions: set[str] = set()
 
     def agent_factory(client: Client) -> BubACPAgent:
         nonlocal sessions
@@ -43,6 +47,9 @@ def create_http_app(
             steering_inbox=inbox if isinstance(inbox, ACPSteeringInbox) else None,
             prompt_lock=prompt_lock,
             sessions=sessions,
+            mcp_channels=mcp_channels,
+            prompt_runs=prompt_runs,
+            closing_sessions=closing_sessions,
             bind_router=not channel_managed,
             # Match the SDK web adapter's stable-only protocol routes.
             use_unstable_protocol=False,
@@ -53,15 +60,35 @@ def create_http_app(
 
     sdk_app = create_asgi_app(agent_factory)
 
+    async def cleanup() -> None:
+        await asyncio.gather(*(agent.shutdown() for agent in list(agents)))
+        # Session resources can outlive their originating HTTP connection.
+        channels = list(mcp_channels.values())
+        mcp_channels.clear()
+        await asyncio.gather(*(channel.stop() for channel in channels))
+
     async def app(scope: dict[str, Any], receive: Callable, send: Callable) -> None:
-        try:
+        if scope["type"] != "lifespan":
             await sdk_app(scope, receive, send)
+            return
+        cleaned = False
+
+        async def lifecycle_send(message: dict[str, Any]) -> None:
+            nonlocal cleaned
+            if message["type"] in {
+                "lifespan.shutdown.complete",
+                "lifespan.shutdown.failed",
+            }:
+                # Hypercorn may cancel remaining tasks as soon as it receives completion.
+                await cleanup()
+                cleaned = True
+            await send(message)
+
+        try:
+            await sdk_app(scope, receive, lifecycle_send)
         finally:
-            if scope["type"] == "lifespan":
-                tasks = [task for agent in agents for task in agent._background_tasks]
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            if not cleaned:
+                await cleanup()
 
     return app
 

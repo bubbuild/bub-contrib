@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+from typing import Literal, NotRequired, TypedDict, final
 
 import bub
 from bub.channels.message import ChannelMessage
@@ -27,8 +28,31 @@ from .runtime import get_active_channel
 from .security import QQ_STATE_KEY, REPLY_TOOL_NAME
 
 
-@tool(name=REPLY_TOOL_NAME, context=True)
-async def qq_send(content: str, *, context: ToolContext) -> str:
+@final
+class QQSendResult(TypedDict):
+    """Outcome of one ``qq.send`` call; ``reason`` is set only for ``not_sent``."""
+
+    status: Literal["sent", "pending_audit", "already_sent", "not_sent"]
+    reason: NotRequired[str]
+
+
+def _not_sent(reason: str) -> QQSendResult:
+    return {"status": "not_sent", "reason": reason}
+
+
+def _render_send(result: QQSendResult) -> str:
+    status = result["status"]
+    if status == "not_sent":
+        return f"Not sent: {result.get('reason', '')}"
+    if status == "pending_audit":
+        return "Accepted: QQ queued the message for manual review before delivery."
+    if status == "already_sent":
+        return "Skipped: identical content was already sent for this reply window."
+    return "Sent."
+
+
+@tool(name=REPLY_TOOL_NAME, context=True, renderer=_render_send)
+async def qq_send(content: str, *, context: ToolContext) -> QQSendResult:
     """Send a message to the current QQ chat (group or private).
 
     Pass only the message text; reply targeting (msg_id/msg_seq) is
@@ -38,16 +62,16 @@ async def qq_send(content: str, *, context: ToolContext) -> str:
 
     config = bub.ensure_config(QQConfig)
     if config.reply_mode != "tool":
-        return (
-            "Not sent: qq.send is disabled (qq.reply_mode is 'direct')."
+        return _not_sent(
+            "qq.send is disabled (qq.reply_mode is 'direct')."
             " Write your reply as plain text instead."
         )
     qq_state = context.state.get(QQ_STATE_KEY)
     if not isinstance(qq_state, dict):
-        return "Not sent: qq.send is only available inside QQ channel sessions."
+        return _not_sent("qq.send is only available inside QQ channel sessions.")
     channel = get_active_channel()
     if channel is None:
-        return "Not sent: the QQ channel is not running in this process."
+        return _not_sent("the QQ channel is not running in this process.")
 
     session_id = str(qq_state.get("session_id") or "")
     if str(qq_state.get("scope") or "") == "group":
@@ -64,17 +88,17 @@ async def qq_send(content: str, *, context: ToolContext) -> str:
         )
     )
     if result is None:
-        return (
-            "Not sent: the QQ channel skipped or failed this send"
+        return _not_sent(
+            "the QQ channel skipped or failed this send"
             " (empty content, closed reply window, or platform error;"
             " see gateway logs). Do not retry with identical content."
         )
     status = result.get("status")
     if status == "pending_audit":
-        return "Accepted: QQ queued the message for manual review before delivery."
+        return {"status": "pending_audit"}
     if status == "already_sent":
-        return "Skipped: identical content was already sent for this reply window."
-    return "Sent."
+        return {"status": "already_sent"}
+    return {"status": "sent"}
 
 
 @tool(name="qq.version", agent_use=False)

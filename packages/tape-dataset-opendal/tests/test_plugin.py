@@ -44,8 +44,8 @@ def test_plugin_registers_bub_cli_export_command(
             finally:
                 events.append("exit")
 
-    framework._plugin_manager.register(StorePlugin(), name="test-store")
-    framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
+    framework.plugin_manager.register(StorePlugin(), name="test-store")
+    framework.plugin_manager.register(plugin, name="tape-dataset-opendal")
 
     app = framework.create_cli_app()
     runner = CliRunner()
@@ -90,8 +90,8 @@ def test_plugin_cli_accepts_cel_filter_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    framework._plugin_manager.register(_StorePlugin(store), name="test-store")
-    framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
+    framework.plugin_manager.register(_StorePlugin(store), name="test-store")
+    framework.plugin_manager.register(plugin, name="tape-dataset-opendal")
 
     app = framework.create_cli_app()
     runner = CliRunner()

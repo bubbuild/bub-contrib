@@ -39,7 +39,7 @@ class OTelTapeStorePlugin:
 
     @hookimpl(tryfirst=True)
     def provide_tape_store(self) -> Any:
-        parent = self.framework._plugin_manager.subset_hook_caller(
+        parent = self.framework.plugin_manager.subset_hook_caller(
             "provide_tape_store",
             remove_plugins=[self],
         )

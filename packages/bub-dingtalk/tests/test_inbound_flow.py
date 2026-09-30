@@ -146,7 +146,7 @@ def test_channel_manager_on_receive_to_process_inbound() -> None:
         framework = BubFramework()
         framework.workspace = Path.cwd()
         framework.load_builtin_hooks()
-        framework._plugin_manager.register(dingtalk_plugin, name="dingtalk")
+        framework.plugin_manager.register(dingtalk_plugin, name="dingtalk")
         _stub_run_model(framework)
         configure.merge(configure._config_data, {"qq": {"receive_mode": "webhook"}})
         configure._global_config.clear()

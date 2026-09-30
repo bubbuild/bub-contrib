@@ -1,6 +1,6 @@
 [project]
 name = "bub-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Expose configured MCP servers as Bub tools"
 readme = "README.md"
 authors = [

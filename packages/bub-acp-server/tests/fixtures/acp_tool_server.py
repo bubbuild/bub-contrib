@@ -8,23 +8,19 @@ from typing import Any, cast
 
 from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
-from bub.tools import REGISTRY, ToolContext
+from bub.tools import ToolContext
 from bub.turn import TurnResult
 
 from bub_acp_server.agent import run_acp_agent
 
 
-class E2ETape:
-    def __init__(self) -> None:
-        self.events: list[dict[str, object]] = []
-
-    async def append_event(
-        self, name: str, payload: dict[str, object], **meta: object
-    ) -> None:
-        self.events.append({"name": name, "payload": payload, "meta": meta})
-
-
 class E2EFramework:
+    def get_agent_hooks(self):
+        return None
+
+    def get_tape_store(self):
+        return None
+
     def __init__(self) -> None:
         self.workspace = Path(os.environ["BUB_ACP_E2E_WORKSPACE"]).resolve()
         self._channel_router: Any = None
@@ -49,47 +45,50 @@ class E2EFramework:
         self, inbound: Any, stream_output: bool = False
     ) -> TurnResult:
         assert stream_output is True
-        tape = E2ETape()
         context = ToolContext(
-            tape=cast(Any, tape),
+            tape=cast(Any, object()),
             run_id="e2e-run",
             state={
                 "session_id": inbound.session_id,
                 "_runtime_workspace": str(self.workspace),
             },
         )
-        read_result = await REGISTRY["fs.read"].run(
+        read_result = await inbound._runtime_agent.tools["fs.read"].run(
             path="target.txt", offset=1, limit=1, context=context
         )
-        write_result = await REGISTRY["fs.write"].run(
+        write_result = await inbound._runtime_agent.tools["fs.write"].run(
             path="created.txt", content="created by ACP", context=context
         )
-        edit_result = await REGISTRY["fs.edit"].run(
+        edit_result = await inbound._runtime_agent.tools["fs.edit"].run(
             path="target.txt",
             old="old value",
             new="new value",
             start=1,
             context=context,
         )
-        bash_result = await REGISTRY["bash"].run(
+        bash_result = await inbound._runtime_agent.tools["bash"].run(
             command="printf e2e-command", context=context
         )
-        plan_result = await REGISTRY["update_plan"].run(
-            explanation="Exercise ACP plan updates",
-            plan=[
-                {"step": "Exercise client tools", "status": "completed"},
-                {"step": "Verify results", "status": "in_progress"},
-            ],
-            context=context,
-        )
+        ask_result = None
+        if "ask_user" in inbound._runtime_agent.tools:
+            ask_result = await inbound._runtime_agent.tools["ask_user"].run(
+                message="Choose an approach",
+                requested_schema={
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string", "enum": ["minimal", "full"]}
+                    },
+                    "required": ["answer"],
+                },
+                context=context,
+            )
         model_output = json.dumps(
             {
                 "read": read_result,
                 "write": write_result,
                 "edit": edit_result,
                 "bash": bash_result,
-                "plan": plan_result,
-                "tape_events": tape.events,
+                "ask_user": ask_result,
             },
             sort_keys=True,
         )

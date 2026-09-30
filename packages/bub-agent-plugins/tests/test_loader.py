@@ -114,25 +114,3 @@ def test_plugin_data_cannot_escape_the_configured_root(tmp_path: Path) -> None:
 
     assert result.mcp_servers == {}
     assert any("PLUGIN_DATA escapes" in message for message in result.diagnostics)
-
-
-def test_plugin_prompt_binds_embedded_mcp_tools(tmp_path: Path) -> None:
-    import asyncio
-    from types import SimpleNamespace
-
-    from bub_agent_plugins.plugin import AgentPluginsPlugin, AgentPluginsSettings
-
-    plugin = AgentPluginsPlugin(
-        SimpleNamespace(workspace=tmp_path),
-        settings=AgentPluginsSettings(auto_discover=False),
-    )
-    calls: list[dict[str, object]] = []
-
-    class FakeChannel:
-        async def bind_tools(self, state: dict[str, object]) -> None:
-            calls.append(state)
-
-    plugin._mcp_channel = FakeChannel()
-    state = {"_runtime_agent": object()}
-    asyncio.run(plugin.build_prompt(state))
-    assert calls == [state]

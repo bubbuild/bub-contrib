@@ -6,24 +6,31 @@ import json
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self, TypedDict, final
 from weakref import WeakKeyDictionary
 
-import bub
 import fastmcp
 import mcp.types
 import typer
+import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
+from bub.tools import Tool, ToolContext
 from bub.channels.contracts import MessageHandler
-from bub.envelope import Envelope
-from bub.tools import REGISTRY, Tool, ToolContext
+from bub.envelope import Envelope, field_of
 from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
 
+if TYPE_CHECKING:
+    from bub.builtin.agent import Agent
+    from bub.framework import BubFramework
+
 TOOL_PREFIX = "mcp."
+TEXT_OUTPUT_SCHEMA: dict[str, Any] = {"type": "string"}
+
+type ResultMode = Literal["text", "structured", "wrapped"]
 LIFECYCLE_CHANNEL_NAME = "mcp.lifecycle"
 
 
@@ -56,6 +63,48 @@ def _render_binary_placeholder(kind: str, item: Any) -> str:
     return f"[Binary content: {kind} {mime_type}]"
 
 
+def _output_schema(
+    remote_tool: mcp.types.Tool,
+) -> tuple[dict[str, Any] | None, ResultMode]:
+    """Return the Bub output schema and how to read results of a remote tool.
+
+    Only tools declaring an ``outputSchema`` return structured content, so every
+    other tool returns text and gets a ``str`` return type in code-mode stubs.
+    """
+    schema = getattr(remote_tool, "outputSchema", None)
+    if not isinstance(schema, dict):
+        return TEXT_OUTPUT_SCHEMA, "text"
+    if not schema.get("x-fastmcp-wrap-result"):
+        return schema, "structured"
+    # FastMCP wraps non-object results as {"result": value}.
+    inner = schema.get("properties", {}).get("result")
+    if not isinstance(inner, dict):
+        return None, "wrapped"
+    if "$defs" in schema:
+        inner = {**inner, "$defs": schema["$defs"]}
+    return inner, "wrapped"
+
+
+def _tool_result_value(result: Any, *, mode: ResultMode = "text") -> Any:
+    """Return an MCP tool result as text or, for typed tools, its structured content."""
+    structured = getattr(result, "structured_content", None)
+    if mode == "text" or structured is None:
+        return _format_tool_result(result)
+    fastmcp_meta = (getattr(result, "meta", None) or {}).get("fastmcp")
+    if isinstance(structured, dict) and (
+        mode == "wrapped"
+        or (isinstance(fastmcp_meta, dict) and fastmcp_meta.get("wrap_result"))
+    ):
+        return structured.get("result")
+    return structured
+
+
+def _render_tool_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
 def _format_tool_result(result: Any) -> str:
     content = getattr(result, "content", []) or []
     blocks: list[str] = []
@@ -84,15 +133,11 @@ def _format_tool_result(result: Any) -> str:
             blocks.append(_render_binary_placeholder("audio", item))
             continue
 
-    structured = getattr(result, "structuredContent", None)
-    if not blocks and structured is not None:
-        return json.dumps(structured, ensure_ascii=False, indent=2, sort_keys=True)
-
     rendered = "\n".join(blocks).strip()
     if rendered:
         return rendered
 
-    is_error = bool(getattr(result, "isError", False))
+    is_error = bool(getattr(result, "is_error", False))
     return "error: remote MCP tool returned no content" if is_error else "ok"
 
 
@@ -114,12 +159,10 @@ class MCPChannel(Lifecycle):
         self._lock = asyncio.Lock()
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
+        self._bindings: WeakKeyDictionary[
+            Agent, dict[str, tuple[Tool, Tool | None]]
+        ] = WeakKeyDictionary()
         self._stop_event: asyncio.Event | None = None
-        self._registered_tools: dict[str, Tool] = {}
-        self._registry_originals: dict[str, Tool | None] = {}
-        self._agent_originals: WeakKeyDictionary[Any, dict[str, Tool | None]] = (
-            WeakKeyDictionary()
-        )
 
     @classmethod
     def from_server_configs(
@@ -142,6 +185,12 @@ class MCPChannel(Lifecycle):
             self._bootstrap(stop_event), name="bub-mcp.bootstrap"
         )
 
+    async def connect(self) -> None:
+        """Wait for discovery when embedded without Bub's channel manager."""
+        await self.start(asyncio.Event())
+        if self._bootstrap_task is not None:
+            await self._bootstrap_task
+
     async def stop(self) -> None:
         task = self._bootstrap_task
         self._bootstrap_task = None
@@ -160,51 +209,66 @@ class MCPChannel(Lifecycle):
             for server in self._servers.values():
                 server.client = None
                 server.connected = False
-            self._unregister_tools()
+
+        for agent, bindings in list(self._bindings.items()):
+            self._restore_tools(agent, bindings)
+        self._bindings.clear()
 
         for client in clients:
             await self._close_client(client)
 
-    async def bind_tools(self, state: TurnState) -> None:
-        """Make discovered tools available to the turn's existing Agent."""
-        if self._bootstrap_task is not None:
-            await asyncio.shield(self._bootstrap_task)
-        agent = state.get("_runtime_agent")
-        if agent is None:
-            return
-        originals = self._agent_originals.setdefault(agent, {})
-        for name, tool_item in self._registered_tools.items():
-            if name not in originals:
-                original = agent.tools.get(name)
-                originals[name] = (
-                    self._registry_originals.get(name)
-                    if original is tool_item
-                    else original
-                )
-            agent.tools[name] = tool_item
+    @property
+    def tools(self) -> dict[str, Tool]:
+        """Tools from currently connected servers; never registered globally."""
+        return {
+            tool.name: tool
+            for server in self._servers.values()
+            if server.connected
+            for tool in server.tools
+        }
 
-    def _unregister_tools(self) -> None:
-        for name, tool_item in self._registered_tools.items():
-            self._restore_tool(
-                REGISTRY, name, tool_item, self._registry_originals[name]
-            )
-            for agent, originals in self._agent_originals.items():
-                if name in originals:
-                    self._restore_tool(agent.tools, name, tool_item, originals[name])
-        self._registered_tools.clear()
-        self._registry_originals.clear()
-        self._agent_originals.clear()
+    def bind_agent(self, agent: Agent) -> None:
+        """Refresh this channel's tools on an Agent, preserving name collisions."""
+        previous = self._bindings.pop(agent, {})
+        tools = self.tools
+        self._restore_tools(
+            agent,
+            {name: binding for name, binding in previous.items() if name not in tools},
+        )
+        bindings = {}
+        for name, remote_tool in tools.items():
+            original = previous[name][1] if name in previous else agent.tools.get(name)
+            bindings[name] = (remote_tool, original)
+            agent.tools[name] = remote_tool
+        if bindings:
+            self._bindings[agent] = bindings
 
     @staticmethod
-    def _restore_tool(
-        tools: dict[str, Tool], name: str, owned: Tool, original: Tool | None
+    def _restore_tools(
+        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]
     ) -> None:
-        if tools.get(name) is not owned:
-            return
-        if original is None:
-            tools.pop(name, None)
-        else:
-            tools[name] = original
+        for name, (installed, original) in bindings.items():
+            if agent.tools.get(name) is not installed:
+                continue
+            if original is None:
+                agent.tools.pop(name, None)
+            else:
+                agent.tools[name] = original
+
+    async def bind_runtime_tools(
+        self, framework: BubFramework, message: Envelope
+    ) -> None:
+        # Discovery may still be running when the first message arrives.
+        if self._bootstrap_task is not None:
+            await asyncio.shield(self._bootstrap_task)
+        agent = field_of(message, "_runtime_agent")
+        if agent is None:
+            builtin = framework.plugin_manager.get_plugin("builtin")
+            if builtin is None:
+                return
+            # Bub currently exposes its default Agent only through BuiltinImpl.
+            agent = builtin._get_agent()
+        self.bind_agent(agent)
 
     def list(self) -> dict[str, MCPServerState]:
         return self._servers.copy()
@@ -242,15 +306,20 @@ class MCPChannel(Lifecycle):
         return mcp_servers
 
     async def call_tool(
-        self, server_name: str, remote_name: str, arguments: dict[str, Any]
-    ) -> str:
+        self,
+        server_name: str,
+        remote_name: str,
+        arguments: dict[str, Any],
+        *,
+        result_mode: ResultMode = "text",
+    ) -> Any:
         server = self._servers.get(server_name)
         if server is None or server.client is None:
             raise RuntimeError(
                 f"MCP client for server '{server_name}' is not connected"
             )
         result = await server.client.call_tool(remote_name, arguments or {})
-        return _format_tool_result(result)
+        return _tool_result_value(result, mode=result_mode)
 
     def bootstrap(self) -> None:
         async def main() -> None:
@@ -268,12 +337,25 @@ class MCPChannel(Lifecycle):
                     return
 
                 config_items = list(config.items())
-                server_states = await asyncio.gather(
-                    *[
+                tasks = [
+                    asyncio.create_task(
                         self._connect_server(server_name, server_config)
-                        for server_name, server_config in config_items
-                    ]
-                )
+                    )
+                    for server_name, server_config in config_items
+                ]
+                try:
+                    server_states = await asyncio.gather(*tasks)
+                except BaseException:
+                    for task in tasks:
+                        task.cancel()
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for result in results:
+                        if (
+                            isinstance(result, MCPServerState)
+                            and result.client is not None
+                        ):
+                            await self._close_client(result.client)
+                    raise
 
                 self._servers = {
                     server_name: server_state
@@ -281,14 +363,6 @@ class MCPChannel(Lifecycle):
                         config_items, server_states, strict=False
                     )
                 }
-
-                for server in self._servers.values():
-                    for tool in server.tools:
-                        self._registry_originals.setdefault(
-                            tool.name, REGISTRY.get(tool.name)
-                        )
-                        self._registered_tools[tool.name] = tool
-                        REGISTRY[tool.name] = tool
 
                 if (
                     self.stop_when_all_failed
@@ -358,11 +432,14 @@ class MCPChannel(Lifecycle):
         if not remote_name:
             return None
         bub_name = _tool_name(server_name, remote_name)
+        output_schema, result_mode = _output_schema(remote_tool)
         return Tool(
             name=bub_name,
             description=str(remote_tool.description or f"MCP tool {remote_name}"),
             parameters=_tool_parameters(remote_tool),
-            handler=self._make_handler(server_name, remote_name),
+            handler=self._make_handler(server_name, remote_name, result_mode),
+            renderer=_render_tool_value,
+            output_schema=output_schema,
         )
 
     def _record_failed_server(
@@ -376,30 +453,32 @@ class MCPChannel(Lifecycle):
             "bub-mcp failed to connect MCP server '{}': {}", server_name, error_message
         )
 
-    def _make_handler(self, server_name: str, remote_name: str):
-        async def _handler(**payload: Any) -> str:
-            return await self.call_tool(server_name, remote_name, payload)
+    def _make_handler(
+        self, server_name: str, remote_name: str, result_mode: ResultMode
+    ):
+        async def _handler(**payload: Any) -> Any:
+            return await self.call_tool(
+                server_name, remote_name, payload, result_mode=result_mode
+            )
 
         return _handler
 
     @staticmethod
     async def _close_client(client: Any) -> None:
         with contextlib.suppress(Exception):
-            await client.__aexit__(None, None, None)
+            # __aexit__ leaves keep-alive stdio transports running.
+            await client.close()
 
 
 class MCPPlugin:
     def __init__(self, framework: Any) -> None:
-        del framework
+        self.framework = framework
         self._manager = MCPChannel()
 
     @hookimpl
-    def load_state(self, message: Envelope, session_id: str) -> TurnState:
+    async def load_state(self, message: Envelope, session_id: str) -> TurnState:
+        await self._manager.bind_runtime_tools(self.framework, message)
         return {"mcp": self._manager}
-
-    @hookimpl(tryfirst=True)
-    async def build_prompt(self, state: TurnState) -> None:
-        await self._manager.bind_tools(state)
 
     @hookimpl
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
@@ -415,26 +494,51 @@ class MCPPlugin:
         )
 
 
-@tool(name="mcp", context=True)
-def mcp_list(*, context: ToolContext) -> str:
-    """List configured MCP servers."""
-    manager = context.state.get("mcp")
-    if not isinstance(manager, MCPChannel):
-        raise RuntimeError("MCP channel is not available in state")
-    servers = manager.list()
+@final
+class MCPServerInfo(TypedDict):
+    connected: bool
+    tools: list[str]
+    error: str | None
+
+
+@final
+class MCPServerList(TypedDict):
+    servers: dict[str, MCPServerInfo]
+
+
+def _render_server_list(result: MCPServerList) -> str:
+    servers = result["servers"]
     if not servers:
         return "No MCP servers configured."
     lines: list[str] = []
     lines.append("🔌 MCP Servers:")
     for name, server in servers.items():
         lines.append(f"- {name}")
-        if server.connected:
+        if server["connected"]:
             lines.append("  Status: Connected")
             lines.append(
-                f"  Tools: {', '.join(tool.name for tool in server.tools) if server.tools else 'No tools'}"
+                f"  Tools: {', '.join(server['tools']) if server['tools'] else 'No tools'}"
             )
         else:
             lines.append("  Status: Not connected")
-            if server.error:
-                lines.append(f"  Error: {server.error}")
+            if server["error"]:
+                lines.append(f"  Error: {server['error']}")
     return "\n".join(lines)
+
+
+@tool(name="mcp", context=True, renderer=_render_server_list)
+def mcp_list(*, context: ToolContext) -> MCPServerList:
+    """List configured MCP servers."""
+    manager = context.state.get("mcp")
+    if not isinstance(manager, MCPChannel):
+        raise RuntimeError("MCP channel is not available in state")
+    return {
+        "servers": {
+            name: {
+                "connected": server.connected,
+                "tools": [tool.name for tool in server.tools],
+                "error": server.error,
+            }
+            for name, server in manager.list().items()
+        }
+    }

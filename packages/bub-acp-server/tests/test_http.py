@@ -60,6 +60,9 @@ def isolated_acp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class HTTPFramework:
+    def get_agent_hooks(self):
+        return None
+
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
         self.router: Any = None
@@ -93,14 +96,18 @@ class HTTPFramework:
                             "id": "bash-1",
                             "name": "bash",
                             "arguments": {
-                                "cmd": inbound.content,
-                                "title": "Run command",
+                                "command": inbound.content,
                             },
                         }
                     ]
                 },
             )
-            output = await REGISTRY["bash"].run(
+            tools = (
+                inbound._runtime_agent.tools
+                if hasattr(inbound, "_runtime_agent")
+                else REGISTRY
+            )
+            output = await tools["bash"].run(
                 command=inbound.content,
                 context=ToolContext(
                     tape=None,
@@ -212,6 +219,52 @@ async def http_server(tmp_path: Path, *, tls: bool, framework=None):
     finally:
         shutdown.set()
         await asyncio.wait_for(task, 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["http", "websocket"])
+async def test_delete_session_from_another_connection(tmp_path, monkeypatch, transport):
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    async with http_server(tmp_path, tls=False) as url:
+
+        async def connect():
+            stream = (
+                await create_websocket_stream(url.replace("http://", "ws://"))
+                if transport == "websocket"
+                else create_http_stream(url)
+            )
+            return connect_to_agent(HTTPClient("unused"), stream)
+
+        one = await connect()
+        two = await connect()
+        try:
+            async with asyncio.timeout(10):
+                for connection in (one, two):
+                    initialized = await connection.initialize(protocol_version=1)
+                    capabilities = initialized.agent_capabilities.session_capabilities
+                    assert capabilities.delete is not None
+                    assert capabilities.close is None
+                session = await one.new_session(cwd=str(tmp_path))
+                other = await one.new_session(cwd=str(tmp_path))
+                await two.delete_session(session.session_id)
+                await two.delete_session(session.session_id)
+                await two.delete_session("never-existed")
+                assert [s.session_id for s in (await one.list_sessions()).sessions] == [
+                    other.session_id
+                ]
+        finally:
+            await one.close()
+            await two.close()
+
+        fresh = await connect()
+        try:
+            async with asyncio.timeout(10):
+                await fresh.initialize(protocol_version=1)
+                assert [
+                    s.session_id for s in (await fresh.list_sessions()).sessions
+                ] == [other.session_id]
+        finally:
+            await fresh.close()
 
 
 @pytest.mark.asyncio
@@ -828,7 +881,7 @@ def test_gateway_cli_starts_and_stops_acp_channel(
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     framework = BubFramework(config_file=tmp_path / "config.yml")
     framework.load_builtin_hooks()
-    framework._plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
+    framework.plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
     calls = []
     shutdown = []
     original_start = ACPHTTPChannel.start

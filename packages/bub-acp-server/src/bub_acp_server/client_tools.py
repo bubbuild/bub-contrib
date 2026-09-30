@@ -2,48 +2,35 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Generator
-from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
-from dataclasses import replace
-from importlib import import_module
+from collections.abc import Awaitable, Callable
+from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, NotRequired, TypedDict, cast, final
 
 from acp.interfaces import Client
 from acp.schema import (
-    AgentPlanUpdate,
     ClientCapabilities,
-    PlanEntry,
+    ElicitationFormSessionMode,
+    ElicitationSchema,
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
-from bub.tools import REGISTRY, Tool, ToolContext, tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, TypeAdapter
+from bub.tools import Tool, ToolContext
 
-_TOOL_NAMES = (
-    "bash",
-    "bash.output",
-    "bash.kill",
-    "fs.read",
-    "fs.write",
-    "fs.edit",
-    "update_plan",
-)
 type TerminalObserver = Callable[[str, str, str], Awaitable[None]]
-type PlanStatus = Literal["pending", "in_progress", "completed"]
-type PlanPriority = Literal["high", "medium", "low"]
 
 
-class PlanItem(BaseModel):
-    step: str = Field(min_length=1)
-    status: PlanStatus
-    priority: PlanPriority = "medium"
+class AskUserInput(BaseModel):
+    message: str
+    requested_schema: ElicitationSchema
 
 
-class PlanInput(BaseModel):
-    explanation: str | None = None
-    plan: list[PlanItem]
+@final
+class AskUserResult(TypedDict):
+    action: str
+    """accept, decline, cancel, or a client-specific action."""
+    content: NotRequired[dict[str, str | int | float | bool | list[str]]]
 
 
 class ACPClientToolRuntime:
@@ -57,6 +44,10 @@ class ACPClientToolRuntime:
 
     def set_capabilities(self, capabilities: ClientCapabilities | None) -> None:
         self._capabilities = capabilities or ClientCapabilities()
+
+    @property
+    def capabilities(self) -> ClientCapabilities:
+        return self._capabilities
 
     def set_terminal_observer(self, observer: TerminalObserver | None) -> None:
         self._terminal_observer = observer
@@ -125,7 +116,7 @@ class ACPClientToolRuntime:
 
     async def bash(
         self,
-        cmd: str,
+        command: str,
         cwd: str | None,
         timeout_seconds: int,
         background: bool,
@@ -136,12 +127,12 @@ class ACPClientToolRuntime:
         target_cwd = _resolve_cwd(context, cwd)
         terminal = await client.create_terminal(
             command="bash",
-            args=["-lc", cmd],
+            args=["-lc", command],
             cwd=str(target_cwd),
             session_id=session_id,
         )
         if self._terminal_observer is not None:
-            await self._terminal_observer(session_id, cmd, terminal.terminal_id)
+            await self._terminal_observer(session_id, command, terminal.terminal_id)
         if background:
             return f"started: {terminal.terminal_id}"
 
@@ -211,40 +202,35 @@ class ACPClientToolRuntime:
         finally:
             await client.release_terminal(session_id=session_id, terminal_id=shell_id)
 
-    async def update_plan(
-        self,
-        request: PlanInput,
-        context: ToolContext,
-    ) -> str:
-        plan = request.plan
-        in_progress = sum(item.status == "in_progress" for item in plan)
-        if in_progress > 1:
-            raise ValueError("plan must contain at most one in_progress step")
-
-        entries = [
-            PlanEntry(
-                content=item.step,
-                priority=item.priority,
-                status=item.status,
-            )
-            for item in plan
-        ]
-        payload: dict[str, object] = {
-            "entries": [entry.model_dump(exclude_none=True) for entry in entries]
-        }
-        if request.explanation:
-            payload["explanation"] = request.explanation
-
-        await context.tape.append_event("plan", payload, run_id=context.run_id)
-        await self._require_client().session_update(
-            _session_id(context), AgentPlanUpdate(entries=entries)
-        )
-        return f"Plan updated with {len(plan)} steps"
-
     def _require_client(self) -> Client:
         if self._client is None:
             raise RuntimeError("ACP client is not connected")
         return self._client
+
+    async def ask_user(
+        self, request: AskUserInput, context: ToolContext
+    ) -> AskUserResult:
+        client = self._require_client()
+        elicitation = self._capabilities.elicitation
+        if elicitation is None or elicitation.form is None:
+            raise RuntimeError("ACP client does not support form elicitation")
+        response = await client.create_elicitation(
+            message=request.message,
+            mode=ElicitationFormSessionMode(
+                session_id=_session_id(context),
+                requested_schema=request.requested_schema,
+            ),
+        )
+        return cast(
+            AskUserResult,
+            response.model_dump(
+                mode="json",
+                include={"action", "content"}
+                if response.action == "accept"
+                else {"action"},
+                exclude_none=True,
+            ),
+        )
 
     def _require_terminal_client(self) -> Client:
         client = self._require_client()
@@ -253,106 +239,22 @@ class ACPClientToolRuntime:
         return client
 
 
-_active_runtime: ContextVar[ACPClientToolRuntime | None] = ContextVar(
-    "acp_tool_runtime", default=None
-)
-_active_tool_scope: ContextVar[ExitStack | None] = ContextVar(
-    "acp_tool_scope", default=None
-)
-_registry_originals: ContextVar[dict[str, Tool | None] | None] = ContextVar(
-    "acp_registry_originals", default=None
-)
+def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
+    """Build supported client tools, leaving unsupported tools on the agent intact."""
 
-
-def _scoped_tool(
-    runtime: ACPClientToolRuntime, replacement: Tool, original: Tool | None
-) -> Tool:
-    def dispatch(*args: Any, **kwargs: Any) -> Any:
-        if _active_runtime.get() is runtime:
-            return replacement.run(*args, **kwargs)
-        if original is None:
-            raise RuntimeError(f"{replacement.name} is only available in an ACP turn")
-        if replacement.name == "bash":
-            kwargs.pop("title", None)
-        if not original.context:
-            kwargs.pop("context", None)
-        return original.run(*args, **kwargs)
-
-    return replace(replacement, handler=dispatch)
-
-
-@contextmanager
-def replace_builtin_tools(runtime: ACPClientToolRuntime) -> Generator[None]:
-    import_module("bub.builtin.tools")
-    originals = {name: REGISTRY.get(name) for name in _TOOL_NAMES}
-    token = _active_runtime.set(runtime)
-    originals_token = _registry_originals.set(originals)
-    try:
-        with ExitStack() as stack:
-            scope_token = _active_tool_scope.set(stack)
-            try:
-                _register_replacements(runtime)
-                for name, original in originals.items():
-                    REGISTRY[name] = _scoped_tool(runtime, REGISTRY[name], original)
-                yield
-            finally:
-                _active_tool_scope.reset(scope_token)
-    finally:
-        _active_runtime.reset(token)
-        _registry_originals.reset(originals_token)
-        for name, original in originals.items():
-            if original is None:
-                REGISTRY.pop(name, None)
-            else:
-                REGISTRY[name] = original
-
-
-def bind_client_tools(state: dict[str, Any]) -> None:
-    """Scope replacements to the turn's Agent, whose tools snapshot REGISTRY."""
-    runtime = _active_runtime.get()
-    stack = _active_tool_scope.get()
-    agent = state.get("_runtime_agent")
-    if runtime is None or stack is None or agent is None:
-        return
-    tools = agent.tools
-    originals = {name: tools.get(name) for name in _TOOL_NAMES}
-    for name, original in originals.items():
-        # Agents created inside this scope already copied the temporary registry.
-        if original is REGISTRY[name]:
-            originals[name] = (_registry_originals.get() or {}).get(name)
-        tools[name] = _scoped_tool(runtime, REGISTRY[name], originals[name])
-
-    def restore() -> None:
-        for name, original in originals.items():
-            if original is None:
-                tools.pop(name, None)
-            else:
-                tools[name] = original
-
-    stack.callback(restore)
-
-
-def _register_replacements(runtime: ACPClientToolRuntime) -> None:
-    @tool(name="bash", context=True)
+    @partial(Tool.from_callable, name="bash", context=True, preserve=True)
     async def bash(
         command: str,
         cwd: str | None = None,
         timeout_seconds: int = 30,
         background: bool = False,
-        title: str | None = None,
         *,
         context: ToolContext,
     ) -> str:
-        """Run a shell command through the ACP client terminal.
-
-        Set title to a short description displayed as the ACP tool call title.
-        If omitted, the command is used as the title.
-        """
-        # ACPStreamRouter reads the title from the streamed tool call arguments.
-        del title
+        """Run a shell command through the ACP client terminal."""
         return await runtime.bash(command, cwd, timeout_seconds, background, context)
 
-    @tool(name="bash.output", context=True)
+    @partial(Tool.from_callable, name="bash.output", context=True, preserve=True)
     async def bash_output(
         shell_id: str,
         offset: int = 0,
@@ -363,12 +265,12 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Read buffered output from an ACP client terminal."""
         return await runtime.bash_output(shell_id, offset, limit, context)
 
-    @tool(name="bash.kill", context=True)
+    @partial(Tool.from_callable, name="bash.kill", context=True, preserve=True)
     async def kill_bash(shell_id: str, *, context: ToolContext) -> str:
         """Terminate an ACP client terminal process."""
         return await runtime.kill_bash(shell_id, context)
 
-    @tool(name="fs.read", context=True)
+    @partial(Tool.from_callable, name="fs.read", context=True, preserve=True)
     async def fs_read(
         path: str,
         offset: int = 0,
@@ -379,7 +281,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Read a text file through the ACP client filesystem."""
         return await runtime.read_file(path, offset, limit, context)
 
-    @tool(name="fs.write", context=True)
+    @partial(Tool.from_callable, name="fs.write", context=True, preserve=True)
     async def fs_write(
         path: str,
         content: str,
@@ -389,7 +291,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Write a text file through the ACP client filesystem."""
         return await runtime.write_file(path, content, context)
 
-    @tool(name="fs.edit", context=True)
+    @partial(Tool.from_callable, name="fs.edit", context=True, preserve=True)
     async def fs_edit(
         path: str,
         old: str,
@@ -401,14 +303,40 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """Edit a text file through the ACP client filesystem."""
         return await runtime.edit_file(path, old, new, start, context)
 
-    @tool(name="update_plan", context=True, model=PlanInput)
-    async def update_plan_tool(
-        request: PlanInput,
-        *,
-        context: ToolContext,
-    ) -> str:
-        """Replace the ACP session plan and persist it to the current tape."""
-        return await runtime.update_plan(request, context)
+    async def ask_user_tool(*, context: ToolContext, **payload: Any) -> AskUserResult:
+        return await runtime.ask_user(AskUserInput.model_validate(payload), context)
+
+    ask_user = Tool(
+        name="ask_user",
+        description=(
+            "Ask the user a question through the ACP client's form UI and wait for a response. "
+            "Use string fields for free text or string enums for choices. "
+            "Returns JSON with action accept, decline, or cancel; accepted answers are in content. "
+            "Decline and cancel are not answers or approval."
+        ),
+        parameters=AskUserInput.model_json_schema(),
+        handler=ask_user_tool,
+        context=True,
+        output_schema=TypeAdapter(AskUserResult).json_schema(),
+    )
+
+    tools: list[Tool] = []
+    capabilities = runtime.capabilities
+    if (
+        capabilities.elicitation is not None
+        and capabilities.elicitation.form is not None
+    ):
+        tools.append(ask_user)
+    if capabilities.terminal:
+        tools.extend((bash, bash_output, kill_bash))
+    if fs := capabilities.fs:
+        if fs.read_text_file:
+            tools.append(fs_read)
+        if fs.write_text_file:
+            tools.append(fs_write)
+        if fs.read_text_file and fs.write_text_file:
+            tools.append(fs_edit)
+    return {item.name: item for item in tools}
 
 
 def _session_id(context: ToolContext) -> str:

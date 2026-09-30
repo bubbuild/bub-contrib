@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+from bub.builtin.agent import Agent
+from bub.framework import BubFramework
 from bub.tools import REGISTRY
 from bub_mcp import plugin
 
@@ -22,8 +25,8 @@ class FakeCallToolResult:
         is_error: bool = False,
     ) -> None:
         self.content = content or []
-        self.structuredContent = structured_content
-        self.isError = is_error
+        self.structured_content = structured_content
+        self.is_error = is_error
 
 
 class FakeRemoteTool:
@@ -49,9 +52,8 @@ class FakeClient:
         self.entered = True
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> bool:
+    async def close(self) -> None:
         self.exited = True
-        return False
 
     async def list_tools(self) -> list[FakeRemoteTool]:
         return [
@@ -85,12 +87,6 @@ def _make_channel(tmp_path: Path) -> plugin.MCPChannel:
     return channel
 
 
-def teardown_function() -> None:
-    for name in list(REGISTRY):
-        if name.startswith(plugin.TOOL_PREFIX):
-            REGISTRY.pop(name, None)
-
-
 def test_lifecycle_channel_uses_manager_start_and_stop(monkeypatch) -> None:
     channel = plugin.MCPChannel()
     calls: list[str] = []
@@ -120,7 +116,7 @@ def test_lifecycle_channel_uses_manager_start_and_stop(monkeypatch) -> None:
     assert calls == ["start", "stop"]
 
 
-def test_bootstrap_registers_remote_tools_and_forwards_calls(
+def test_bootstrap_discovers_remote_tools_without_global_registration(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("BUB_HOME", str(tmp_path))
@@ -150,7 +146,7 @@ def test_bootstrap_registers_remote_tools_and_forwards_calls(
     asyncio.run(start_channel())
 
     tool_name = "mcp.weather_get_forecast"
-    assert tool_name in REGISTRY
+    assert tool_name not in REGISTRY
     assert created_clients[0].entered is True
     assert created_clients[0].config == {
         "weather": {
@@ -164,7 +160,7 @@ def test_bootstrap_registers_remote_tools_and_forwards_calls(
     assert channel._servers["weather"].client is created_clients[0]
     assert [tool.name for tool in channel._servers["weather"].tools] == [tool_name]
 
-    result = asyncio.run(REGISTRY[tool_name].run(city="Paris"))
+    result = asyncio.run(channel.tools[tool_name].run(city="Paris"))
 
     assert result == "forecast for Paris"
     assert created_clients[0].tool_calls == [
@@ -288,7 +284,7 @@ def test_bootstrap_records_failed_server_and_keeps_successful_servers(
     assert channel._servers["broken"].client is None
     assert channel._servers["broken"].tools == []
     assert any("broken" in warning for warning in warnings)
-    assert REGISTRY["mcp.weather_get_forecast"] is not None
+    assert channel.tools["mcp.weather_get_forecast"] is not None
 
     asyncio.run(channel.stop())
 
@@ -398,52 +394,140 @@ def test_channel_remove_persists_changes(monkeypatch, tmp_path: Path) -> None:
     assert channel.settings.read_mcp_servers() == {}
 
 
-def test_format_tool_result_uses_structured_content_when_text_is_missing() -> None:
-    result = plugin._format_tool_result(
-        FakeCallToolResult(structured_content={"status": "ok", "count": 2})
+def test_tool_result_value_prefers_structured_content_for_typed_tools() -> None:
+    value = plugin._tool_result_value(
+        FakeCallToolResult(
+            content=[FakeTextContent('{"status": "ok", "count": 2}')],
+            structured_content={"status": "ok", "count": 2},
+        ),
+        mode="structured",
     )
 
-    assert '"status": "ok"' in result
-    assert '"count": 2' in result
+    assert value == {"status": "ok", "count": 2}
+    rendered = plugin._render_tool_value(value)
+    assert '"status": "ok"' in rendered
+    assert '"count": 2' in rendered
 
 
-def test_mcp_prompt_updates_existing_agents_and_stop_restores_tools(
+def test_untyped_tools_return_text_even_with_structured_content() -> None:
+    remote_tool = FakeRemoteTool(
+        "get_forecast", "Get forecast.", {"type": "object", "properties": {}}
+    )
+    output_schema, mode = plugin._output_schema(remote_tool)
+    value = plugin._tool_result_value(
+        FakeCallToolResult(
+            content=[FakeTextContent("forecast for Paris")],
+            structured_content={"city": "Paris"},
+        ),
+        mode=mode,
+    )
+
+    assert output_schema == {"type": "string"}
+    assert value == "forecast for Paris"
+    assert plugin._render_tool_value(value) == "forecast for Paris"
+
+
+def test_build_tool_forwards_remote_output_schema() -> None:
+    output_schema = {
+        "type": "object",
+        "properties": {"temperature": {"type": "number"}},
+        "required": ["temperature"],
+    }
+    remote_tool = FakeRemoteTool(
+        "get_forecast", "Get forecast.", {"type": "object", "properties": {}}
+    )
+    remote_tool.outputSchema = output_schema
+
+    tool = plugin.MCPChannel()._build_tool("weather", remote_tool)
+
+    assert tool is not None
+    assert tool.output_schema == output_schema
+    assert tool.render({"temperature": 21.5}) == '{\n  "temperature": 21.5\n}'
+
+
+def test_fastmcp_wrapped_results_are_unwrapped() -> None:
+    remote_tool = FakeRemoteTool(
+        "describe", "Describe.", {"type": "object", "properties": {}}
+    )
+    remote_tool.outputSchema = {
+        "type": "object",
+        "properties": {"result": {"type": "string"}},
+        "required": ["result"],
+        "x-fastmcp-wrap-result": True,
+    }
+
+    output_schema, mode = plugin._output_schema(remote_tool)
+    value = plugin._tool_result_value(
+        FakeCallToolResult(
+            content=[FakeTextContent("hello")], structured_content={"result": "hello"}
+        ),
+        mode=mode,
+    )
+
+    assert output_schema == {"type": "string"}
+    assert value == "hello"
+
+
+@pytest.mark.asyncio
+async def test_late_discovery_reaches_existing_agent_and_stop_restores_tools(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from bub.builtin.agent import Agent
-    from bub.framework import BubFramework
-    from bub.tools import Tool
-
     framework = BubFramework(config_file=tmp_path / "config.yml")
-    framework.workspace = tmp_path
     framework.load_builtin_hooks()
-    tool_name = "mcp.weather_get_forecast"
-    original = Tool(name=tool_name, handler=lambda **kwargs: "original")
-    monkeypatch.setitem(REGISTRY, tool_name, original)
-    agent = Agent(framework)
-    channel = plugin.MCPChannel.from_server_configs({"weather": {"command": "weather"}})
-    monkeypatch.setattr(
-        channel,
-        "_create_client",
-        lambda name, config: FakeClient(config, init_timeout_seconds=None),
-    )
     mcp_plugin = plugin.MCPPlugin(framework)
-    mcp_plugin._manager = channel
     framework.plugin_manager.register(mcp_plugin, name="mcp")
+    builtin = framework.plugin_manager.get_plugin("builtin")
+    agent = builtin._get_agent()
+    unrelated = Agent(framework)
+    original_registry = REGISTRY.copy()
+    original = plugin.Tool(name="mcp.weather_get_forecast", handler=lambda: "original")
+    agent.tools[original.name] = original
+    channel = mcp_plugin._manager
+    channel._server_configs = {"weather": {"command": "weather"}}
+    monkeypatch.setattr(plugin, "_create_fastmcp_client", FakeClient)
 
-    async def run_test() -> None:
-        await channel.start(asyncio.Event())
-        inbound = {"content": "forecast", "_runtime_agent": agent}
-        state = await framework.build_state(inbound, "test")
-        await framework.build_prompt(inbound, "test", state)
-        remote = REGISTRY[tool_name]
-        assert agent.tools[tool_name] is remote
-        assert await agent.tools[tool_name].run(city="Paris") == "forecast for Paris"
-        new_agent = Agent(framework)
-        await channel.bind_tools({"_runtime_agent": new_agent})
+    await channel.start(asyncio.Event())
+    try:
+        # build_state waits for discovery, even though the Agent predates it.
+        state = await framework.build_state({}, "test:weather")
+        assert state["_runtime_agent"] is agent
+        events = await agent.run_stream(
+            session_id="test:weather",
+            prompt=',mcp.weather_get_forecast city="Paris"',
+            state=state,
+        )
+        output = [
+            event.data.get("text") async for event in events if event.kind == "final"
+        ]
+        assert output == ["forecast for Paris"]
+        assert REGISTRY == original_registry
+        assert original.name not in unrelated.tools
+        # Repeated binding must not save our own tool as the collision fallback.
+        await framework.build_state({}, "test:weather")
+    finally:
         await channel.stop()
-        assert agent.tools[tool_name] is original
-        assert new_agent.tools[tool_name] is original
-        assert REGISTRY[tool_name] is original
+    assert agent.tools[original.name] is original
+    assert channel.tools == {}
 
-    asyncio.run(run_test())
+
+@pytest.mark.asyncio
+async def test_mcp_binds_explicit_runtime_agent_without_changing_default(
+    tmp_path: Path,
+) -> None:
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    default = framework.plugin_manager.get_plugin("builtin")._get_agent()
+    embedded = Agent(framework, tools=[])
+    channel = plugin.MCPChannel()
+    remote = plugin.Tool(name="mcp.embedded", handler=lambda: "ok")
+    channel._servers["embedded"] = plugin.MCPServerState(tools=[remote], connected=True)
+
+    await channel.bind_runtime_tools(framework, {"_runtime_agent": embedded})
+    assert embedded.tools[remote.name] is remote
+    assert remote.name not in default.tools
+    assert remote.name not in REGISTRY
+    # Shutdown must not remove a replacement installed by someone else.
+    replacement = plugin.Tool(name=remote.name, handler=lambda: "new")
+    embedded.tools[remote.name] = replacement
+    await channel.stop()
+    assert embedded.tools[remote.name] is replacement

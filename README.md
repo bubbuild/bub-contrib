@@ -46,6 +46,7 @@ Below is the list of packages currently included in this repository.
 ## Prerequisites
 
 - Python 3.12+ (workspace root)
+- Bub 0.5.x (the workspace pins the upstream `0.5.0` tag)
 - `uv` (recommended)
 
 ## Usage
@@ -62,6 +63,12 @@ Install all workspace dependencies:
 
 ```bash
 uv sync
+```
+
+Run the repository tests, including ACP's optional HTTP transport:
+
+```bash
+uv run --locked --group test pytest
 ```
 
 ## Governance Model

@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "bub",
+    "bub>=0.5.0,<0.6.0",
     "bub-acp-server",
     "bub-agent-plugins",
     "bub-codex",
@@ -39,7 +39,7 @@ dependencies = [
 members = ["packages/*"]
 
 [tool.uv.sources]
-bub = { git = "https://github.com/bubbuild/bub.git" }
+bub = { git = "https://github.com/bubbuild/bub.git", tag = "0.5.0" }
 bub-acp-server = { workspace = true }
 bub-agent-plugins = { workspace = true }
 bub-codex = { workspace = true }

@@ -25,8 +25,8 @@ class FakeCallToolResult:
         is_error: bool = False,
     ) -> None:
         self.content = content or []
-        self.structuredContent = structured_content
-        self.isError = is_error
+        self.structured_content = structured_content
+        self.is_error = is_error
 
 
 class FakeRemoteTool:
@@ -394,13 +394,78 @@ def test_channel_remove_persists_changes(monkeypatch, tmp_path: Path) -> None:
     assert channel.settings.read_mcp_servers() == {}
 
 
-def test_format_tool_result_uses_structured_content_when_text_is_missing() -> None:
-    result = plugin._format_tool_result(
-        FakeCallToolResult(structured_content={"status": "ok", "count": 2})
+def test_tool_result_value_prefers_structured_content_for_typed_tools() -> None:
+    value = plugin._tool_result_value(
+        FakeCallToolResult(
+            content=[FakeTextContent('{"status": "ok", "count": 2}')],
+            structured_content={"status": "ok", "count": 2},
+        ),
+        mode="structured",
     )
 
-    assert '"status": "ok"' in result
-    assert '"count": 2' in result
+    assert value == {"status": "ok", "count": 2}
+    rendered = plugin._render_tool_value(value)
+    assert '"status": "ok"' in rendered
+    assert '"count": 2' in rendered
+
+
+def test_untyped_tools_return_text_even_with_structured_content() -> None:
+    remote_tool = FakeRemoteTool(
+        "get_forecast", "Get forecast.", {"type": "object", "properties": {}}
+    )
+    output_schema, mode = plugin._output_schema(remote_tool)
+    value = plugin._tool_result_value(
+        FakeCallToolResult(
+            content=[FakeTextContent("forecast for Paris")],
+            structured_content={"city": "Paris"},
+        ),
+        mode=mode,
+    )
+
+    assert output_schema == {"type": "string"}
+    assert value == "forecast for Paris"
+    assert plugin._render_tool_value(value) == "forecast for Paris"
+
+
+def test_build_tool_forwards_remote_output_schema() -> None:
+    output_schema = {
+        "type": "object",
+        "properties": {"temperature": {"type": "number"}},
+        "required": ["temperature"],
+    }
+    remote_tool = FakeRemoteTool(
+        "get_forecast", "Get forecast.", {"type": "object", "properties": {}}
+    )
+    remote_tool.outputSchema = output_schema
+
+    tool = plugin.MCPChannel()._build_tool("weather", remote_tool)
+
+    assert tool is not None
+    assert tool.output_schema == output_schema
+    assert tool.render({"temperature": 21.5}) == '{\n  "temperature": 21.5\n}'
+
+
+def test_fastmcp_wrapped_results_are_unwrapped() -> None:
+    remote_tool = FakeRemoteTool(
+        "describe", "Describe.", {"type": "object", "properties": {}}
+    )
+    remote_tool.outputSchema = {
+        "type": "object",
+        "properties": {"result": {"type": "string"}},
+        "required": ["result"],
+        "x-fastmcp-wrap-result": True,
+    }
+
+    output_schema, mode = plugin._output_schema(remote_tool)
+    value = plugin._tool_result_value(
+        FakeCallToolResult(
+            content=[FakeTextContent("hello")], structured_content={"result": "hello"}
+        ),
+        mode=mode,
+    )
+
+    assert output_schema == {"type": "string"}
+    assert value == "hello"
 
 
 @pytest.mark.asyncio

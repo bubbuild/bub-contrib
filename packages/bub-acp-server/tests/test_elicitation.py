@@ -102,7 +102,8 @@ async def test_ask_user_routes_form_and_returns_user_action(response) -> None:
     result = await tool.run(
         message="Choose an approach", requested_schema=SCHEMA, context=context()
     )
-    assert json.loads(result) == response.model_dump(exclude_none=True)
+    assert result == response.model_dump(exclude_none=True)
+    assert json.loads(tool.render(result)) == result
     client.create_elicitation.assert_awaited_once()
     request = client.create_elicitation.call_args.kwargs
     assert request["message"] == "Choose an approach"

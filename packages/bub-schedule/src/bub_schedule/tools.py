@@ -1,7 +1,8 @@
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import TypedDict, cast, final
 
+from apscheduler.job import Job
 from apscheduler.jobstores.base import ConflictingIdError, JobLookupError
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -22,6 +23,45 @@ def _ensure_scheduler(state: dict) -> BaseScheduler:
     return cast(BaseScheduler, state["scheduler"])
 
 
+@final
+class ScheduledJob(TypedDict):
+    job_id: str
+    next_run: str | None
+    message: str
+
+
+@final
+class ScheduleRemoveResult(TypedDict):
+    job_id: str
+
+
+@final
+class ScheduleListResult(TypedDict):
+    jobs: list[ScheduledJob]
+
+
+def _next_run(job: Job) -> str | None:
+    if isinstance(job.next_run_time, datetime):
+        return job.next_run_time.isoformat()
+    return None
+
+
+def _scheduled_job(job: Job) -> ScheduledJob:
+    return {
+        "job_id": job.id,
+        "next_run": _next_run(job),
+        "message": str(job.kwargs.get("message", "")),
+    }
+
+
+def _render_list(result: ScheduleListResult) -> str:
+    rows = [
+        f"{job['job_id']} next={job['next_run'] or '-'} msg={job['message']}"
+        for job in result["jobs"]
+    ]
+    return "\n".join(rows) or "(no scheduled jobs)"
+
+
 class ScheduleAddInput(BaseModel):
     after_seconds: int | None = Field(
         None, description="If set, schedule to run after this many seconds from now"
@@ -39,8 +79,15 @@ class ScheduleAddInput(BaseModel):
     )
 
 
-@tool(name="schedule.add", context=True, model=ScheduleAddInput)
-def schedule_add(params: ScheduleAddInput, context: ToolContext) -> str:
+@tool(
+    name="schedule.add",
+    context=True,
+    model=ScheduleAddInput,
+    renderer=lambda result: (
+        f"scheduled: {result['job_id']} next={result['next_run'] or '-'}"
+    ),
+)
+def schedule_add(params: ScheduleAddInput, context: ToolContext) -> ScheduledJob:
     """Schedule a reminder message to be sent to current session in the future."""
     job_id = str(uuid.uuid4())[:8]
     if params.after_seconds is not None:
@@ -71,48 +118,47 @@ def schedule_add(params: ScheduleAddInput, context: ToolContext) -> str:
         )
     except ConflictingIdError as exc:
         raise RuntimeError(f"job id already exists: {job_id}") from exc
-
-    next_run = "-"
-    if isinstance(job.next_run_time, datetime):
-        next_run = job.next_run_time.isoformat()
-    return f"scheduled: {job.id} next={next_run}"
+    return _scheduled_job(job)
 
 
-@tool(name="schedule.remove", context=True)
-def schedule_remove(job_id: str, context: ToolContext) -> str:
+@tool(
+    name="schedule.remove",
+    context=True,
+    renderer=lambda result: f"removed: {result['job_id']}",
+)
+def schedule_remove(job_id: str, context: ToolContext) -> ScheduleRemoveResult:
     """Remove one scheduled job by id."""
     scheduler = _ensure_scheduler(context.state)
     try:
         scheduler.remove_job(job_id)
     except JobLookupError as exc:
         raise RuntimeError(f"job not found: {job_id}") from exc
-    return f"removed: {job_id}"
+    return {"job_id": job_id}
 
 
-@tool(name="schedule.list", context=True)
-def schedule_list(context: ToolContext) -> str:
+@tool(name="schedule.list", context=True, renderer=_render_list)
+def schedule_list(context: ToolContext) -> ScheduleListResult:
     """List scheduled jobs for current workspace."""
     scheduler = _ensure_scheduler(context.state)
-    jobs = scheduler.get_jobs()
-    rows: list[str] = []
-    for job in jobs:
-        next_run = "-"
-        if isinstance(job.next_run_time, datetime):
-            next_run = job.next_run_time.isoformat()
-        message = str(job.kwargs.get("message", ""))
+    session_id = context.state.get("session_id", "")
+    jobs: list[ScheduledJob] = []
+    for job in scheduler.get_jobs():
         job_session = job.kwargs.get("session_id")
-        if job_session and job_session != context.state.get("session_id", ""):
+        if job_session and job_session != session_id:
             continue
-        rows.append(f"{job.id} next={next_run} msg={message}")
-
-    if not rows:
-        return "(no scheduled jobs)"
-
-    return "\n".join(rows)
+        jobs.append(_scheduled_job(job))
+    return {"jobs": jobs}
 
 
-@tool(name="schedule.trigger", context=True)
-async def schedule_trigger(job_id: str, context: ToolContext) -> str:
+@tool(
+    name="schedule.trigger",
+    context=True,
+    renderer=lambda result: (
+        f"triggered: {result['job_id']}"
+        f" (next scheduled run: {result['next_run'] or '-'})"
+    ),
+)
+async def schedule_trigger(job_id: str, context: ToolContext) -> ScheduledJob:
     """Manually trigger a scheduled job to run immediately.
 
     Executes the job function directly without modifying the schedule.
@@ -133,10 +179,6 @@ async def schedule_trigger(job_id: str, context: ToolContext) -> str:
         if inspect.iscoroutine(result):
             await result
 
-        next_run = "-"
-        if isinstance(job.next_run_time, datetime):
-            next_run = job.next_run_time.isoformat()
-
-        return f"triggered: {job_id} (next scheduled run: {next_run})"
+        return _scheduled_job(job)
     except JobLookupError as exc:
         raise RuntimeError(f"job not found: {job_id}") from exc

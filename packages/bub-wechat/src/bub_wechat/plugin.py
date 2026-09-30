@@ -1,3 +1,5 @@
+from typing import TypedDict, final
+
 import typer
 from bub import BubFramework, hookimpl, tool
 from bub.builtin.auth import app as auth_app
@@ -21,16 +23,25 @@ def wechat():
 _channel: WeChatChannel | None = None
 
 
-@tool(name="wechat", context=True)
+@final
+class WechatSendResult(TypedDict):
+    chat_id: str
+
+
+@tool(
+    name="wechat",
+    context=True,
+    renderer=lambda result: "Message sent to wechat.",
+)
 async def wechat_send(
     message: OutgoingMessage, chat_id: str | None = None, *, context: ToolContext
-) -> str:
+) -> WechatSendResult:
     if _channel is None:
         raise RuntimeError("wechat channel is not initialized")
     if chat_id is None:
         chat_id = context.state["session_id"].split(":")[-1]
     await _channel.send_outgoing(chat_id, message)  # type: ignore
-    return "Message sent to wechat."
+    return {"chat_id": chat_id}
 
 
 class WechatPlugin:

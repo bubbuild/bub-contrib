@@ -91,13 +91,7 @@ def _context(tmp_path: Path) -> ToolContext:
 
 class FakeTape:
     def __init__(self) -> None:
-        self.events: list[tuple[str, dict[str, object], dict[str, object]]] = []
         self.handoffs: list[tuple[str, dict[str, object]]] = []
-
-    async def append_event(
-        self, name: str, payload: dict[str, object], **meta: object
-    ) -> None:
-        self.events.append((name, payload, meta))
 
     async def handoff(self, *, name: str, state: dict[str, object]) -> list[object]:
         self.handoffs.append((name, state))
@@ -335,70 +329,6 @@ async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_plan_updates_acp_ui_and_persists_tape(tmp_path: Path) -> None:
-    client = FakeClient()
-    tape = FakeTape()
-    context = ToolContext(
-        tape=cast(Any, tape),
-        run_id="run-1",
-        state={
-            "session_id": "acp-server:session-1",
-            "_runtime_workspace": str(tmp_path),
-        },
-    )
-    assert "update_plan" not in REGISTRY
-
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
-    result = await client_tools["update_plan"].run(
-        explanation="Start implementation",
-        plan=[
-            {"step": "Inspect the code", "status": "completed"},
-            {
-                "step": "Implement the change",
-                "status": "in_progress",
-                "priority": "high",
-            },
-        ],
-        context=context,
-    )
-
-    assert "update_plan" not in REGISTRY
-    assert result == "Plan updated with 2 steps"
-    assert tape.events == [
-        (
-            "plan",
-            {
-                "entries": [
-                    {
-                        "content": "Inspect the code",
-                        "priority": "medium",
-                        "status": "completed",
-                    },
-                    {
-                        "content": "Implement the change",
-                        "priority": "high",
-                        "status": "in_progress",
-                    },
-                ],
-                "explanation": "Start implementation",
-            },
-            {"run_id": "run-1"},
-        )
-    ]
-    session_id, update = client.session_updates[0]
-    assert session_id == "session-1"
-    assert update.session_update == "plan"
-    assert [entry.content for entry in update.entries] == [
-        "Inspect the code",
-        "Implement the change",
-    ]
-    assert [entry.status for entry in update.entries] == [
-        "completed",
-        "in_progress",
-    ]
-
-
-@pytest.mark.asyncio
 async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
     tmp_path: Path,
 ) -> None:
@@ -424,31 +354,9 @@ async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
     )
 
     assert REGISTRY["tape.handoff"] is original
-    assert result == "anchor added: phase-1"
+    assert result == {"anchor": "phase-1"}
+    assert client_tools["tape.handoff"].render(result) == "anchor added: phase-1"
     assert tape.handoffs == [("phase-1", {"summary": "Implementation complete"})]
-
-
-@pytest.mark.asyncio
-async def test_update_plan_rejects_multiple_in_progress_steps(tmp_path: Path) -> None:
-    client = FakeClient()
-    tape = FakeTape()
-    context = ToolContext(
-        tape=cast(Any, tape),
-        state={"session_id": "session-1", "_runtime_workspace": str(tmp_path)},
-    )
-
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
-    with pytest.raises(ValueError, match="at most one in_progress step"):
-        await client_tools["update_plan"].run(
-            plan=[
-                {"step": "First", "status": "in_progress"},
-                {"step": "Second", "status": "in_progress"},
-            ],
-            context=context,
-        )
-
-    assert tape.events == []
-    assert client.session_updates == []
 
 
 @pytest.mark.asyncio
@@ -490,17 +398,18 @@ async def test_initialize_selects_client_tools_by_capability(
         "bash.kill": terminal,
     }.items():
         assert (selected[name] is not originals[name]) == client_backed, name
-    assert "update_plan" in selected
+        # Client-backed overrides stay model-facing in code mode like the builtins.
+        assert selected[name].preserve == originals[name].preserve, name
     assert REGISTRY == originals
 
 
 @pytest.mark.parametrize(
     "capabilities", [None, ClientCapabilities(), ClientCapabilities(fs={})]
 )
-def test_missing_capabilities_only_adds_plan_tool(capabilities) -> None:
+def test_missing_capabilities_adds_no_client_tools(capabilities) -> None:
     runtime = ACPClientToolRuntime()
     runtime.set_capabilities(capabilities)
-    assert set(build_client_tools(runtime)) == {"update_plan"}
+    assert build_client_tools(runtime) == {}
 
 
 @pytest.mark.asyncio
@@ -537,7 +446,6 @@ async def test_real_agents_keep_acp_tools_connection_local(
     from acp.schema import TextContentBlock
     from bub.builtin.agent import Agent
     from bub.framework import BubFramework
-    from bub.tools import model_tools
 
     from bub_acp_server.agent import BubACPAgent
     from bub_acp_server.plugin import ACPServerPlugin
@@ -569,14 +477,14 @@ async def test_real_agents_keep_acp_tools_connection_local(
         inbound = server._build_inbound([], server._sessions[session_id])
         state = await framework.build_state(inbound, inbound.session_id)
         assert state["_runtime_agent"] is server._runtime_agents[session_id]
-        assert "update_plan" in {
-            t.name
-            for t in model_tools(server._runtime_agents[session_id].tools.values())
-        }
+        assert (
+            server._runtime_agents[session_id].tools["fs.read"]
+            is not original_registry["fs.read"]
+        )
         assert REGISTRY == original_registry
         assert default.tools == original_tools
         # Even an Agent created during an ACP connection gets only default tools.
-        assert "update_plan" not in Agent(framework).tools
+        assert Agent(framework).tools["fs.read"] is original_registry["fs.read"]
 
     assert len(first_client.read_requests) == 2
     assert len(second_client.read_requests) == 1

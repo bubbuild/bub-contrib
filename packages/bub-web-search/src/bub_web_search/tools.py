@@ -95,7 +95,9 @@ def _onboard_jina(current: dict[str, Any]) -> dict[str, Any]:
 def _onboard_reader(
     current: dict[str, Any], provider_config: dict[str, Any]
 ) -> dict[str, Any]:
-    has_jina_key = bool(provider_config.get("jina_api_key") or current.get("jina_api_key"))
+    has_jina_key = bool(
+        provider_config.get("jina_api_key") or current.get("jina_api_key")
+    )
     enable = bub_inquirer.ask_confirm(
         "Enable the web.read tool (Jina Reader)",
         default=has_jina_key,
@@ -105,7 +107,9 @@ def _onboard_reader(
     reader_config: dict[str, Any] = {}
     if not provider_config.get("jina_api_key"):
         api_key = bub_inquirer.ask_secret("Jina API key")
-        reader_config["jina_api_key"] = api_key or str(current.get("jina_api_key") or "")
+        reader_config["jina_api_key"] = api_key or str(
+            current.get("jina_api_key") or ""
+        )
     if "jina_reader_base" not in provider_config:
         reader_config["jina_reader_base"] = bub_inquirer.ask_text(
             "Jina reader base URL",
@@ -186,8 +190,10 @@ def _register_ollama_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.ollama_api_key:
         return None
 
-    @tool(name=SEARCH_TOOL_NAME)
-    async def web_search_ollama(query: str, max_results: int = 10) -> str:
+    @tool(name=SEARCH_TOOL_NAME, renderer=ollama.render_search_result)
+    async def web_search_ollama(
+        query: str, max_results: int = 10
+    ) -> ollama.OllamaSearchResult:
         """Search the web with Ollama and return concise results."""
         return await ollama.search(
             query=query, max_results=max_results, settings=settings
@@ -200,8 +206,8 @@ def _register_jina_search_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.jina_api_key:
         return None
 
-    @tool(name=SEARCH_TOOL_NAME)
-    async def web_search_jina(query: str) -> str:
+    @tool(name=SEARCH_TOOL_NAME, renderer=jina.render_content)
+    async def web_search_jina(query: str) -> jina.JinaSearchResult:
         """Search the web with Jina Search and return SERP results."""
         return await jina.search(query=query, settings=settings)
 
@@ -212,8 +218,8 @@ def _register_jina_read_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.jina_api_key:
         return None
 
-    @tool(name=READ_TOOL_NAME)
-    async def web_read_jina(url: str) -> str:
+    @tool(name=READ_TOOL_NAME, renderer=jina.render_content)
+    async def web_read_jina(url: str) -> jina.JinaReadResult:
         """Read a webpage and return its main content as clean markdown."""
         return await jina.read(url=url, settings=settings)
 
@@ -228,8 +234,11 @@ def _register_searxng_tool(settings: WebSearchSettings) -> Tool | None:
         name=SEARCH_TOOL_NAME,
         model=searxng.SearXNGSearchInput,
         description="Search a configured SearXNG instance and return concise web results.",
+        renderer=searxng.render_search_result,
     )
-    async def searxng_search(param: searxng.SearXNGSearchInput) -> str:
+    async def searxng_search(
+        param: searxng.SearXNGSearchInput,
+    ) -> searxng.SearXNGSearchResult:
         return await searxng.search(param=param, settings=settings)
 
     return searxng_search

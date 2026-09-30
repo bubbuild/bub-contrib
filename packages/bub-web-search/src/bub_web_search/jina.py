@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+from typing import TypedDict, final
 from urllib.parse import quote
 
 from bub_web_search.config import WebSearchSettings
 
 WEB_USER_AGENT = "bub-web-search/1.0"
 MAX_ERROR_BODY_CHARS = 500
+
+
+@final
+class JinaSearchResult(TypedDict):
+    query: str
+    content: str
+
+
+@final
+class JinaReadResult(TypedDict):
+    url: str
+    content: str
+
+
+def render_content(result: JinaSearchResult | JinaReadResult) -> str:
+    return result["content"] or "none"
 
 
 def reader_url(base: str, url: str) -> str:
@@ -26,7 +43,7 @@ async def _request(
 
     api_key = settings.jina_api_key
     if not api_key:
-        return "error: jina api key is not configured"
+        raise RuntimeError("error: jina api key is not configured")
 
     headers = {
         "Accept": "*/*",
@@ -46,32 +63,35 @@ async def _request(
             session.get(endpoint, headers=headers) as response,
         ):
             body = await response.text()
-            if response.status != 200:
-                snippet = body[:MAX_ERROR_BODY_CHARS]
-                return f"error: jina returned status {response.status}: {snippet}"
-    except TimeoutError:
-        return "error: jina request timed out"
+            status = response.status
+    except TimeoutError as exc:
+        raise RuntimeError("error: jina request timed out") from exc
     except aiohttp.ClientError as exc:
-        return f"HTTP error: {exc!s}"
+        raise RuntimeError(f"HTTP error: {exc!s}") from exc
 
-    return body.strip() or "none"
+    if status != 200:
+        snippet = body[:MAX_ERROR_BODY_CHARS]
+        raise RuntimeError(f"error: jina returned status {status}: {snippet}")
+    return body.strip()
 
 
-async def search(*, query: str, settings: WebSearchSettings) -> str:
+async def search(*, query: str, settings: WebSearchSettings) -> JinaSearchResult:
     base = settings.jina_search_base.strip().rstrip("/")
     if not base:
-        return "error: invalid jina search base url"
+        raise RuntimeError("error: invalid jina search base url")
     endpoint = f"{base}/?q={quote(query)}"
     # "no-content" keeps the SERP compact: titles, URLs and snippets only.
-    return await _request(
+    content = await _request(
         endpoint, settings=settings, extra_headers={"X-Respond-With": "no-content"}
     )
+    return {"query": query, "content": content}
 
 
-async def read(*, url: str, settings: WebSearchSettings) -> str:
+async def read(*, url: str, settings: WebSearchSettings) -> JinaReadResult:
     target = url.strip()
     if not target:
-        return "error: url must not be blank"
-    return await _request(
+        raise ValueError("error: url must not be blank")
+    content = await _request(
         reader_url(settings.jina_reader_base, target), settings=settings
     )
+    return {"url": target, "content": content}

@@ -11,8 +11,6 @@ Expose Bub as an Agent Client Protocol agent.
 - ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/delete`, `session/close`, and `session/prompt`
 - Streaming ACP `session/update` events from Bub stream events
 - ACP client-backed replacements for Bub's `bash`, `fs.read`, `fs.write`, and `fs.edit` tools while the ACP server is running
-- An ACP-aware `update_plan` tool that updates the client plan UI and records each complete plan as a `plan` event in the session tape
-- Automatic recovery of the latest persisted plan into the next ACP turn's model context
 - Session-scoped model and reasoning-effort selection through ACP config options
 - Session MCP servers over stdio, Streamable HTTP, and SSE via `bub-mcp`
 - ACP context-compaction notifications when `tape.handoff` runs
@@ -56,7 +54,7 @@ The ACP stream router reports Bub's built-in `tape.handoff` as a context-compact
 
 Bub keeps using its own configuration, tools, skills, and tapes. The ACP client starts the process and displays the session; it does not replace Bub's model setup.
 
-Each ACP connection owns a Bub `Agent` for each session, with client filesystem, terminal, and plan tools. The agent
+Each ACP connection owns a Bub `Agent` for each session, with client filesystem, terminal, and elicitation tools. The agent
 is passed through the inbound message's `_runtime_agent` field so tape recovery, tool descriptions,
 and execution use the same instance. Client tools never modify the global `REGISTRY`, and other
 agents keep their own tools. This requires Bub's instance-tool API introduced in upstream PR #311.
@@ -183,7 +181,7 @@ Client-backed tools are selected from the capabilities advertised during initial
 - Both filesystem capabilities are required for client-backed `fs.edit`.
 - `terminal` enables client-backed `bash`, `bash.output`, and `bash.kill` together.
 
-Missing or false capabilities leave the corresponding Bub local tools in place. The ACP `update_plan` tool is always available.
+Missing or false capabilities leave the corresponding Bub local tools in place.
 
 ### Asking the user
 
@@ -219,7 +217,7 @@ to display the UI; tool-execution permission dialogs are a separate mechanism.
 
 ### Connection isolation
 
-Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools and plan instructions are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
+Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
 
 The dependency is pinned to **agent-client-protocol 1.0.0rc2**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc2 or an equivalent implementation of load request/response correlation, including sessions with empty history.
 

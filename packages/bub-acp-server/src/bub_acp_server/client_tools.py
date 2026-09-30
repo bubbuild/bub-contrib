@@ -5,40 +5,32 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, NotRequired, TypedDict, cast, final
 
 from acp.interfaces import Client
 from acp.schema import (
-    AgentPlanUpdate,
     ClientCapabilities,
     ElicitationFormSessionMode,
     ElicitationSchema,
-    PlanEntry,
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, TypeAdapter
 from bub.tools import Tool, ToolContext
 
 type TerminalObserver = Callable[[str, str, str], Awaitable[None]]
-type PlanStatus = Literal["pending", "in_progress", "completed"]
-type PlanPriority = Literal["high", "medium", "low"]
-
-
-class PlanItem(BaseModel):
-    step: str = Field(min_length=1)
-    status: PlanStatus
-    priority: PlanPriority = "medium"
-
-
-class PlanInput(BaseModel):
-    explanation: str | None = None
-    plan: list[PlanItem]
 
 
 class AskUserInput(BaseModel):
     message: str
     requested_schema: ElicitationSchema
+
+
+@final
+class AskUserResult(TypedDict):
+    action: str
+    """accept, decline, cancel, or a client-specific action."""
+    content: NotRequired[dict[str, str | int | float | bool | list[str]]]
 
 
 class ACPClientToolRuntime:
@@ -210,42 +202,14 @@ class ACPClientToolRuntime:
         finally:
             await client.release_terminal(session_id=session_id, terminal_id=shell_id)
 
-    async def update_plan(
-        self,
-        request: PlanInput,
-        context: ToolContext,
-    ) -> str:
-        plan = request.plan
-        in_progress = sum(item.status == "in_progress" for item in plan)
-        if in_progress > 1:
-            raise ValueError("plan must contain at most one in_progress step")
-
-        entries = [
-            PlanEntry(
-                content=item.step,
-                priority=item.priority,
-                status=item.status,
-            )
-            for item in plan
-        ]
-        payload: dict[str, object] = {
-            "entries": [entry.model_dump(exclude_none=True) for entry in entries]
-        }
-        if request.explanation:
-            payload["explanation"] = request.explanation
-
-        await context.tape.append_event("plan", payload, run_id=context.run_id)
-        await self._require_client().session_update(
-            _session_id(context), AgentPlanUpdate(entries=entries)
-        )
-        return f"Plan updated with {len(plan)} steps"
-
     def _require_client(self) -> Client:
         if self._client is None:
             raise RuntimeError("ACP client is not connected")
         return self._client
 
-    async def ask_user(self, request: AskUserInput, context: ToolContext) -> str:
+    async def ask_user(
+        self, request: AskUserInput, context: ToolContext
+    ) -> AskUserResult:
         client = self._require_client()
         elicitation = self._capabilities.elicitation
         if elicitation is None or elicitation.form is None:
@@ -257,11 +221,15 @@ class ACPClientToolRuntime:
                 requested_schema=request.requested_schema,
             ),
         )
-        return response.model_dump_json(
-            include={"action", "content"}
-            if response.action == "accept"
-            else {"action"},
-            exclude_none=True,
+        return cast(
+            AskUserResult,
+            response.model_dump(
+                mode="json",
+                include={"action", "content"}
+                if response.action == "accept"
+                else {"action"},
+                exclude_none=True,
+            ),
         )
 
     def _require_terminal_client(self) -> Client:
@@ -274,7 +242,7 @@ class ACPClientToolRuntime:
 def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
     """Build supported client tools, leaving unsupported tools on the agent intact."""
 
-    @partial(Tool.from_callable, name="bash", context=True)
+    @partial(Tool.from_callable, name="bash", context=True, preserve=True)
     async def bash(
         command: str,
         cwd: str | None = None,
@@ -286,7 +254,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Run a shell command through the ACP client terminal."""
         return await runtime.bash(command, cwd, timeout_seconds, background, context)
 
-    @partial(Tool.from_callable, name="bash.output", context=True)
+    @partial(Tool.from_callable, name="bash.output", context=True, preserve=True)
     async def bash_output(
         shell_id: str,
         offset: int = 0,
@@ -297,12 +265,12 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Read buffered output from an ACP client terminal."""
         return await runtime.bash_output(shell_id, offset, limit, context)
 
-    @partial(Tool.from_callable, name="bash.kill", context=True)
+    @partial(Tool.from_callable, name="bash.kill", context=True, preserve=True)
     async def kill_bash(shell_id: str, *, context: ToolContext) -> str:
         """Terminate an ACP client terminal process."""
         return await runtime.kill_bash(shell_id, context)
 
-    @partial(Tool.from_callable, name="fs.read", context=True)
+    @partial(Tool.from_callable, name="fs.read", context=True, preserve=True)
     async def fs_read(
         path: str,
         offset: int = 0,
@@ -313,7 +281,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Read a text file through the ACP client filesystem."""
         return await runtime.read_file(path, offset, limit, context)
 
-    @partial(Tool.from_callable, name="fs.write", context=True)
+    @partial(Tool.from_callable, name="fs.write", context=True, preserve=True)
     async def fs_write(
         path: str,
         content: str,
@@ -323,7 +291,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Write a text file through the ACP client filesystem."""
         return await runtime.write_file(path, content, context)
 
-    @partial(Tool.from_callable, name="fs.edit", context=True)
+    @partial(Tool.from_callable, name="fs.edit", context=True, preserve=True)
     async def fs_edit(
         path: str,
         old: str,
@@ -335,10 +303,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Edit a text file through the ACP client filesystem."""
         return await runtime.edit_file(path, old, new, start, context)
 
-    async def update_plan_tool(*, context: ToolContext, **payload: Any) -> str:
-        return await runtime.update_plan(PlanInput.model_validate(payload), context)
-
-    async def ask_user_tool(*, context: ToolContext, **payload: Any) -> str:
+    async def ask_user_tool(*, context: ToolContext, **payload: Any) -> AskUserResult:
         return await runtime.ask_user(AskUserInput.model_validate(payload), context)
 
     ask_user = Tool(
@@ -352,16 +317,10 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         parameters=AskUserInput.model_json_schema(),
         handler=ask_user_tool,
         context=True,
+        output_schema=TypeAdapter(AskUserResult).json_schema(),
     )
 
-    plan_tool = Tool(
-        name="update_plan",
-        description="Replace the ACP session plan and persist it to the current tape.",
-        parameters=PlanInput.model_json_schema(),
-        handler=update_plan_tool,
-        context=True,
-    )
-    tools = [plan_tool]
+    tools: list[Tool] = []
     capabilities = runtime.capabilities
     if (
         capabilities.elicitation is not None

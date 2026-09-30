@@ -531,3 +531,165 @@ async def test_mcp_binds_explicit_runtime_agent_without_changing_default(
     embedded.tools[remote.name] = replacement
     await channel.stop()
     assert embedded.tools[remote.name] is replacement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code_mode", [False, True])
+@pytest.mark.parametrize(
+    ("allowed", "excluded", "expected"),
+    [
+        (None, [], {"mcp_weather_get_forecast", "mcp_weather_archive"}),
+        ([], [], set()),
+        (["mcp_weather_get_forecast"], [], {"mcp_weather_get_forecast"}),
+        (["mcp.weather_*"], ["*_archive"], {"mcp_weather_get_forecast"}),
+        (["mcp.weather_get_forecast"], ["mcp_weather_get_forecast"], set()),
+    ],
+)
+async def test_configured_selection_controls_model_requests_and_remote_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    code_mode: bool,
+    allowed: list[str] | None,
+    excluded: list[str],
+    expected: set[str],
+) -> None:
+    import json
+    from typing import Any
+
+    from any_llm.types.completion import ChatCompletion
+    from bub.builtin.codemode import run_code
+    from fastmcp import Client, FastMCP
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path))
+    monkeypatch.setenv("BUB_MCP_EXCLUDED_TOOLS", json.dumps(excluded))
+    if allowed is None:
+        monkeypatch.delenv("BUB_MCP_ALLOWED_TOOLS", raising=False)
+    else:
+        monkeypatch.setenv("BUB_MCP_ALLOWED_TOOLS", json.dumps(allowed))
+    calls: list[tuple[str, dict[str, object]]] = []
+    requests: list[dict[str, Any]] = []
+
+    server = FastMCP("weather")
+
+    @server.tool(name="weather_get_forecast")
+    def forecast(city: str) -> str:
+        """Get forecast from remote MCP server."""
+        calls.append(("weather_get_forecast", {"city": city}))
+        return f"forecast for {city}"
+
+    @server.tool
+    def archive(city: str) -> str:
+        """Archive weather."""
+        calls.append(("archive", {"city": city}))
+        return f"archived {city}"
+
+    class Provider:
+        SUPPORTS_COMPLETION_STREAMING = False
+
+        async def acompletion(self, **kwargs: Any) -> ChatCompletion:
+            requests.append(kwargs)
+            message: dict[str, Any] = {"role": "assistant", "content": "done"}
+            if (code_mode and len(requests) == 1) or (
+                not code_mode and expected and len(requests) <= 2
+            ):
+                if code_mode:
+                    name = "run_code"
+                    arguments = {
+                        "code": "try:\n    print(await tools.mcp_weather_get_forecast(city='Paris'))\nexcept Exception as exc:\n    print(exc)"
+                    }
+                elif len(requests) == 1:
+                    name = "tool_describe"
+                    arguments = {"names": ["mcp_weather_get_forecast"]}
+                else:
+                    name = "mcp_weather_get_forecast"
+                    arguments = {"city": "Paris"}
+                message = {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call-weather",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                }
+            return ChatCompletion.model_validate(
+                {
+                    "id": "reply",
+                    "model": "test-model",
+                    "created": 0,
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "tool_calls"
+                            if "tool_calls" in message
+                            else "stop",
+                            "message": message,
+                        }
+                    ],
+                }
+            )
+
+    monkeypatch.setattr(
+        plugin, "_create_fastmcp_client", lambda *args, **kwargs: Client(server)
+    )
+    monkeypatch.setattr(
+        "bub.builtin.model_runner.AnyLLM.create", lambda *args, **kwargs: Provider()
+    )
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    agent = Agent(framework, tools=[run_code] if code_mode else [], skill_dirs=[])
+    channel = plugin.MCPChannel.from_server_configs({"weather": {"command": "weather"}})
+    await channel.connect()
+    try:
+        channel.bind_agent(agent)
+        stream = await agent.run_stream(
+            session_id="test:selection",
+            prompt="Get the forecast for Paris.",
+            model="openrouter:test-model",
+            state={"code_mode": code_mode, "_runtime_workspace": str(tmp_path)},
+        )
+        events = [event async for event in stream]
+    finally:
+        await channel.stop()
+
+    assert any(
+        event.kind == "final" and event.data.get("text") == "done" for event in events
+    )
+    definitions = requests[0].get("tools") or []
+    assert {item["function"]["name"] for item in definitions} == (
+        {"run_code"} if code_mode else {"tool_describe"} if expected else set()
+    )
+    if not code_mode:
+        catalog = "\n".join(
+            message["content"]
+            for message in requests[0]["messages"]
+            if message["role"] == "system"
+        )
+        for name in {"mcp_weather_get_forecast", "mcp_weather_archive"}:
+            assert (name in catalog) == (name in expected)
+        if expected:
+            assert {item["function"]["name"] for item in requests[1]["tools"]} == {
+                "tool_describe",
+                "mcp_weather_get_forecast",
+            }
+    if expected:
+        assert calls == [("weather_get_forecast", {"city": "Paris"})]
+        assert any(
+            message.get("content") == "forecast for Paris"
+            or message.get("content") == "forecast for Paris\n"
+            for message in requests[-1]["messages"]
+            if message["role"] == "tool"
+        )
+    else:
+        assert calls == []
+        if code_mode:
+            assert not any(
+                "forecast for Paris" in message.get("content", "")
+                for message in requests[1]["messages"]
+                if message["role"] == "tool"
+            )

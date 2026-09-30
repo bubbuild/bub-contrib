@@ -32,6 +32,42 @@ The file must contain a top-level `mcpServers` mapping:
 }
 ```
 
+## Tool definitions
+
+In ordinary tool mode, MCP tools initially appear as names and short summaries.
+The model uses `tool_describe` to obtain selected native definitions, then calls
+the original tools normally. Definitions are reused within the current tape
+context, including after restart. Code mode continues to use its Python stub.
+This requires a Bub version supporting `Tool.defer_loading`.
+
+## Tool selection
+
+Limit the remote tools bound to Agents through Bub's `config.yml`:
+
+```yaml
+mcp:
+  allowed_tools:
+    - mcp.lody_session_list
+    - mcp.lody_session_history
+    - mcp.time_*
+  excluded_tools:
+    - mcp.time_convert_time
+```
+
+The equivalent environment variables are `BUB_MCP_ALLOWED_TOOLS` and
+`BUB_MCP_EXCLUDED_TOOLS`, each containing a JSON array of name patterns. Patterns
+are case-sensitive and accept shell wildcards such as `*` and `?`. Use runtime
+names (`mcp.lody_session_list`) or model aliases (`mcp_lody_session_list`).
+Exclusions take precedence. Omitting `allowed_tools` allows all discovered tools;
+an empty list exposes none. Restart Bub after changing configuration.
+
+Selection applies to both direct model calls and code mode, including embedded
+MCP channels. It does not change tool descriptions or parameter schemas. Servers
+still connect and discover their complete tool catalogs; the operator's
+`bub mcp list` command shows that catalog, while the agent's `mcp` tool lists only
+allowed tools. Selection also limits the summaries and definitions available
+through `tool_describe`; deferred exposure does not bypass these restrictions.
+
 ## CLI Usage
 
 Use the CLI to inspect and manage `mcp.json`:

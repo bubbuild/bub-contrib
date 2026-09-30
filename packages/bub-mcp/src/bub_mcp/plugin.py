@@ -219,12 +219,13 @@ class MCPChannel(Lifecycle):
 
     @property
     def tools(self) -> dict[str, Tool]:
-        """Tools from currently connected servers; never registered globally."""
+        """Selected tools from connected servers; never registered globally."""
         return {
             tool.name: tool
             for server in self._servers.values()
             if server.connected
             for tool in server.tools
+            if self.settings.allows_tool(tool.name)
         }
 
     def bind_agent(self, agent: Agent) -> None:
@@ -440,6 +441,7 @@ class MCPChannel(Lifecycle):
             handler=self._make_handler(server_name, remote_name, result_mode),
             renderer=_render_tool_value,
             output_schema=output_schema,
+            defer_loading=True,
         )
 
     def _record_failed_server(
@@ -528,15 +530,16 @@ def _render_server_list(result: MCPServerList) -> str:
 
 @tool(name="mcp", context=True, renderer=_render_server_list)
 def mcp_list(*, context: ToolContext) -> MCPServerList:
-    """List configured MCP servers."""
+    """List configured MCP servers and their exposed tools."""
     manager = context.state.get("mcp")
     if not isinstance(manager, MCPChannel):
         raise RuntimeError("MCP channel is not available in state")
+    available = manager.tools
     return {
         "servers": {
             name: {
                 "connected": server.connected,
-                "tools": [tool.name for tool in server.tools],
+                "tools": [tool.name for tool in server.tools if tool.name in available],
                 "error": server.error,
             }
             for name, server in manager.list().items()

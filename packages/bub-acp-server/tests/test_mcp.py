@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -19,7 +20,7 @@ from acp.schema import (
 )
 from bub.builtin.agent import Agent
 from bub.framework import BubFramework
-from bub.tools import REGISTRY
+from bub.tools import REGISTRY, Tool
 from bub_mcp import plugin as mcp_plugin
 
 from bub_acp_server.agent import BubACPAgent
@@ -194,16 +195,25 @@ async def test_capabilities_and_session_tool_isolation(framework, clients, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_model_receives_only_current_session_mcp_tools(
-    framework, clients, tmp_path, monkeypatch
-):
+async def test_model_receives_only_current_session_mcp_summaries(
+    framework: BubFramework,
+    clients: list[MCPClient],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from bub.builtin.model_runner import ModelRunner
     from bub.streaming import AsyncStreamEvents, StreamEvent
 
-    seen = []
+    seen: list[tuple[set[str], str]] = []
 
-    def run(self, *, tools, **kwargs):
-        seen.append({tool.name for tool in tools})
+    def run(
+        self: ModelRunner,
+        *,
+        tools: list[Tool],
+        system_prompt: str | None,
+        **kwargs: Any,
+    ) -> AsyncStreamEvents:
+        seen.append(({tool.name for tool in tools}, system_prompt or ""))
 
         async def events():
             yield StreamEvent("text", {"delta": "ok"})
@@ -224,9 +234,18 @@ async def test_model_receives_only_current_session_mcp_tools(
             await agent.prompt(
                 session_id=session.session_id, prompt=[TextContentBlock(text="hello")]
             )
-        # Bub aliases dots for the model, but execution still uses each session's tool object.
-        assert "mcp_first_echo" in seen[0] and "mcp_second_echo" not in seen[0]
-        assert "mcp_second_echo" in seen[1] and "mcp_first_echo" not in seen[1]
+        for (names, prompt), (own, other) in zip(
+            seen,
+            [
+                ("mcp_first_echo", "mcp_second_echo"),
+                ("mcp_second_echo", "mcp_first_echo"),
+            ],
+            strict=True,
+        ):
+            assert "tool_describe" in names
+            assert not {own, other} & names
+            assert f"- {own}:" in prompt
+            assert other not in prompt
     finally:
         await agent.shutdown()
 

@@ -20,8 +20,10 @@ bub install bub-mcp@main
 bub install bub-agent-plugins@main
 ```
 
-`bub-mcp>=0.2.0` is installed as a runtime dependency. Both packages require
-`bub>=0.5.0,<0.6.0`. The existing `~/.bub/mcp.json` configuration remains independent.
+`bub-mcp>=0.2.0` is a runtime requirement, but intentionally not a transitive package dependency,
+matching the repository convention that Bub host capabilities are installed explicitly into the
+same environment. Its existing `~/.bub/mcp.json` configuration remains independent.
+Both packages require `bub>=0.5.0,<0.6.0`.
 
 ## Discovery and configuration
 

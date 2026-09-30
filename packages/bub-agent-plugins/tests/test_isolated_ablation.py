@@ -62,6 +62,7 @@ def test_standard_plugin_in_an_isolated_environment(tmp_path: Path) -> None:
             uv,
             "pip",
             "install",
+            "--no-sources",
             "--python",
             str(isolated_python),
             _bub_source(repository_root),

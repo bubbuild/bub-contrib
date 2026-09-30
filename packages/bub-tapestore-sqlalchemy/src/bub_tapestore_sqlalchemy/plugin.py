@@ -6,13 +6,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import bub
+from bub import hookimpl
+from bub import inquirer as bub_inquirer
 from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 from sqlalchemy import URL
 
-import bub
-from bub import hookimpl
-from bub import inquirer as bub_inquirer
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 
 CONFIG_NAME = "tapestore-sqlalchemy"
@@ -29,6 +29,7 @@ class SQLAlchemyTapeStoreSettings(bub.Settings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     url: str | None = Field(

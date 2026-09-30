@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from bub_feishu import plugin
 
 
@@ -38,3 +41,16 @@ def test_onboard_config_collects_feishu_settings(monkeypatch) -> None:
 
 def test_onboard_config_skips_when_feishu_is_disabled() -> None:
     assert plugin.onboard_config({"enabled_channels": "discord"}) is None
+
+
+def test_importing_plugin_registers_settings_before_channels_are_created() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from bub_feishu import plugin\n"
+            "from bub.configure import CONFIG_MAP\n"
+            "assert any(cls.__name__ == 'FeishuConfig' for cls in CONFIG_MAP['feishu'])",
+        ],
+        check=True,
+    )

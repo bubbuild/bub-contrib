@@ -8,10 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub",
     "extism>=1.1.1,<1.2.0",
     "extism-sys>=1.12.0,<1.13.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.10.1",
+    "typer",
 ]
 
 [project.entry-points.bub]

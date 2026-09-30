@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import bub
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 PLUGIN_HOOK_NAMES = (
     "resolve_session",
@@ -28,8 +29,6 @@ ALLOWED_HOOK_NAMES = frozenset((*PLUGIN_HOOK_NAMES, CLI_HOOK_NAME))
 
 
 def default_config_path() -> Path:
-    import bub
-
     return bub.home / "extism.json"
 
 
@@ -64,7 +63,8 @@ class ExtismConfig(BaseModel):
     plugins: dict[str, ExtismPluginConfig] = Field(default_factory=dict)
 
 
-class ExtismSettings(BaseSettings):
+@bub.config(name="extism")
+class ExtismSettings(bub.Settings):
     model_config = SettingsConfigDict(env_prefix="BUB_EXTISM_", extra="ignore")
 
     config_path: Path = Field(default_factory=default_config_path)

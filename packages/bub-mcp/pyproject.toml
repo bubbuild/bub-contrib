@@ -8,8 +8,13 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub",
     "fastmcp>=3.2.0,<4",
+    "loguru",
+    "mcp",
+    "pydantic",
     "pydantic-settings>=2.10.1",
+    "typer",
 ]
 
 [project.entry-points.bub]

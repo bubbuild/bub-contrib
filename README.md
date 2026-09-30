@@ -64,6 +64,12 @@ Install all workspace dependencies:
 uv sync
 ```
 
+Run the repository tests, including ACP's optional HTTP transport:
+
+```bash
+uv run --locked --group test pytest
+```
+
 ## Governance Model
 
 We encourage all plugin contributors to take responsibility for the ongoing maintenance of their submitted plugins. Each plugin should ideally have at least one active maintainer who is familiar with its domain and willing to respond to issues or update dependencies as needed.

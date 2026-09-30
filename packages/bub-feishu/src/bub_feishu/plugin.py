@@ -5,6 +5,8 @@ from bub import inquirer as bub_inquirer
 from bub.channels import Channel
 from bub.channels.contracts import MessageHandler
 
+from .channel import FeishuChannel
+
 CHANNEL_NAME = "feishu"
 
 
@@ -20,8 +22,6 @@ def _channel_enabled(current_config: dict[str, Any]) -> bool:
 
 @hookimpl
 def provide_channels(message_handler: MessageHandler) -> list[Channel]:
-    from .channel import FeishuChannel
-
     return [FeishuChannel(message_handler)]
 
 

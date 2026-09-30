@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from bub import configure
-import bub_tapestore_redis.plugin as plugin
+from bub_tapestore_redis import plugin
 from bub_tapestore_redis.plugin import RedisTapeStoreSettings
 from bub_tapestore_redis.store import DEFAULT_KEY_PREFIX, RedisTapeStore
 
@@ -100,3 +100,22 @@ def test_onboard_config_skips_redis_when_declined(monkeypatch) -> None:
     )
 
     assert plugin.onboard_config({}) is None
+
+
+def test_settings_use_bub_config_field_names(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BUB_TAPESTORE_REDIS_URL", raising=False)
+    monkeypatch.delenv("BUB_TAPESTORE_REDIS_KEY_PREFIX", raising=False)
+    config_file = tmp_path / "bub.yaml"
+    config_data = {
+        "url": "redis://configured.example:6379/8",
+        "key_prefix": "configured:tapes",
+    }
+    configure.save(config_file, {plugin.CONFIG_NAME: config_data})
+    configure.load(config_file)
+    try:
+        settings = plugin.bub.ensure_config(RedisTapeStoreSettings)
+        assert settings.url == "redis://configured.example:6379/8"
+        assert settings.key_prefix == "configured:tapes"
+    finally:
+        configure.load(tmp_path / "missing.yaml")

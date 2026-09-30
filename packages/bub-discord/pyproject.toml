@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub",
+    "loguru",
+    "pydantic-settings",
     "discord-py>=2.7.1",
 ]
 

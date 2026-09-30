@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub",
+    "loguru",
+    "typer",
     "weixin-bot-sdk>=0.2.0",
 ]
 

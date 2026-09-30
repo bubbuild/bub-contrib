@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "bub",
     "fastmcp>=3.2.0,<4",
+    "loguru",
     "pydantic-settings>=2.10.1",
 ]
 

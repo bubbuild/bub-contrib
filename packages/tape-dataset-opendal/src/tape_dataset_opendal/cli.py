@@ -76,12 +76,6 @@ def export_command(
     filter_file: FilterFileOption = None,
 ) -> None:
     framework = _framework_from_context(ctx)
-    tape_store = framework.get_tape_store()
-    if tape_store is None:
-        raise typer.BadParameter(
-            "No tape store is configured in the current Bub runtime."
-        )
-
     operator_config = _operator_config(config or [])
     operator = opendal.Operator(scheme, **operator_config)
     entry_filter = EntryFilter(_filter_expressions(filter or [], filter_file or []))
@@ -90,9 +84,19 @@ def export_command(
         include_segments=not no_segments,
         include_raw_tapes=not no_raw,
     )
-    report = _export_from_store(
-        tape_store, operator, layout=layout, entry_filter=entry_filter
-    )
+
+    async def export() -> ExportReport:
+        async with framework.running():
+            tape_store = framework.get_tape_store()
+            if tape_store is None:
+                raise typer.BadParameter(
+                    "No tape store is configured in the current Bub runtime."
+                )
+            return await _export_from_store(
+                tape_store, operator, layout=layout, entry_filter=entry_filter
+            )
+
+    report = asyncio.run(export())
     typer.echo(_render_report(report))
 
 
@@ -118,7 +122,7 @@ def _operator_config(items: Sequence[str]) -> dict[str, str]:
     return config
 
 
-def _export_from_store(
+async def _export_from_store(
     store: TapeStore | AsyncTapeStore,
     operator: opendal.Operator,
     *,
@@ -126,10 +130,8 @@ def _export_from_store(
     entry_filter: EntryFilter,
 ) -> ExportReport:
     if is_async_tape_store(store):
-        return asyncio.run(
-            export_dataset_async(
-                store, operator, layout=layout, entry_filter=entry_filter
-            )
+        return await export_dataset_async(
+            store, operator, layout=layout, entry_filter=entry_filter
         )
     return export_dataset(store, operator, layout=layout, entry_filter=entry_filter)
 
@@ -154,7 +156,8 @@ def _filter_expressions(expressions: Sequence[str], files: Sequence[str]) -> lis
     result = [expression.strip() for expression in expressions if expression.strip()]
     for file_name in files:
         try:
-            content = open(file_name, encoding="utf-8").read().splitlines()
+            with open(file_name, encoding="utf-8") as filter_file:
+                content = filter_file.read().splitlines()
         except OSError as exc:
             raise typer.BadParameter(
                 f"Failed to read filter file '{file_name}': {exc}"

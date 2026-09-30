@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import bub_tapestore_sqlalchemy.plugin as plugin
 import pytest
+from bub import configure
+from bub_tapestore_sqlalchemy import plugin
 from bub_tapestore_sqlalchemy.plugin import SQLAlchemyTapeStoreSettings
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 
@@ -120,3 +121,25 @@ def test_connect_args_must_be_object(monkeypatch) -> None:
 
     with pytest.raises(Exception, match="JSON object"):
         SQLAlchemyTapeStoreSettings.from_env()
+
+
+def test_settings_use_bub_config_field_names(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BUB_TAPESTORE_SQLALCHEMY_URL", raising=False)
+    monkeypatch.delenv("BUB_TAPESTORE_SQLALCHEMY_ECHO", raising=False)
+    monkeypatch.delenv("BUB_TAPESTORE_SQLALCHEMY_CONNECT_ARGS", raising=False)
+    config_file = tmp_path / "bub.yaml"
+    config_data = {
+        "url": "sqlite+pysqlite:////tmp/configured.db",
+        "echo": True,
+        "connect_args": {"timeout": 7},
+    }
+    configure.save(config_file, {plugin.CONFIG_NAME: config_data})
+    configure.load(config_file)
+    try:
+        settings = plugin.bub.ensure_config(SQLAlchemyTapeStoreSettings)
+        assert settings.url == "sqlite+pysqlite:////tmp/configured.db"
+        assert settings.echo is True
+        assert settings.connect_args == {"timeout": 7}
+    finally:
+        configure.load(tmp_path / "missing.yaml")

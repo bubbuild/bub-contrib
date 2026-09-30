@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub>=0.5.0,<0.6.0",
     "deepseek-harness-sdk>=0.1.0rc7,<0.2.0",
+    "pydantic>=2.0.0",
     "pydantic-settings>=2.13.1",
 ]
 

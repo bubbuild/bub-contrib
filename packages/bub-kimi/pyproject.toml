@@ -7,7 +7,11 @@ authors = [
     { name = "Mengxin Liu", email = "liumengxinfly@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "bub>=0.5.0,<0.6.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.13.1",
+]
 
 [project.entry-points.bub]
 kimi = "bub_kimi.plugin"

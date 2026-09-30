@@ -22,7 +22,7 @@ bub install bub-tapestore-sqlite@main
 ```
 
 > Note:
-> `bub-tapestore-sqlite` currently supports `bub` `0.3.1` and later.
+> `bub-tapestore-sqlite` currently supports `bub>=0.5.0,<0.6.0`.
 
 ## Configuration
 

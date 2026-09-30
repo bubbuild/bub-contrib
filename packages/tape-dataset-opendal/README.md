@@ -53,6 +53,8 @@ The package exposes one Bub plugin entry point:
 - plugin entry point: `tape-dataset-opendal`
 - command: `bub tape-export`
 
+The command acquires the active tape store inside `BubFramework.running()` and releases lifecycle-managed resources after export.
+
 Minimal example:
 
 ```bash

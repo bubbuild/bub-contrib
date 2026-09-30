@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 from bub import hookimpl
 from bub.framework import BubFramework
-from bub.tape import InMemoryTapeStore, TapeEntry
+from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
+from tape_dataset_opendal import plugin
 from typer.testing import CliRunner
-
-import tape_dataset_opendal.plugin as plugin
 
 
 class _StorePlugin:
@@ -20,7 +21,10 @@ class _StorePlugin:
         return self._store
 
 
-def test_plugin_registers_bub_cli_export_command(tmp_path: Path) -> None:
+@pytest.mark.parametrize("async_store", [False, True])
+def test_plugin_registers_bub_cli_export_command(
+    tmp_path: Path, async_store: bool
+) -> None:
     framework = BubFramework()
 
     store = InMemoryTapeStore()
@@ -29,9 +33,19 @@ def test_plugin_registers_bub_cli_export_command(tmp_path: Path) -> None:
         "ops__1", TapeEntry.message({"role": "user", "content": "Database timeout"})
     )
 
-    framework._plugin_manager.register(_StorePlugin(store), name="test-store")
+    events: list[str] = []
+
+    class StorePlugin:
+        @hookimpl
+        async def provide_tape_store(self) -> AsyncIterator:
+            events.append("enter")
+            try:
+                yield AsyncTapeStoreAdapter(store) if async_store else store
+            finally:
+                events.append("exit")
+
+    framework._plugin_manager.register(StorePlugin(), name="test-store")
     framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
-    framework._tape_store = store
 
     app = framework.create_cli_app()
     runner = CliRunner()
@@ -54,6 +68,8 @@ def test_plugin_registers_bub_cli_export_command(tmp_path: Path) -> None:
     assert payload["tape_count"] == 1
     assert payload["entry_count"] == 2
     assert (tmp_path / "dataset" / "manifest.json").is_file()
+    assert events == ["enter", "exit"]
+    assert framework.get_tape_store() is None
 
 
 def test_plugin_cli_accepts_cel_filter_file(tmp_path: Path) -> None:
@@ -76,7 +92,6 @@ def test_plugin_cli_accepts_cel_filter_file(tmp_path: Path) -> None:
 
     framework._plugin_manager.register(_StorePlugin(store), name="test-store")
     framework._plugin_manager.register(plugin, name="tape-dataset-opendal")
-    framework._tape_store = store
 
     app = framework.create_cli_app()
     runner = CliRunner()

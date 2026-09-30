@@ -38,6 +38,8 @@ The plugin reads environment variables with prefix `BUB_KIMI_`:
 
 ## Runtime Behavior
 
+Structured Bub prompts use their text parts joined by newlines; image parts are not forwarded to the CLI.
+
 - Workspace resolution:
   - Uses `state["_runtime_workspace"]` when present
   - Falls back to current working directory

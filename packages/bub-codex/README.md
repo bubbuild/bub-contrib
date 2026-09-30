@@ -35,13 +35,15 @@ The plugin reads environment variables with prefix `BUB_CODEX_`:
 
 ## Runtime Behavior
 
+Structured Bub prompts use their text parts joined by newlines; image parts are not forwarded to the CLI.
+
 - Workspace resolution:
   - Uses `state["_runtime_workspace"]` when present
   - Falls back to current working directory
 - Command shape:
-  - `codex e resume <session_id> [--model ...] [--dangerously-bypass-approvals-and-sandbox] -`
-- Prompt is sent through stdin; stdout is returned as model output.
-- When Codex exits non-zero, output includes: `Codex process exited with code <code>.`
+  - `codex e [resume <session_id>] [--model ...] [--dangerously-bypass-approvals-and-sandbox] <prompt>`
+- Prompt is passed as a command argument; stdout is returned as model output.
+- Session IDs parsed from stderr are persisted in `.bub-codex-threads.json`.
 
 ## Skill Integration
 

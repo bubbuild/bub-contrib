@@ -8,9 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bub>=0.5.0,<0.6.0",
     "github-copilot-sdk>=0.2.1,<0.3.0",
     "httpx>=0.28.1",
+    "pydantic>=2.0.0",
     "pydantic-settings>=2.13.1",
+    "typer>=0.24.1",
 ]
 
 [project.entry-points.bub]

@@ -22,6 +22,7 @@ from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
+from bub_mcp.tools import DESCRIBE_TOOL, MCPTool, prepare_mcp_tools
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
@@ -212,6 +213,11 @@ class MCPChannel(Lifecycle):
 
         for agent, bindings in list(self._bindings.items()):
             self._restore_tools(agent, bindings)
+            if not any(isinstance(tool, MCPTool) for tool in agent.tools.values()):
+                if prepare_mcp_tools in agent.tool_providers:
+                    agent.tool_providers.remove(prepare_mcp_tools)
+                if agent.tools.get(DESCRIBE_TOOL.name) is DESCRIBE_TOOL:
+                    agent.tools.pop(DESCRIBE_TOOL.name)
         self._bindings.clear()
 
         for client in clients:
@@ -230,6 +236,8 @@ class MCPChannel(Lifecycle):
 
     def bind_agent(self, agent: Agent) -> None:
         """Refresh this channel's tools on an Agent, preserving name collisions."""
+        if prepare_mcp_tools not in agent.tool_providers:
+            agent.tool_providers.append(prepare_mcp_tools)
         previous = self._bindings.pop(agent, {})
         tools = self.tools
         self._restore_tools(
@@ -241,8 +249,7 @@ class MCPChannel(Lifecycle):
             original = previous[name][1] if name in previous else agent.tools.get(name)
             bindings[name] = (remote_tool, original)
             agent.tools[name] = remote_tool
-        if bindings:
-            self._bindings[agent] = bindings
+        self._bindings[agent] = bindings
 
     @staticmethod
     def _restore_tools(
@@ -434,14 +441,13 @@ class MCPChannel(Lifecycle):
             return None
         bub_name = _tool_name(server_name, remote_name)
         output_schema, result_mode = _output_schema(remote_tool)
-        return Tool(
+        return MCPTool(
             name=bub_name,
             description=str(remote_tool.description or f"MCP tool {remote_name}"),
             parameters=_tool_parameters(remote_tool),
             handler=self._make_handler(server_name, remote_name, result_mode),
             renderer=_render_tool_value,
             output_schema=output_schema,
-            defer_loading=True,
         )
 
     def _record_failed_server(

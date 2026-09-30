@@ -39,8 +39,8 @@ dependencies = [
 members = ["packages/*"]
 
 [tool.uv.sources]
-# Tool.defer_loading requires bubbuild/bub#334.
-bub = { git = "https://github.com/bubbuild/bub.git", rev = "412c80c33d7231f8c6dd3643d3b34317e6824c49" }
+# Agent.tool_providers requires bubbuild/bub#334.
+bub = { git = "https://github.com/bubbuild/bub.git", rev = "f8374e816566d0639853d5ebf87e4020470481e4" }
 bub-acp-server = { workspace = true }
 bub-agent-plugins = { workspace = true }
 bub-codex = { workspace = true }

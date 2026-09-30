@@ -242,7 +242,7 @@ async def test_model_receives_only_current_session_mcp_summaries(
             ],
             strict=True,
         ):
-            assert "tool_describe" in names
+            assert "mcp_describe" in names
             assert not {own, other} & names
             assert f"- {own}:" in prompt
             assert other not in prompt

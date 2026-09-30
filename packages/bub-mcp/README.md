@@ -35,10 +35,12 @@ The file must contain a top-level `mcpServers` mapping:
 ## Tool definitions
 
 In ordinary tool mode, MCP tools initially appear as names and short summaries.
-The model uses `tool_describe` to obtain selected native definitions, then calls
+The model uses `mcp_describe` to obtain selected native definitions, then calls
 the original tools normally. Definitions are reused within the current tape
 context, including after restart. Code mode continues to use its Python stub.
-This requires a Bub version supporting `Tool.defer_loading`.
+New sessions, tape reset, and handoff start discovery again.
+MCP owns this policy; ordinary Bub tools need no loading flag. This requires a
+Bub version supporting `Agent.tool_providers`.
 
 ## Tool selection
 
@@ -66,7 +68,7 @@ MCP channels. It does not change tool descriptions or parameter schemas. Servers
 still connect and discover their complete tool catalogs; the operator's
 `bub mcp list` command shows that catalog, while the agent's `mcp` tool lists only
 allowed tools. Selection also limits the summaries and definitions available
-through `tool_describe`; deferred exposure does not bypass these restrictions.
+through `mcp_describe`; deferred exposure does not bypass these restrictions.
 
 ## CLI Usage
 

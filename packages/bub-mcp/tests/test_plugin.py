@@ -598,7 +598,7 @@ async def test_configured_selection_controls_model_requests_and_remote_calls(
                         "code": "try:\n    print(await tools.mcp_weather_get_forecast(city='Paris'))\nexcept Exception as exc:\n    print(exc)"
                     }
                 elif len(requests) == 1:
-                    name = "tool_describe"
+                    name = "mcp_describe"
                     arguments = {"names": ["mcp_weather_get_forecast"]}
                 else:
                     name = "mcp_weather_get_forecast"
@@ -662,7 +662,7 @@ async def test_configured_selection_controls_model_requests_and_remote_calls(
     )
     definitions = requests[0].get("tools") or []
     assert {item["function"]["name"] for item in definitions} == (
-        {"run_code"} if code_mode else {"tool_describe"} if expected else set()
+        {"run_code"} if code_mode else {"mcp_describe"} if expected else set()
     )
     if not code_mode:
         catalog = "\n".join(
@@ -674,7 +674,7 @@ async def test_configured_selection_controls_model_requests_and_remote_calls(
             assert (name in catalog) == (name in expected)
         if expected:
             assert {item["function"]["name"] for item in requests[1]["tools"]} == {
-                "tool_describe",
+                "mcp_describe",
                 "mcp_weather_get_forecast",
             }
     if expected:

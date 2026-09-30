@@ -9,10 +9,9 @@ from typing import Any
 
 import pluggy
 import pytest
-from bub.tape import TapeEntry, TapeQuery
-
 from bub.hooks import BUB_HOOK_NAMESPACE, BubHookSpecs
 from bub.hooks.runtime import HookRuntime
+from bub.tape import TapeEntry, TapeQuery
 from bub_extism.config import ExtismSettings
 from bub_extism.plugin import ExtismPlugin
 
@@ -571,3 +570,30 @@ def test_channel_proxy_rejects_invalid_wrapper_shape(tmp_path: Path) -> None:
         _runtime(config_path).call_many_sync(
             "provide_channels", message_handler=handler
         )
+
+
+def test_plugin_reads_registered_bub_configuration(tmp_path: Path, monkeypatch) -> None:
+    from bub import configure
+
+    config_path = _write_config(
+        tmp_path,
+        {
+            "plugins": {
+                "prompt": {
+                    "manifest": {"wasm": []},
+                    "hooks": {"build_prompt": "build_prompt"},
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(configure, "_global_config", {})
+    monkeypatch.setattr(
+        configure, "_config_data", {"extism": {"config_path": str(config_path)}}
+    )
+    plugin_manager = pluggy.PluginManager(BUB_HOOK_NAMESPACE)
+    plugin_manager.add_hookspecs(BubHookSpecs)
+    plugin = ExtismPlugin(SimpleNamespace(_plugin_manager=plugin_manager))
+
+    assert ExtismSettings in configure.CONFIG_MAP["extism"]
+    assert plugin.settings.config_path == config_path
+    assert "extism:prompt" in HookRuntime(plugin_manager).hook_report()["build_prompt"]

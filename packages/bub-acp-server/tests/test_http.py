@@ -101,7 +101,7 @@ class HTTPFramework:
                 },
             )
             output = await REGISTRY["bash"].run(
-                cmd=inbound.content,
+                command=inbound.content,
                 context=ToolContext(
                     tape=None,
                     state={
@@ -827,7 +827,7 @@ def test_gateway_cli_starts_and_stops_acp_channel(
 ) -> None:
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     framework = BubFramework(config_file=tmp_path / "config.yml")
-    framework._load_builtin_hooks()
+    framework.load_builtin_hooks()
     framework._plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
     calls = []
     shutdown = []
@@ -1004,7 +1004,7 @@ async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
                 assert result.model_output == "local output"
                 assert other_text == ["local output"]
                 assert len(local_calls) == 1
-                assert local_calls[0]["cmd"] == "local command"
+                assert local_calls[0]["command"] == "local command"
                 assert len(client.commands) == 1
                 client.release_command.set()
                 assert (await prompt_task).stop_reason == "end_turn"

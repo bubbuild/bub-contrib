@@ -72,7 +72,7 @@ class E2EFramework:
             context=context,
         )
         bash_result = await REGISTRY["bash"].run(
-            cmd="printf e2e-command", context=context
+            command="printf e2e-command", context=context
         )
         plan_result = await REGISTRY["update_plan"].run(
             explanation="Exercise ACP plan updates",

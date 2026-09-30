@@ -7,16 +7,17 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Self
+from weakref import WeakKeyDictionary
 
+import bub
 import fastmcp
 import mcp.types
 import typer
-import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
-from bub.tools import REGISTRY, Tool, ToolContext
 from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope
+from bub.tools import REGISTRY, Tool, ToolContext
 from bub.turn import TurnState
 from loguru import logger
 
@@ -114,6 +115,11 @@ class MCPChannel(Lifecycle):
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
         self._stop_event: asyncio.Event | None = None
+        self._registered_tools: dict[str, Tool] = {}
+        self._registry_originals: dict[str, Tool | None] = {}
+        self._agent_originals: WeakKeyDictionary[Any, dict[str, Tool | None]] = (
+            WeakKeyDictionary()
+        )
 
     @classmethod
     def from_server_configs(
@@ -154,9 +160,51 @@ class MCPChannel(Lifecycle):
             for server in self._servers.values():
                 server.client = None
                 server.connected = False
+            self._unregister_tools()
 
         for client in clients:
             await self._close_client(client)
+
+    async def bind_tools(self, state: TurnState) -> None:
+        """Make discovered tools available to the turn's existing Agent."""
+        if self._bootstrap_task is not None:
+            await asyncio.shield(self._bootstrap_task)
+        agent = state.get("_runtime_agent")
+        if agent is None:
+            return
+        originals = self._agent_originals.setdefault(agent, {})
+        for name, tool_item in self._registered_tools.items():
+            if name not in originals:
+                original = agent.tools.get(name)
+                originals[name] = (
+                    self._registry_originals.get(name)
+                    if original is tool_item
+                    else original
+                )
+            agent.tools[name] = tool_item
+
+    def _unregister_tools(self) -> None:
+        for name, tool_item in self._registered_tools.items():
+            self._restore_tool(
+                REGISTRY, name, tool_item, self._registry_originals[name]
+            )
+            for agent, originals in self._agent_originals.items():
+                if name in originals:
+                    self._restore_tool(agent.tools, name, tool_item, originals[name])
+        self._registered_tools.clear()
+        self._registry_originals.clear()
+        self._agent_originals.clear()
+
+    @staticmethod
+    def _restore_tool(
+        tools: dict[str, Tool], name: str, owned: Tool, original: Tool | None
+    ) -> None:
+        if tools.get(name) is not owned:
+            return
+        if original is None:
+            tools.pop(name, None)
+        else:
+            tools[name] = original
 
     def list(self) -> dict[str, MCPServerState]:
         return self._servers.copy()
@@ -234,8 +282,12 @@ class MCPChannel(Lifecycle):
                     )
                 }
 
-                for server_name, server in self._servers.items():
+                for server in self._servers.values():
                     for tool in server.tools:
+                        self._registry_originals.setdefault(
+                            tool.name, REGISTRY.get(tool.name)
+                        )
+                        self._registered_tools[tool.name] = tool
                         REGISTRY[tool.name] = tool
 
                 if (
@@ -344,6 +396,10 @@ class MCPPlugin:
     @hookimpl
     def load_state(self, message: Envelope, session_id: str) -> TurnState:
         return {"mcp": self._manager}
+
+    @hookimpl(tryfirst=True)
+    async def build_prompt(self, state: TurnState) -> None:
+        await self._manager.bind_tools(state)
 
     @hookimpl
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:

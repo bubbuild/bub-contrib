@@ -18,6 +18,7 @@ from bub.tape import TapeContext, TapeEntry
 from bub.turn import TurnState
 
 from bub_acp_server.agent import BubACPAgent, active_stream_router, run_acp_agent
+from bub_acp_server.client_tools import bind_client_tools
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
@@ -119,6 +120,10 @@ class ACPServerPlugin:
     @hookimpl
     def build_tape_context(self) -> TapeContext:
         return TapeContext(select=_select_tape_context)
+
+    @hookimpl(tryfirst=True)
+    def build_prompt(self, state: TurnState) -> None:
+        bind_client_tools(state)
 
     @hookimpl
     def system_prompt(self, prompt: str | list[dict], state: TurnState) -> str:

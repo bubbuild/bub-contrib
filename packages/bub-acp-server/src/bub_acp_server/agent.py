@@ -326,7 +326,7 @@ class ACPStreamRouter:
             title = tool.name
             content = None
             if tool.name == "bash":
-                command = _block_value(raw_input, "cmd")
+                command = _block_value(raw_input, "command") or _block_value(raw_input, "cmd")
                 if isinstance(command, str) and command:
                     tool.command = command
                     title = command

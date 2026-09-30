@@ -509,7 +509,7 @@ async def test_plugin_steering_inbox_precedes_builtin_provider(
     tmp_path: Path,
 ) -> None:
     framework = BubFramework(config_file=tmp_path / "config.yml")
-    framework._load_builtin_hooks()
+    framework.load_builtin_hooks()
     implementation = ACPServerPlugin(framework)
     framework._plugin_manager.register(implementation, name="acp-server-test")
 

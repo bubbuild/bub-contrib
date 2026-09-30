@@ -120,6 +120,11 @@ class AgentPluginsPlugin:
         self.load()
         return [self._mcp_channel] if self._mcp_channel is not None else []
 
+    @hookimpl(tryfirst=True)
+    async def build_prompt(self, state: TurnState) -> None:
+        if self._mcp_channel is not None:
+            await self._mcp_channel.bind_tools(state)
+
 
 def _discover_plugin_roots(
     workspace: Path, settings: AgentPluginsSettings

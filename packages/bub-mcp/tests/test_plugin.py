@@ -174,7 +174,7 @@ def test_bootstrap_registers_remote_tools_and_forwards_calls(
     asyncio.run(channel.stop())
 
     assert created_clients[0].exited is True
-    assert tool_name in REGISTRY
+    assert tool_name not in REGISTRY
 
 
 def test_channel_list_reads_current_config(monkeypatch, tmp_path: Path) -> None:
@@ -405,3 +405,45 @@ def test_format_tool_result_uses_structured_content_when_text_is_missing() -> No
 
     assert '"status": "ok"' in result
     assert '"count": 2' in result
+
+
+def test_mcp_prompt_updates_existing_agents_and_stop_restores_tools(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from bub.builtin.agent import Agent
+    from bub.framework import BubFramework
+    from bub.tools import Tool
+
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.workspace = tmp_path
+    framework.load_builtin_hooks()
+    tool_name = "mcp.weather_get_forecast"
+    original = Tool(name=tool_name, handler=lambda **kwargs: "original")
+    monkeypatch.setitem(REGISTRY, tool_name, original)
+    agent = Agent(framework)
+    channel = plugin.MCPChannel.from_server_configs({"weather": {"command": "weather"}})
+    monkeypatch.setattr(
+        channel,
+        "_create_client",
+        lambda name, config: FakeClient(config, init_timeout_seconds=None),
+    )
+    mcp_plugin = plugin.MCPPlugin(framework)
+    mcp_plugin._manager = channel
+    framework.plugin_manager.register(mcp_plugin, name="mcp")
+
+    async def run_test() -> None:
+        await channel.start(asyncio.Event())
+        inbound = {"content": "forecast", "_runtime_agent": agent}
+        state = await framework.build_state(inbound, "test")
+        await framework.build_prompt(inbound, "test", state)
+        remote = REGISTRY[tool_name]
+        assert agent.tools[tool_name] is remote
+        assert await agent.tools[tool_name].run(city="Paris") == "forecast for Paris"
+        new_agent = Agent(framework)
+        await channel.bind_tools({"_runtime_agent": new_agent})
+        await channel.stop()
+        assert agent.tools[tool_name] is original
+        assert new_agent.tools[tool_name] is original
+        assert REGISTRY[tool_name] is original
+
+    asyncio.run(run_test())

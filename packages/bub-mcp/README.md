@@ -91,3 +91,8 @@ The default `MCPChannel()` behavior remains backed by Bub's `mcp.json`. Read-onl
 standalone `MCPChannel()` construction and behavior remain unchanged. A composite plugin that must
 keep unrelated components running when all MCP servers fail can subclass the channel and set
 `stop_when_all_failed = False`.
+
+Remote tools are bound to the current Agent before each framework prompt. Stopping
+the MCP channel removes its tools from the registry and restores tools it replaced.
+For direct `Agent.run_stream()` calls that bypass framework prompt hooks, call
+`await channel.bind_tools({"_runtime_agent": agent})` after starting the channel.

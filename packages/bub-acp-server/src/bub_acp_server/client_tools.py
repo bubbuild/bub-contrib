@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
 from importlib import import_module
@@ -18,8 +18,8 @@ from acp.schema import (
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
-from pydantic import BaseModel, Field
 from bub.tools import REGISTRY, Tool, ToolContext, tool
+from pydantic import BaseModel, Field
 
 _TOOL_NAMES = (
     "bash",
@@ -256,6 +256,12 @@ class ACPClientToolRuntime:
 _active_runtime: ContextVar[ACPClientToolRuntime | None] = ContextVar(
     "acp_tool_runtime", default=None
 )
+_active_tool_scope: ContextVar[ExitStack | None] = ContextVar(
+    "acp_tool_scope", default=None
+)
+_registry_originals: ContextVar[dict[str, Tool | None] | None] = ContextVar(
+    "acp_registry_originals", default=None
+)
 
 
 def _scoped_tool(
@@ -268,6 +274,8 @@ def _scoped_tool(
             raise RuntimeError(f"{replacement.name} is only available in an ACP turn")
         if replacement.name == "bash":
             kwargs.pop("title", None)
+        if not original.context:
+            kwargs.pop("context", None)
         return original.run(*args, **kwargs)
 
     return replace(replacement, handler=dispatch)
@@ -278,13 +286,20 @@ def replace_builtin_tools(runtime: ACPClientToolRuntime) -> Generator[None]:
     import_module("bub.builtin.tools")
     originals = {name: REGISTRY.get(name) for name in _TOOL_NAMES}
     token = _active_runtime.set(runtime)
+    originals_token = _registry_originals.set(originals)
     try:
-        _register_replacements(runtime)
-        for name, original in originals.items():
-            REGISTRY[name] = _scoped_tool(runtime, REGISTRY[name], original)
-        yield
+        with ExitStack() as stack:
+            scope_token = _active_tool_scope.set(stack)
+            try:
+                _register_replacements(runtime)
+                for name, original in originals.items():
+                    REGISTRY[name] = _scoped_tool(runtime, REGISTRY[name], original)
+                yield
+            finally:
+                _active_tool_scope.reset(scope_token)
     finally:
         _active_runtime.reset(token)
+        _registry_originals.reset(originals_token)
         for name, original in originals.items():
             if original is None:
                 REGISTRY.pop(name, None)
@@ -292,10 +307,35 @@ def replace_builtin_tools(runtime: ACPClientToolRuntime) -> Generator[None]:
                 REGISTRY[name] = original
 
 
+def bind_client_tools(state: dict[str, Any]) -> None:
+    """Scope replacements to the turn's Agent, whose tools snapshot REGISTRY."""
+    runtime = _active_runtime.get()
+    stack = _active_tool_scope.get()
+    agent = state.get("_runtime_agent")
+    if runtime is None or stack is None or agent is None:
+        return
+    tools = agent.tools
+    originals = {name: tools.get(name) for name in _TOOL_NAMES}
+    for name, original in originals.items():
+        # Agents created inside this scope already copied the temporary registry.
+        if original is REGISTRY[name]:
+            originals[name] = (_registry_originals.get() or {}).get(name)
+        tools[name] = _scoped_tool(runtime, REGISTRY[name], originals[name])
+
+    def restore() -> None:
+        for name, original in originals.items():
+            if original is None:
+                tools.pop(name, None)
+            else:
+                tools[name] = original
+
+    stack.callback(restore)
+
+
 def _register_replacements(runtime: ACPClientToolRuntime) -> None:
     @tool(name="bash", context=True)
     async def bash(
-        cmd: str,
+        command: str,
         cwd: str | None = None,
         timeout_seconds: int = 30,
         background: bool = False,
@@ -310,7 +350,7 @@ def _register_replacements(runtime: ACPClientToolRuntime) -> None:
         """
         # ACPStreamRouter reads the title from the streamed tool call arguments.
         del title
-        return await runtime.bash(cmd, cwd, timeout_seconds, background, context)
+        return await runtime.bash(command, cwd, timeout_seconds, background, context)
 
     @tool(name="bash.output", context=True)
     async def bash_output(

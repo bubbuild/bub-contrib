@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,7 +13,6 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from bub.tools import REGISTRY, ToolContext
-
 from bub_acp_server.client_tools import ACPClientToolRuntime, replace_builtin_tools
 
 
@@ -97,9 +97,7 @@ class FakeTape:
     ) -> None:
         self.events.append((name, payload, meta))
 
-    async def handoff(
-        self, *, name: str, state: dict[str, object]
-    ) -> list[object]:
+    async def handoff(self, *, name: str, state: dict[str, object]) -> list[object]:
         self.handoffs.append((name, state))
         return []
 
@@ -236,7 +234,9 @@ async def test_replaces_bash_with_acp_terminal_calls(
             if name != "title"
         } == original.parameters["properties"]
         assert parameters.get("required") == original.parameters.get("required")
-        result = await REGISTRY["bash"].run(cmd="pwd", context=context, **extra_args)
+        result = await REGISTRY["bash"].run(
+            command="pwd", context=context, **extra_args
+        )
 
     assert REGISTRY["bash"] is original
     assert result == "hello"
@@ -262,7 +262,7 @@ async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
 
     with replace_builtin_tools(_runtime(client)):
         started = await REGISTRY["bash"].run(
-            cmd="sleep 10", background=True, context=context
+            command="sleep 10", background=True, context=context
         )
         output = await REGISTRY["bash.output"].run(
             shell_id="terminal-1", context=context
@@ -368,10 +368,8 @@ async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
         )
 
     assert REGISTRY["tape.handoff"] is original
-    assert result == "anchor added: phase-1"
-    assert tape.handoffs == [
-        ("phase-1", {"summary": "Implementation complete"})
-    ]
+    assert result == {"anchor": "phase-1"}
+    assert tape.handoffs == [("phase-1", {"summary": "Implementation complete"})]
 
 
 @pytest.mark.asyncio
@@ -395,3 +393,70 @@ async def test_update_plan_rejects_multiple_in_progress_steps(tmp_path: Path) ->
 
     assert tape.events == []
     assert client.session_updates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("create_inside_scope", [False, True])
+async def test_acp_prompt_binds_and_restores_agent_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, create_inside_scope: bool
+) -> None:
+    import contextvars
+
+    from bub.builtin.agent import Agent
+    from bub.framework import BubFramework
+    from bub_acp_server.plugin import ACPServerPlugin
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.workspace = tmp_path
+    framework.load_builtin_hooks()
+    framework.plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
+    client = FakeClient()
+    agent = None if create_inside_scope else Agent(framework)
+    original = REGISTRY["fs.read"]
+    host_file = tmp_path / "notes.txt"
+    host_file.write_text("host content", encoding="utf-8")
+
+    with replace_builtin_tools(_runtime(client)):
+        if agent is None:
+            agent = Agent(framework)
+        inbound = {"content": "read notes", "_runtime_agent": agent}
+        state = await framework.build_state(inbound, "acp-server:session-1")
+        await framework.build_prompt(inbound, "acp-server:session-1", state)
+        assert "update_plan" in agent.tools
+        assert "command" in agent.tools["bash"].parameters["required"]
+        assert (
+            await agent.tools["fs.read"].run(
+                path="notes.txt", context=_context(tmp_path)
+            )
+            == "line two"
+        )
+
+        # A concurrent non-ACP task still uses the original handler.
+        async def read_host() -> str:
+            return await agent.tools["fs.read"].run(
+                path="notes.txt", context=_context(tmp_path)
+            )
+
+        host_task = contextvars.Context().run(
+            asyncio.create_task,
+            read_host(),
+        )
+        assert await host_task == "host content"
+
+    assert agent.tools["fs.read"] is original
+    assert "update_plan" not in agent.tools
+    assert REGISTRY["fs.read"] is original
+
+
+def test_scoped_background_tool_fallback_preserves_contextless_signature(
+    tmp_path: Path,
+) -> None:
+    from bub.tools import Tool
+    from bub_acp_server.client_tools import _scoped_tool
+
+    original = Tool(name="bash.output", handler=lambda shell_id: f"host:{shell_id}")
+    replacement = Tool(name="bash.output", handler=lambda **kwargs: "acp", context=True)
+    scoped = _scoped_tool(ACPClientToolRuntime(), replacement, original)
+
+    assert scoped.run(shell_id="local-1", context=_context(tmp_path)) == "host:local-1"

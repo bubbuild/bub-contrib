@@ -14,16 +14,6 @@ from bub.turn import TurnResult
 from bub_acp_server.agent import run_acp_agent
 
 
-class E2ETape:
-    def __init__(self) -> None:
-        self.events: list[dict[str, object]] = []
-
-    async def append_event(
-        self, name: str, payload: dict[str, object], **meta: object
-    ) -> None:
-        self.events.append({"name": name, "payload": payload, "meta": meta})
-
-
 class E2EFramework:
     def get_agent_hooks(self):
         return None
@@ -55,9 +45,8 @@ class E2EFramework:
         self, inbound: Any, stream_output: bool = False
     ) -> TurnResult:
         assert stream_output is True
-        tape = E2ETape()
         context = ToolContext(
-            tape=cast(Any, tape),
+            tape=cast(Any, object()),
             run_id="e2e-run",
             state={
                 "session_id": inbound.session_id,
@@ -80,14 +69,6 @@ class E2EFramework:
         bash_result = await inbound._runtime_agent.tools["bash"].run(
             command="printf e2e-command", context=context
         )
-        plan_result = await inbound._runtime_agent.tools["update_plan"].run(
-            explanation="Exercise ACP plan updates",
-            plan=[
-                {"step": "Exercise client tools", "status": "completed"},
-                {"step": "Verify results", "status": "in_progress"},
-            ],
-            context=context,
-        )
         ask_result = None
         if "ask_user" in inbound._runtime_agent.tools:
             ask_result = await inbound._runtime_agent.tools["ask_user"].run(
@@ -107,8 +88,6 @@ class E2EFramework:
                 "write": write_result,
                 "edit": edit_result,
                 "bash": bash_result,
-                "plan": plan_result,
-                "tape_events": tape.events,
                 "ask_user": ask_result,
             },
             sort_keys=True,

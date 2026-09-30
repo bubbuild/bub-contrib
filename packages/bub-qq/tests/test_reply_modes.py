@@ -334,8 +334,20 @@ def _tool_context(qq_state: dict[str, object] | None) -> ToolContext:
     return ToolContext(tape=None, state=state)
 
 
-def _run_qq_send(content: str, context: ToolContext) -> str:
+def _run_qq_send(content: str, context: ToolContext) -> tools.QQSendResult:
     return asyncio.run(tools.qq_send.run(content=content, context=context))
+
+
+def test_qq_send_tool_declares_output_schema() -> None:
+    schema = tools.qq_send.output_schema
+
+    assert schema is not None
+    assert schema["properties"]["status"]["enum"] == [
+        "sent",
+        "pending_audit",
+        "already_sent",
+        "not_sent",
+    ]
 
 
 def test_qq_send_tool_disabled_in_direct_mode(monkeypatch) -> None:
@@ -343,8 +355,11 @@ def test_qq_send_tool_disabled_in_direct_mode(monkeypatch) -> None:
 
     result = _run_qq_send("hi", _tool_context({"scope": "c2c"}))
 
-    assert result.startswith("Not sent")
-    assert "direct" in result
+    assert result["status"] == "not_sent"
+    assert tools.qq_send.render(result) == (
+        "Not sent: qq.send is disabled (qq.reply_mode is 'direct')."
+        " Write your reply as plain text instead."
+    )
 
 
 def test_qq_send_tool_requires_qq_session(monkeypatch) -> None:
@@ -352,7 +367,10 @@ def test_qq_send_tool_requires_qq_session(monkeypatch) -> None:
 
     result = _run_qq_send("hi", _tool_context(None))
 
-    assert result.startswith("Not sent")
+    assert result == {
+        "status": "not_sent",
+        "reason": "qq.send is only available inside QQ channel sessions.",
+    }
 
 
 def test_qq_send_tool_sends_via_channel(monkeypatch) -> None:
@@ -374,7 +392,8 @@ def test_qq_send_tool_sends_via_channel(monkeypatch) -> None:
     finally:
         runtime.set_active_channel(None)
 
-    assert result == "Sent."
+    assert result == {"status": "sent"}
+    assert tools.qq_send.render(result) == "Sent."
     assert len(channel.messages) == 1
     sent = channel.messages[0]
     assert sent.session_id == "qq:group:group-openid"
@@ -390,10 +409,24 @@ def test_qq_send_tool_reports_statuses(monkeypatch) -> None:
         "session_id": "qq:c2c:user-openid",
     }
 
-    for channel_result, expected_prefix in [
-        (None, "Not sent"),
-        ({"status": "pending_audit"}, "Accepted"),
-        ({"status": "already_sent"}, "Skipped"),
+    for channel_result, expected_status, expected_text in [
+        (
+            None,
+            "not_sent",
+            "Not sent: the QQ channel skipped or failed this send"
+            " (empty content, closed reply window, or platform error;"
+            " see gateway logs). Do not retry with identical content.",
+        ),
+        (
+            {"status": "pending_audit"},
+            "pending_audit",
+            "Accepted: QQ queued the message for manual review before delivery.",
+        ),
+        (
+            {"status": "already_sent"},
+            "already_sent",
+            "Skipped: identical content was already sent for this reply window.",
+        ),
     ]:
         channel = FakeChannel(channel_result)
         runtime.set_active_channel(channel)
@@ -401,7 +434,8 @@ def test_qq_send_tool_reports_statuses(monkeypatch) -> None:
             result = _run_qq_send("hi", _tool_context(qq_state))
         finally:
             runtime.set_active_channel(None)
-        assert result.startswith(expected_prefix)
+        assert result["status"] == expected_status
+        assert tools.qq_send.render(result) == expected_text
         assert channel.messages[0].chat_id == "c2c:user-openid"
 
 
@@ -411,5 +445,6 @@ def test_qq_send_tool_without_running_channel(monkeypatch) -> None:
 
     result = _run_qq_send("hi", _tool_context({"scope": "c2c"}))
 
-    assert result.startswith("Not sent")
-    assert "not running" in result
+    assert tools.qq_send.render(result) == (
+        "Not sent: the QQ channel is not running in this process."
+    )

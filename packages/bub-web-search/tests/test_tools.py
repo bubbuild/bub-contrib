@@ -1,6 +1,6 @@
 from bub.tools import REGISTRY
 
-from bub_web_search import tools
+from bub_web_search import jina, searxng, tools
 from bub_web_search.config import WebSearchSettings
 
 
@@ -121,7 +121,9 @@ def test_onboard_config_preserves_existing_secrets_and_safe_search(monkeypatch) 
 def test_onboard_config_collects_jina_settings(monkeypatch) -> None:
     text_answers = iter(["https://s.jina.example", "https://r.jina.example"])
     monkeypatch.setattr(tools.bub_inquirer, "ask_confirm", lambda *args, **kwargs: True)
-    monkeypatch.setattr(tools.bub_inquirer, "ask_select", lambda *args, **kwargs: "jina")
+    monkeypatch.setattr(
+        tools.bub_inquirer, "ask_select", lambda *args, **kwargs: "jina"
+    )
     monkeypatch.setattr(
         tools.bub_inquirer, "ask_secret", lambda *args, **kwargs: "jina-secret"
     )
@@ -198,6 +200,8 @@ def test_register_tools_enables_ollama_tool() -> None:
         == "Search the web with Ollama and return concise results."
     )
     assert "categories" not in tool_instance.parameters["properties"]
+    assert tool_instance.output_schema is not None
+    assert tool_instance.output_schema["title"] == "OllamaSearchResult"
 
 
 def test_register_tools_enables_searxng_tool() -> None:
@@ -214,6 +218,65 @@ def test_register_tools_enables_searxng_tool() -> None:
         "Search a configured SearXNG instance and return concise web results."
     )
     assert "categories" in tool_instance.parameters["properties"]
+    assert tool_instance.output_schema is not None
+    assert tool_instance.output_schema["title"] == "SearXNGSearchResult"
+
+
+async def test_searxng_tool_returns_structured_result_and_renders(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_search(*, param, settings) -> searxng.SearXNGSearchResult:
+        captured["param"] = param
+        return {
+            "answers": [],
+            "suggestions": [],
+            "infoboxes": [],
+            "results": [
+                {
+                    "title": "Bub docs",
+                    "url": "https://example.com/docs",
+                    "content": "",
+                    "engine": "",
+                    "category": "",
+                    "published_date": "",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(searxng, "search", fake_search)
+    tool_instance = tools.register_tools(
+        lambda: WebSearchSettings(searxng_base_url="https://search.example.com")
+    )
+    assert tool_instance is not None
+
+    result = await tool_instance.run(query="bub", max_results=3)
+
+    assert captured["param"] == searxng.SearXNGSearchInput(query="bub", max_results=3)
+    assert result["results"][0]["url"] == "https://example.com/docs"
+    assert tool_instance.render(result) == "1. Bub docs\n   https://example.com/docs"
+
+
+async def test_jina_read_tool_returns_structured_result_and_renders(
+    monkeypatch,
+) -> None:
+    async def fake_request(endpoint: str, **kwargs) -> str:
+        return f"content of {endpoint}"
+
+    monkeypatch.setattr(jina, "_request", fake_request)
+    tools.register_tools(lambda: WebSearchSettings(jina_api_key="secret"))
+    read_tool = REGISTRY[tools.READ_TOOL_NAME]
+    assert read_tool.output_schema is not None
+
+    result = await read_tool.run(url=" https://example.com ")
+
+    assert result == {
+        "url": "https://example.com",
+        "content": "content of https://r.jina.ai/https://example.com",
+    }
+    assert read_tool.render(result) == result["content"]
+    assert read_tool.render({"url": "https://example.com", "content": ""}) == "none"
 
 
 def test_register_tools_enables_jina_tools() -> None:
@@ -230,6 +293,7 @@ def test_register_tools_enables_jina_tools() -> None:
         tool_instance.description
         == "Search the web with Jina Search and return SERP results."
     )
+    assert tool_instance.output_schema is not None
     assert tools.READ_TOOL_NAME in REGISTRY
 
 

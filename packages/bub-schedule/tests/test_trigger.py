@@ -14,7 +14,7 @@ from bub.tools import ToolContext
 from bub_schedule import tools
 
 
-def _trigger(job_id: str, context: ToolContext) -> str:
+def _trigger(job_id: str, context: ToolContext) -> tools.ScheduledJob:
     """Helper to call the schedule_trigger tool."""
     import asyncio
 
@@ -86,9 +86,12 @@ def test_schedule_trigger_executes_job_immediately(scheduler, context):
     assert job is not None
     assert job.next_run_time == original_next_run
 
-    # Verify result message
-    assert "triggered: test_job_1" in result
-    assert "next scheduled run:" in result
+    # Verify structured result and its rendered message
+    assert result["job_id"] == "test_job_1"
+    assert result["next_run"] == original_next_run.isoformat()
+    assert tools.schedule_trigger.render(result) == (
+        f"triggered: test_job_1 (next scheduled run: {original_next_run.isoformat()})"
+    )
 
 
 def test_schedule_trigger_preserves_interval_baseline(scheduler, context):
@@ -203,11 +206,10 @@ def test_schedule_trigger_returns_next_run_info(scheduler, context):
 
     result = _trigger("test_job_4", context)
 
-    # Result should contain job ID and next run time
-    assert "test_job_4" in result
-    assert "next scheduled run:" in result
-    # Should contain ISO format timestamp
-    assert next_run.strftime("%Y-%m-%d") in result
+    # Result should contain job ID and ISO format next run time
+    assert result["job_id"] == "test_job_4"
+    assert result["next_run"] is not None
+    assert result["next_run"].startswith(next_run.strftime("%Y-%m-%d"))
 
 
 def test_schedule_trigger_async_job(scheduler, context):
@@ -235,4 +237,4 @@ def test_schedule_trigger_async_job(scheduler, context):
     # Verify async job executed
     assert len(execution_log) == 1
     assert execution_log[0] == "async_value"
-    assert "test_job_async" in result
+    assert result["job_id"] == "test_job_async"

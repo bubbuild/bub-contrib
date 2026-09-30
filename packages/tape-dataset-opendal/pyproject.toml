@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Chojan Shang", email = "psiace@apache.org" }]
 requires-python = ">=3.12"
 dependencies = [
-    "bub>=0.5.0,<0.6.0",
+    "bub",
     "cel-python",
     "opendal>=0.46.0",
     "typer>=0.24.1",

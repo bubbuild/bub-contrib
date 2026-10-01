@@ -46,6 +46,8 @@ async def mcp_describe(names: list[str], *, context: ToolContext) -> str:
     await context.tape.append_event(
         DEFINITIONS_LOADED_EVENT, {"names": sorted(resolved)}, context=False
     )
+    agent = context.state["_runtime_agent"]
+    agent.tools.update({name: available[name] for name in resolved})
     aliases = ", ".join(name.replace(".", "_") for name in sorted(resolved))
     return f"Complete native definitions are now available for: {aliases}. Call these tools directly."
 
@@ -69,18 +71,32 @@ def render_tools_prompt(tools: Iterable[Tool]) -> str:
 
 
 async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
-    tools = [tool for tool in tools if tool is not mcp_describe]
+    agent = tape.context.state["_runtime_agent"]
+    scope = tape.context.state.get("_runtime_allowed_tools")
     available = {
-        tool.name: tool
-        for tool in tools
-        if isinstance(tool, MCPTool) and tool.agent_use
+        name: item
+        for name, item in agent.tool_catalog.items()
+        if isinstance(item, MCPTool)
+        and item.agent_use
+        and (scope is None or name in scope)
     }
+    native = [
+        item
+        for item in tools
+        if not isinstance(item, MCPTool) and item is not mcp_describe
+    ]
     if not available:
         tape.context.state.pop(MCP_TOOLS_STATE_KEY, None)
-        return tools, ""
-    # The current allowed tool list, not recorded names, defines the lookup scope.
+        return native, ""
     tape.context.state[MCP_TOOLS_STATE_KEY] = available
-    loaded = await loaded_tool_names(tape)
-    pending = {name: tool for name, tool in available.items() if name not in loaded}
-    native = [tool for tool in tools if tool.name not in pending]
-    return native + [mcp_describe], render_tools_prompt(pending.values())
+    code_mode = tape.context.state.get("code_mode") and any(
+        item.name == "run_code" for item in native
+    )
+    loaded = set(available) if code_mode else await loaded_tool_names(tape)
+    selected = {name: item for name, item in available.items() if name in loaded}
+    agent.tools.update(selected)
+    native.extend(selected.values())
+    if code_mode:
+        return native, ""
+    pending = [item for name, item in available.items() if name not in loaded]
+    return native + [mcp_describe], render_tools_prompt(pending)

@@ -161,7 +161,7 @@ class MCPChannel(Lifecycle):
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
         self._bindings: WeakKeyDictionary[
-            Agent, dict[str, tuple[Tool, Tool | None]]
+            Agent, dict[str, tuple[Tool, Tool | None, Tool | None]]
         ] = WeakKeyDictionary()
         self._stop_event: asyncio.Event | None = None
 
@@ -230,7 +230,7 @@ class MCPChannel(Lifecycle):
         }
 
     def bind_agent(self, agent: Agent) -> None:
-        """Refresh this channel's tools on an Agent, preserving name collisions."""
+        """Refresh the catalog without registering unloaded execution tools."""
         previous = self._bindings.pop(agent, {})
         tools = self.tools
         self._restore_tools(
@@ -239,9 +239,13 @@ class MCPChannel(Lifecycle):
         )
         bindings = {}
         for name, remote_tool in tools.items():
-            original = previous[name][1] if name in previous else agent.tools.get(name)
-            bindings[name] = (remote_tool, original)
-            agent.tools[name] = remote_tool
+            originals = previous[name][1:] if name in previous else (
+                agent.tool_catalog.get(name), agent.tools.get(name)
+            )
+            bindings[name] = (remote_tool, *originals)
+            agent.tool_catalog[name] = remote_tool
+            if name in previous and agent.tools.get(name) is previous[name][0]:
+                agent.tools[name] = remote_tool
         if bindings:
             self._bindings[agent] = bindings
         # Explicit tool sets may omit the globally registered discovery helper.
@@ -251,15 +255,18 @@ class MCPChannel(Lifecycle):
 
     @staticmethod
     def _restore_tools(
-        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]
+        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None, Tool | None]]
     ) -> None:
-        for name, (installed, original) in bindings.items():
-            if agent.tools.get(name) is not installed:
-                continue
-            if original is None:
-                agent.tools.pop(name, None)
-            else:
-                agent.tools[name] = original
+        for name, (installed, original_catalog, original_tool) in bindings.items():
+            for registry, original in (
+                (agent.tool_catalog, original_catalog), (agent.tools, original_tool)
+            ):
+                if registry.get(name) is not installed:
+                    continue
+                if original is None:
+                    registry.pop(name, None)
+                else:
+                    registry[name] = original
 
     async def bind_runtime_tools(
         self, framework: BubFramework, message: Envelope

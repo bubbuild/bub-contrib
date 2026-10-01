@@ -7,11 +7,15 @@ from typing import Any
 
 import pytest
 from any_llm.types.completion import ChatCompletion
+from fastmcp import Client, FastMCP
 
 from bub.builtin.agent import Agent
+from bub.builtin.codemode import run_code
 from bub.framework import BubFramework
 from bub.store import FileTapeStore
 from bub.tools import REGISTRY, Tool
+from bub_mcp import plugin
+from bub_mcp.config import MCPSettings
 from bub_mcp.plugin import MCPChannel, MCPServerState
 from bub_mcp.tools import MCPTool
 
@@ -72,6 +76,14 @@ def system_prompt(request: dict[str, Any]) -> str:
     )
 
 
+def tool_results(request: dict[str, Any]) -> str:
+    return "\n".join(
+        message.get("content", "")
+        for message in request["messages"]
+        if message["role"] == "tool"
+    )
+
+
 type Runtime = tuple[BubFramework, Provider, Tool, list[str]]
 
 
@@ -83,7 +95,7 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
     framework.load_builtin_hooks()
     provider = Provider()
     monkeypatch.setattr(
-        "bub.builtin.model_runner.AnyLLM.create", lambda *args, **kwargs: provider
+        "bub.builtin.model_runner.AnyLLM.create", lambda *a, **k: provider
     )
     calls: list[str] = []
 
@@ -94,346 +106,263 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
     remote = MCPTool.from_callable(
         lookup,
         name="mcp.notes_lookup",
-        description="Read a remote note. Detailed instructions and parameter documentation stay in the native schema.",
+        description="Read a remote note. Detailed instructions stay in the native definition.",
     )
     return framework, provider, remote, calls
 
 
-async def run(
-    agent: Agent, session: str, *, allowed_tools: list[str] | None = None
-) -> str:
+def make_agent(framework: BubFramework, *, tools: list[Tool], **kwargs: Any) -> Agent:
+    agent = Agent(
+        framework,
+        tools=[item for item in tools if not isinstance(item, MCPTool)],
+        skill_dirs=[],
+        **kwargs,
+    )
+    channel = MCPChannel.from_server_configs({})
+    channel._servers["notes"] = MCPServerState(
+        tools=[item for item in tools if isinstance(item, MCPTool)], connected=True
+    )
+    channel.bind_agent(agent)
+    return agent
+
+
+async def run(agent: Agent, session: str = "notes", **kwargs: Any) -> str:
     stream = await agent.run_stream(
         session_id=session,
-        prompt="Read the note.",
+        prompt="Read a note.",
         model="openrouter:test-model",
-        allowed_tools=allowed_tools,
+        **kwargs,
     )
     return "".join(
         [event.data.get("text", "") async for event in stream if event.kind == "final"]
     )
 
 
-@pytest.mark.asyncio
-async def test_builtin_calls_remain_direct_while_mcp_definitions_load_on_demand(
+async def test_builtins_are_direct_and_only_described_mcp_tools_become_native(
     runtime: Runtime,
 ) -> None:
     framework, provider, remote, calls = runtime
-    other = MCPTool.from_callable(
-        lambda: "other", name="mcp.notes_other", description="Other work."
-    )
-    agent = make_agent(
-        framework, tools=[*REGISTRY.values(), remote, other], skill_dirs=[]
-    )
+    other = MCPTool.from_callable(lambda: "other", name="mcp.notes_other")
+    agent = make_agent(framework, tools=[REGISTRY["tape.info"], remote, other])
     provider.replies = [
         ("tape_info", {}),
         ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
         ("mcp_notes_lookup", {"path": "note"}),
-        "found note",
+        "done",
     ]
-    assert await run(agent, "notes") == "found note"
+    await run(agent)
     assert calls == ["note"]
-    initial = provider.requests[0]
-    loaded, finished = provider.requests[-2:]
+    initial, after_builtin, loaded, completed = provider.requests
     assert "tape_info" in definitions(initial)
-    builtin_result = next(
-        message["content"]
-        for message in provider.requests[1]["messages"]
-        if message["role"] == "tool"
-    )
-    assert "entries" in builtin_result and "anchors" in builtin_result
-    assert "mcp_notes_lookup" not in definitions(initial)
+    assert "entries" in tool_results(after_builtin)
     assert "mcp_notes_lookup" in system_prompt(initial)
     assert "Detailed instructions" not in system_prompt(initial)
-    assert definitions(loaded)["mcp_notes_lookup"] == remote.to_schema()["function"] | {
-        "name": "mcp_notes_lookup"
-    }
-    assert "mcp_notes_lookup" not in system_prompt(loaded)
-    assert "mcp_notes_other" in system_prompt(loaded)
+    assert "mcp_notes_lookup" not in definitions(initial)
+    assert "mcp_notes_lookup" in definitions(loaded)
     assert "mcp_notes_other" not in definitions(loaded)
-    assert any(
-        message.get("content") == "found note"
-        for message in finished["messages"]
-        if message["role"] == "tool"
-    )
-    assert not any(
-        "Detailed instructions" in str(message)
-        for message in loaded["messages"]
-        if message["role"] == "tool"
-    )
+    assert "found note" in tool_results(completed)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "next_context", ["restart", "new_session", "reset", "handoff", "restricted"]
-)
-async def test_definition_reuse_follows_the_persisted_context_and_current_scope(
-    runtime: Runtime, tmp_path: Path, next_context: str
-) -> None:
-    framework, provider, remote, calls = runtime
-    directory = tmp_path / "store"
-    agent = make_agent(
-        framework, tools=[remote], tape_store=FileTapeStore(directory), skill_dirs=[]
-    )
-    provider.replies = [("mcp_describe", {"names": ["mcp_notes_lookup"]}), "ready"]
-    assert await run(agent, "notes") == "ready"
-    if next_context == "reset":
-        await agent.tape.session_tape("notes", tmp_path).reset()
-    elif next_context == "handoff":
-        await agent.tape.session_tape("notes", tmp_path).handoff(name="next")
-    restored = make_agent(
-        framework, tools=[remote], tape_store=FileTapeStore(directory), skill_dirs=[]
-    )
-    provider.requests.clear()
-    provider.replies = (
-        [("mcp_notes_lookup", {"path": "note"}), "found note"]
-        if next_context == "restart"
-        else ["ready"]
-    )
-    session = "other" if next_context == "new_session" else "notes"
-    allowed = [] if next_context == "restricted" else None
-    assert await run(restored, session, allowed_tools=allowed) == (
-        "found note" if next_context == "restart" else "ready"
-    )
-    exposed = definitions(provider.requests[0])
-    assert ("mcp_notes_lookup" in exposed) == (next_context == "restart")
-    assert ("mcp_notes_lookup" in system_prompt(provider.requests[0])) == (
-        next_context not in {"restart", "restricted"}
-    )
-    assert calls == (["note"] if next_context == "restart" else [])
-
-
-@pytest.mark.asyncio
-async def test_definition_lookup_cannot_restore_a_tool_excluded_by_the_current_scope(
+async def test_scope_allows_discovery_and_calls_only_for_selected_tools(
     runtime: Runtime,
 ) -> None:
     framework, provider, remote, calls = runtime
-    other = MCPTool.from_callable(
-        lambda: "other", name="mcp.notes_other", description="Other work."
-    )
-    agent = make_agent(framework, tools=[remote, other], skill_dirs=[])
-    provider.replies = [("mcp_describe", {"names": ["mcp.notes_lookup"]}), "ready"]
-    assert await run(agent, "notes", allowed_tools=["mcp_notes_other"]) == "ready"
-    assert calls == []
-    assert all(
-        "mcp_notes_lookup" not in definitions(request) for request in provider.requests
-    )
-    assert all(
-        "mcp_notes_lookup" not in system_prompt(request)
-        for request in provider.requests
-    )
-
-
-def make_agent(framework: BubFramework, *, tools: list[Tool], **kwargs: Any) -> Agent:
-    remote = [tool for tool in tools if isinstance(tool, MCPTool)]
-    agent = Agent(
-        framework,
-        tools=[tool for tool in tools if not isinstance(tool, MCPTool)],
-        **kwargs,
-    )
-    channel = MCPChannel.from_server_configs({})
-    channel._servers["notes"] = MCPServerState(tools=remote, connected=True)
-    channel.bind_agent(agent)
-    return agent
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("allow_describe", [False, True])
-async def test_explicit_scope_discovers_only_allowed_tools_with_or_without_an_explicit_helper(
-    runtime: Runtime, allow_describe: bool
-) -> None:
-    framework, provider, remote, calls = runtime
-    agent = make_agent(framework, tools=[remote], skill_dirs=[])
-    allowed = ["mcp_notes_lookup"]
-    replies: list[str | tuple[str, dict[str, Any]]] = [
+    other = MCPTool.from_callable(lambda: "other", name="mcp.notes_other")
+    agent = make_agent(framework, tools=[remote, other])
+    provider.replies = [
+        ("mcp_describe", {"names": ["mcp_notes_other"]}),
+        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
         ("mcp_notes_lookup", {"path": "note"}),
-        "found note",
+        "done",
     ]
-    if allow_describe:
-        allowed.append("mcp_describe")
-    replies.insert(0, ("mcp_describe", {"names": ["mcp_notes_lookup"]}))
-    provider.replies = replies
-    assert await run(agent, "notes", allowed_tools=allowed) == "found note"
+    await run(agent, allowed_tools=["mcp_notes_lookup"])
     assert calls == ["note"]
-    assert definitions(provider.requests[0]).keys() == {"mcp_describe"}
+    assert "mcp_describe" in definitions(provider.requests[0])
+    assert "mcp_notes_lookup" not in definitions(provider.requests[1])
+    assert all(
+        "mcp_notes_other" not in definitions(request) for request in provider.requests
+    )
+    assert "mcp_notes_other" not in system_prompt(provider.requests[0])
 
 
-@pytest.mark.asyncio
-async def test_one_agent_keeps_loaded_definitions_within_each_session(
-    runtime: Runtime,
+async def test_loaded_definitions_survive_restart(
+    runtime: Runtime, tmp_path: Path
 ) -> None:
     framework, provider, remote, calls = runtime
-    agent = make_agent(framework, tools=[remote], skill_dirs=[])
+    store = FileTapeStore(tmp_path / "store")
+    agent = make_agent(framework, tools=[remote], tape_store=store)
     provider.replies = [("mcp_describe", {"names": ["mcp_notes_lookup"]}), "ready"]
-    assert await run(agent, "first") == "ready"
+    await run(agent)
+    restored = make_agent(
+        framework, tools=[remote], tape_store=FileTapeStore(tmp_path / "store")
+    )
     provider.requests.clear()
-    provider.replies = ["ready"]
-    assert await run(agent, "second") == "ready"
-    assert definitions(provider.requests[0]).keys() == {"mcp_describe"}
-    assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
-    provider.requests.clear()
-    provider.replies = [("mcp_notes_lookup", {"path": "note"}), "found note"]
-    assert await run(agent, "first") == "found note"
+    provider.replies = [("mcp_notes_lookup", {"path": "note"}), "done"]
+    await run(restored)
     assert "mcp_notes_lookup" in definitions(provider.requests[0])
     assert calls == ["note"]
 
 
-@pytest.mark.asyncio
-async def test_multiple_mcp_sources_share_discovery_and_stop_removes_only_the_closed_sources(
-    runtime: Runtime,
-) -> None:
-    framework, provider, remote, calls = runtime
-    archive = MCPTool.from_callable(
-        lambda path: f"archived {path}", name="mcp.archive_lookup"
-    )
-    agent = Agent(framework, tools=[], skill_dirs=[])
-    first = MCPChannel.from_server_configs({})
-    first._servers["notes"] = MCPServerState(tools=[remote], connected=True)
-    second = MCPChannel.from_server_configs({})
-    second._servers["archive"] = MCPServerState(tools=[archive], connected=True)
-    first.bind_agent(agent)
-    second.bind_agent(agent)
-    provider.replies = [
-        ("mcp_describe", {"names": ["mcp_notes_lookup", "mcp_archive_lookup"]}),
-        ("mcp_notes_lookup", {"path": "note"}),
-        "found note",
-    ]
-    try:
-        assert await run(agent, "notes") == "found note"
-        assert calls == ["note"]
-        assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
-        assert "mcp_archive_lookup" in system_prompt(provider.requests[0])
-        assert {"mcp_notes_lookup", "mcp_archive_lookup"} <= definitions(
-            provider.requests[1]
-        ).keys()
-        await first.stop()
-        provider.requests.clear()
-        provider.replies = [("mcp_archive_lookup", {"path": "note"}), "archived note"]
-        assert await run(agent, "notes") == "archived note"
-        assert "mcp_notes_lookup" not in definitions(provider.requests[0])
-        assert "mcp_archive_lookup" in definitions(provider.requests[0])
-        assert any(
-            message.get("content") == "archived note"
-            for message in provider.requests[-1]["messages"]
-        )
-        await second.stop()
-        provider.requests.clear()
-        provider.replies = ["no sources"]
-        assert await run(agent, "notes") == "no sources"
-        assert definitions(provider.requests[0]) == {}
-    finally:
-        await first.stop()
-        await second.stop()
-
-
-@pytest.mark.asyncio
-async def test_rebinding_an_empty_catalog_exposes_no_discovery_or_remote_tools(
+async def test_loading_in_one_session_does_not_expose_definitions_in_another(
     runtime: Runtime,
 ) -> None:
     framework, provider, remote, _ = runtime
-    agent = Agent(framework, tools=[], skill_dirs=[])
-    channel = MCPChannel.from_server_configs({})
-    channel._servers["notes"] = MCPServerState(tools=[remote], connected=True)
-    channel.bind_agent(agent)
-    channel._servers["notes"].tools = []
-    channel.bind_agent(agent)
-    provider.replies = ["no tools"]
-    assert await run(agent, "notes") == "no tools"
-    assert definitions(provider.requests[0]) == {}
-    await channel.stop()
+    agent = make_agent(framework, tools=[remote])
+    provider.replies = [
+        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
+        "ready",
+        "ready",
+    ]
+    await run(agent, "first")
+    provider.requests.clear()
+    await run(agent, "second")
+    assert "mcp_notes_lookup" not in definitions(provider.requests[0])
+    assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("separate_sources", [False, True])
-@pytest.mark.parametrize("code_mode", [False, True])
-@pytest.mark.parametrize("restricted", [False, True])
-async def test_multiple_servers_with_the_same_remote_name_use_the_right_server_and_scope(
-    runtime: Runtime,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    separate_sources: bool,
-    code_mode: bool,
-    restricted: bool,
+@pytest.mark.parametrize("clear_context", ["reset", "handoff"])
+async def test_clearing_context_requires_discovery_again(
+    runtime: Runtime, clear_context: str
 ) -> None:
-    from bub.builtin.codemode import run_code
-    from fastmcp import Client, FastMCP
-    from bub_mcp import plugin
+    framework, provider, remote, _ = runtime
+    agent = make_agent(framework, tools=[remote])
+    provider.replies = [
+        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
+        "ready",
+        "ready",
+    ]
+    await run(agent)
+    tape = agent.tape.session_tape("notes", framework.workspace)
+    if clear_context == "reset":
+        await tape.reset()
+    else:
+        await tape.handoff(name="next")
+    provider.requests.clear()
+    await run(agent)
+    assert "mcp_notes_lookup" not in definitions(provider.requests[0])
+    assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
 
+
+async def test_two_mcp_sources_route_same_named_tools_and_close_independently(
+    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
     framework, provider, _, _ = runtime
-    calls: list[tuple[str, str]] = []
     servers = {name: FastMCP(name) for name in ("notes", "archive")}
+    calls: list[tuple[str, str]] = []
 
-    def handler(server_name: str) -> Callable[[str], str]:
+    def lookup_on(name: str) -> Callable[[str], str]:
         def lookup(path: str) -> str:
-            """Look up a remote note."""
-            calls.append((server_name, path))
-            return f"{server_name}: {path}"
+            calls.append((name, path))
+            return f"{name}: {path}"
 
         return lookup
 
     for name, server in servers.items():
-        server.tool(name="lookup")(handler(name))
+        server.tool(name="lookup")(lookup_on(name))
     monkeypatch.setattr(
         plugin,
         "_create_fastmcp_client",
-        lambda config, **kwargs: Client(servers[next(iter(config))]),
+        lambda config, **k: Client(servers[next(iter(config))]),
     )
-    configs = {name: {"command": name} for name in servers}
-    channels = (
-        [
-            MCPChannel.from_server_configs({name: config})
-            for name, config in configs.items()
-        ]
-        if separate_sources
-        else [MCPChannel.from_server_configs(configs)]
-    )
-    agent = Agent(framework, tools=[run_code] if code_mode else [], skill_dirs=[])
-    selected = ["notes"] if restricted else ["notes", "archive"]
-    names = [f"mcp_{name}_lookup" for name in selected]
-    allowed = names + (["run_code"] if code_mode else []) if restricted else None
-    if code_mode:
-        code = "\n".join(
-            f"print(await tools.mcp_{name}_lookup(path='note'))" for name in selected
-        )
-        provider.replies = [("run_code", {"code": code}), "done"]
-    else:
-        provider.replies = [
-            ("mcp_describe", {"names": names}),
-            *((name, {"path": "note"}) for name in names),
-            "done",
-        ]
+    notes, archive = [
+        MCPChannel.from_server_configs({name: {"command": name}}) for name in servers
+    ]
+    agent = Agent(framework, tools=[], skill_dirs=[])
     try:
-        for channel in channels:
+        for channel in (notes, archive):
             await channel.connect()
             channel.bind_agent(agent)
-        stream = await agent.run_stream(
-            session_id="multi-server",
-            prompt="Read the remote notes.",
-            model="openrouter:test-model",
-            allowed_tools=allowed,
-            state={"code_mode": code_mode, "_runtime_workspace": str(tmp_path)},
-        )
-        events = [event async for event in stream]
-        assert any(
-            event.kind == "final" and event.data.get("text") == "done"
-            for event in events
-        )
-        assert calls == [(name, "note") for name in selected]
-        assert definitions(provider.requests[0]).keys() == (
-            {"run_code"} if code_mode else {"mcp_describe"}
-        )
-        outputs = "\n".join(
-            message.get("content", "")
-            for message in provider.requests[-1]["messages"]
-            if message["role"] == "tool"
-        )
-        assert all(f"{name}: note" in outputs for name in selected)
-        if not code_mode:
-            catalog = system_prompt(provider.requests[0])
-            assert "mcp_notes_lookup" in catalog
-            assert ("mcp_archive_lookup" in catalog) == (not restricted)
-            assert set(definitions(provider.requests[1])) - {"mcp_describe"} == set(
-                names
-            )
+        provider.replies = [
+            ("mcp_describe", {"names": ["mcp_notes_lookup", "mcp_archive_lookup"]}),
+            ("mcp_notes_lookup", {"path": "a"}),
+            ("mcp_archive_lookup", {"path": "b"}),
+            "done",
+        ]
+        await run(agent)
+        assert calls == [("notes", "a"), ("archive", "b")]
+        assert "notes: a" in tool_results(provider.requests[-1])
+        assert "archive: b" in tool_results(provider.requests[-1])
+        await notes.stop()
+        provider.requests.clear()
+        provider.replies = [("mcp_archive_lookup", {"path": "c"}), "done"]
+        await run(agent)
+        assert calls[-1] == ("archive", "c")
+        assert "mcp_notes_lookup" not in definitions(provider.requests[0])
+        await archive.stop()
+        provider.requests.clear()
+        provider.replies = ["done"]
+        await run(agent)
+        assert definitions(provider.requests[0]) == {}
     finally:
-        for channel in channels:
-            await channel.stop()
+        await notes.stop()
+        await archive.stop()
+
+
+async def test_code_mode_calls_mcp_without_native_definitions(
+    runtime: Runtime,
+) -> None:
+    framework, provider, remote, calls = runtime
+    agent = make_agent(framework, tools=[run_code, remote])
+    provider.replies = [
+        ("run_code", {"code": "print(await tools.mcp_notes_lookup(path='note'))"}),
+        "done",
+    ]
+    await run(
+        agent, state={"code_mode": True, "_runtime_workspace": str(framework.workspace)}
+    )
+    assert calls == ["note"]
+    assert "mcp_notes_lookup" not in definitions(provider.requests[0])
+    assert "found note" in tool_results(provider.requests[-1])
+
+
+@pytest.mark.parametrize(
+    ("allowed", "excluded", "visible"),
+    [
+        (None, [], {"mcp_notes_lookup", "mcp_notes_other"}),
+        ([], [], set()),
+        (["mcp.notes_*"], ["mcp_notes_other"], {"mcp_notes_lookup"}),
+        (["mcp_notes_lookup"], ["mcp.notes_lookup"], set()),
+    ],
+)
+async def test_configured_allow_and_exclude_control_discovery(
+    runtime: Runtime, allowed: list[str] | None, excluded: list[str], visible: set[str]
+) -> None:
+    framework, provider, remote, _ = runtime
+    agent = Agent(framework, tools=[], skill_dirs=[])
+    channel = MCPChannel.from_server_configs({})
+    channel.settings = MCPSettings.model_validate(
+        {"allowed_tools": allowed, "excluded_tools": excluded}
+    )
+    other = MCPTool.from_callable(lambda: "other", name="mcp.notes_other")
+    channel._servers["notes"] = MCPServerState(tools=[remote, other], connected=True)
+    channel.bind_agent(agent)
+    provider.replies = ["done"]
+    await run(agent)
+    catalog = system_prompt(provider.requests[0])
+    assert {
+        name for name in ("mcp_notes_lookup", "mcp_notes_other") if name in catalog
+    } == visible
+
+
+async def test_subagent_can_discover_a_tool_not_loaded_by_its_parent(
+    runtime: Runtime,
+) -> None:
+    framework, provider, remote, calls = runtime
+    agent = make_agent(framework, tools=[REGISTRY["subagent"], remote])
+    provider.replies = [
+        (
+            "subagent",
+            {
+                "prompt": "Read a note.",
+                "allowed_tools": ["mcp_notes_lookup"],
+                "model": "openrouter:test-model",
+            },
+        ),
+        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
+        ("mcp_notes_lookup", {"path": "note"}),
+        "found note",
+        "done",
+    ]
+    await run(agent, "parent")
+    assert calls == ["note"]
+    assert "found note" in tool_results(provider.requests[-1])

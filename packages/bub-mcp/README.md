@@ -39,7 +39,7 @@ exposes selected complete native definitions on the next model call; calls use
 those tools' original handlers. Definitions are reused within the current tape
 context, including after restart. New sessions, reset and handoff start fresh.
 Builtins remain directly available, and code mode continues to use its full stub.
-This requires Bub's `Agent.tool_providers` interface.
+This requires Bub's `Agent.tool_catalog` and `Agent.tool_providers` interfaces.
 
 Configure `mcp.allowed_tools` and `mcp.excluded_tools` in Bub's `config.yml`, or set
 `BUB_MCP_ALLOWED_TOOLS` and `BUB_MCP_EXCLUDED_TOOLS` to JSON arrays. Patterns accept
@@ -113,7 +113,9 @@ finally:
 Discovered tools belong to the channel and are available through `channel.tools`; discovery does
 not modify `bub.tools.REGISTRY`. Bub snapshots that registry when an `Agent` is created, so changing
 it afterward would not update existing agents. The plugin's `load_state` hook waits for startup
-discovery and binds tools to the turn's Agent (including an explicit `_runtime_agent`). Stopping
+discovery and binds the catalog to the turn's Agent (including an explicit `_runtime_agent`). Remote
+tools enter `Agent.tools` only when selected by `mcp_describe` or explicitly called by a comma
+command. Code mode loads the allowed catalog into its complete stub. Stopping
 the channel removes its remote bindings and restores any tools it replaced.
 
 An embedding application can call `channel.bind_agent(agent)` after startup discovery completes,

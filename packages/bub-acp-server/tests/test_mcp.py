@@ -20,7 +20,7 @@ from acp.schema import (
 )
 from bub.builtin.agent import Agent
 from bub.framework import BubFramework
-from bub.tools import REGISTRY
+from bub.tools import REGISTRY, Tool
 from bub_mcp import plugin as mcp_plugin
 
 from bub_acp_server.agent import BubACPAgent
@@ -107,6 +107,13 @@ def make_agent(framework, **kwargs):
 async def call_echo(agent, session_id):
     return await agent.prompt(
         session_id=session_id, prompt=[TextContentBlock(text=",mcp.shared_echo")]
+    )
+
+
+async def command_output(agent: Agent, session_id: str, command: str) -> str:
+    stream = await agent.run_stream(session_id=session_id, prompt=command)
+    return "".join(
+        [event.data.get("text", "") async for event in stream if event.kind == "final"]
     )
 
 
@@ -201,40 +208,23 @@ async def test_model_receives_only_current_session_mcp_summaries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from any_llm.types.completion import ChatCompletion
+    from bub.builtin.model_runner import ModelRunner
+    from bub.streaming import AsyncStreamEvents, StreamEvent
 
     seen: list[tuple[set[str], str]] = []
 
-    class Provider:
-        SUPPORTS_COMPLETION_STREAMING = False
+    def run(
+        self: ModelRunner, *, tools: list[Tool], system_prompt: str, **kwargs: Any
+    ) -> AsyncStreamEvents:
+        seen.append(({tool.name for tool in tools}, system_prompt))
 
-        async def acompletion(self, **kwargs: Any) -> ChatCompletion:
-            names = {item["function"]["name"] for item in kwargs["tools"] or []}
-            prompt = "\n".join(
-                message["content"]
-                for message in kwargs["messages"]
-                if message["role"] == "system"
-            )
-            seen.append((names, prompt))
-            return ChatCompletion.model_validate(
-                {
-                    "id": "reply",
-                    "model": "test-model",
-                    "created": 0,
-                    "object": "chat.completion",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "finish_reason": "stop",
-                            "message": {"role": "assistant", "content": "ok"},
-                        }
-                    ],
-                }
-            )
+        async def events():
+            yield StreamEvent("text", {"delta": "ok"})
+            yield StreamEvent("final", {"text": "ok", "ok": True})
 
-    monkeypatch.setattr(
-        "bub.builtin.model_runner.AnyLLM.create", lambda *args, **kwargs: Provider()
-    )
+        return AsyncStreamEvents(events())
+
+    monkeypatch.setattr(ModelRunner, "run", run)
     agent = make_agent(framework)
     monkeypatch.setattr(agent, "_schedule_session_title", lambda *a, **k: None)
     first = await agent.new_session(
@@ -422,10 +412,18 @@ async def test_real_stdio_server_runs_with_session_cwd_and_env_and_exits(
         ],
     )
     try:
-        tools = await runtime_tools(agent, session.session_id)
-        result = await tools["mcp.local_describe"].run()
+        inbound = agent._build_inbound([], agent._sessions[session.session_id])
+        state = await framework.build_state(inbound, inbound.session_id)
+        runtime_agent = state["_runtime_agent"]
+        result = await command_output(
+            runtime_agent, session.session_id, ",mcp.local_describe"
+        )
         assert result == f"{tmp_path}:session-env"
-        pid = int(await tools["mcp.local_process_id"].run())
+        pid = int(
+            await command_output(
+                runtime_agent, session.session_id, ",mcp.local_process_id"
+            )
+        )
         channel = agent._mcp_channels[session.session_id]
         clients = [server.client for server in channel.list().values()]
         try:
@@ -504,7 +502,10 @@ async def test_session_tools_override_configured_mcp_and_restore_on_close(
         assert len(clients[1].calls) == 2
         runtime_agent = agent._runtime_agents[session.session_id]
         await agent.close_session(session.session_id)
-        assert await runtime_agent.tools["mcp.shared_echo"].run() == "configured"
+        assert (
+            await command_output(runtime_agent, session.session_id, ",mcp.shared_echo")
+            == "configured"
+        )
         await configured._manager.stop()
         assert "mcp.shared_echo" not in runtime_agent.tools
     finally:

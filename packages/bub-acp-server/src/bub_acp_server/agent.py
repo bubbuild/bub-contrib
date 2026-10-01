@@ -962,7 +962,7 @@ class BubACPAgent:
         )
         child_state = {**context.state, "session_id": child_session}
         allowed_tools = resolve_tool_names(
-            param.allowed_tools or None, exclude={"subagent"}, all_names=agent.tools | agent.tool_catalog
+            param.allowed_tools or None, exclude={"subagent"}, all_names=agent.known_tools
         )
         await emitter.started(
             description=_subagent_description(param.prompt), model_id=param.model

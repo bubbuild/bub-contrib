@@ -12,10 +12,6 @@ MCP_TOOLS_STATE_KEY = "_mcp_tools"
 DEFINITIONS_LOADED_EVENT = "mcp.definitions.loaded"
 
 
-class MCPTool(Tool):
-    """A callable supplied by an MCP server."""
-
-
 async def loaded_tool_names(tape: Tape) -> set[str]:
     query = tape.context.build_query(tape.query()).kinds("event")
     names: set[str] = set()
@@ -68,35 +64,3 @@ def render_tools_prompt(tools: Iterable[Tool]) -> str:
         "The catalog below lists MCP tools without native definitions; use mcp_describe to obtain them by name.\n"
         f"<mcp_tools>\n{'\n'.join(lines)}\n</mcp_tools>"
     )
-
-
-async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
-    agent = tape.context.state["_runtime_agent"]
-    scope = tape.context.state.get("_runtime_allowed_tools")
-    available = {
-        name: item
-        for name, item in agent.tool_catalog.items()
-        if isinstance(item, MCPTool)
-        and item.agent_use
-        and (scope is None or name in scope)
-    }
-    native = [
-        item
-        for item in tools
-        if not isinstance(item, MCPTool) and item is not mcp_describe
-    ]
-    if not available:
-        tape.context.state.pop(MCP_TOOLS_STATE_KEY, None)
-        return native, ""
-    tape.context.state[MCP_TOOLS_STATE_KEY] = available
-    code_mode = tape.context.state.get("code_mode") and any(
-        item.name == "run_code" for item in native
-    )
-    loaded = set(available) if code_mode else await loaded_tool_names(tape)
-    selected = {name: item for name, item in available.items() if name in loaded}
-    agent.tools.update(selected)
-    native.extend(selected.values())
-    if code_mode:
-        return native, ""
-    pending = [item for name, item in available.items() if name not in loaded]
-    return native + [mcp_describe], render_tools_prompt(pending)

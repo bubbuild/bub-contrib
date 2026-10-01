@@ -73,7 +73,7 @@ class StubAgent:
         self.error = error
         self.calls: list[dict[str, Any]] = []
         self.tools = {"subagent": REGISTRY["subagent"], "bash": REGISTRY["bash"]}
-        self.tool_catalog = {}
+        self.known_tools = self.tools
 
     async def run_stream(self, **kwargs: Any) -> AsyncStreamEvents:
         self.calls.append(kwargs)

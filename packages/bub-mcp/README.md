@@ -39,7 +39,10 @@ exposes selected complete native definitions on the next model call; calls use
 those tools' original handlers. Definitions are reused within the current tape
 context, including after restart. New sessions, reset and handoff start fresh.
 Builtins remain directly available, and code mode continues to use its full stub.
-This requires Bub's `Agent.tool_catalog` and `Agent.tool_providers` interfaces.
+Each MCP channel registers once in Bub's `Agent.catalogs` before code mode,
+providing its current tools and per-request selection. Selected tools enter
+`Agent.tools`; stopping a channel removes its catalog and restores its bindings
+independently.
 
 Configure `mcp.allowed_tools` and `mcp.excluded_tools` in Bub's `config.yml`, or set
 `BUB_MCP_ALLOWED_TOOLS` and `BUB_MCP_EXCLUDED_TOOLS` to JSON arrays. Patterns accept

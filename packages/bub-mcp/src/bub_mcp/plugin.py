@@ -16,13 +16,14 @@ import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
 from bub.tools import Tool, ToolContext
+from bub.tape import Tape
 from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope, field_of
 from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
-from bub_mcp.tools import MCPTool, mcp_describe, prepare_mcp_tools
+from bub_mcp.tools import MCP_TOOLS_STATE_KEY, loaded_tool_names, mcp_describe, render_tools_prompt
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
@@ -161,7 +162,7 @@ class MCPChannel(Lifecycle):
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
         self._bindings: WeakKeyDictionary[
-            Agent, dict[str, tuple[Tool, Tool | None, Tool | None]]
+            Agent, dict[str, tuple[Tool, Tool | None]]
         ] = WeakKeyDictionary()
         self._stop_event: asyncio.Event | None = None
 
@@ -213,6 +214,11 @@ class MCPChannel(Lifecycle):
 
         for agent, bindings in list(self._bindings.items()):
             self._restore_tools(agent, bindings)
+            if self in agent.catalogs:
+                agent.catalogs.remove(self)
+            if not any(isinstance(catalog, MCPChannel) for catalog in agent.catalogs):
+                if agent.tools.get(mcp_describe.name) is mcp_describe:
+                    agent.tools.pop(mcp_describe.name)
         self._bindings.clear()
 
         for client in clients:
@@ -239,34 +245,47 @@ class MCPChannel(Lifecycle):
         )
         bindings = {}
         for name, remote_tool in tools.items():
-            originals = previous[name][1:] if name in previous else (
-                agent.tool_catalog.get(name), agent.tools.get(name)
-            )
-            bindings[name] = (remote_tool, *originals)
-            agent.tool_catalog[name] = remote_tool
+            original = previous[name][1] if name in previous else agent.tools.get(name)
+            bindings[name] = (remote_tool, original)
             if name in previous and agent.tools.get(name) is previous[name][0]:
                 agent.tools[name] = remote_tool
-        if bindings:
-            self._bindings[agent] = bindings
+        self._bindings[agent] = bindings
         # Explicit tool sets may omit the globally registered discovery helper.
         agent.tools.setdefault(mcp_describe.name, mcp_describe)
-        if prepare_mcp_tools not in agent.tool_providers:
-            agent.tool_providers.append(prepare_mcp_tools)
+        if self not in agent.catalogs:
+            agent.catalogs.insert(-1, self)
 
     @staticmethod
-    def _restore_tools(
-        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None, Tool | None]]
-    ) -> None:
-        for name, (installed, original_catalog, original_tool) in bindings.items():
-            for registry, original in (
-                (agent.tool_catalog, original_catalog), (agent.tools, original_tool)
-            ):
-                if registry.get(name) is not installed:
-                    continue
-                if original is None:
-                    registry.pop(name, None)
-                else:
-                    registry[name] = original
+    def _restore_tools(agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]) -> None:
+        for name, (installed, original) in bindings.items():
+            if agent.tools.get(name) is not installed:
+                continue
+            if original is None:
+                agent.tools.pop(name, None)
+            else:
+                agent.tools[name] = original
+
+    async def prepare(self, tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
+        """Select this source's scoped tools and contribute its discovery summary."""
+        agent = tape.context.state["_runtime_agent"]
+        first_source = next(catalog for catalog in agent.catalogs if isinstance(catalog, MCPChannel))
+        if first_source is self:
+            tape.context.state[MCP_TOOLS_STATE_KEY] = {}
+        owned = self.tools
+        available = {item.name: item for item in tools if owned.get(item.name) is item and item.agent_use}
+        native = [item for item in tools if owned.get(item.name) is not item and item is not mcp_describe]
+        tape.context.state[MCP_TOOLS_STATE_KEY].update(available)
+        code_mode = tape.context.state.get("code_mode") and any(item.name == "run_code" for item in native)
+        loaded = set(available) if code_mode else await loaded_tool_names(tape)
+        selected = {name: item for name, item in available.items() if name in loaded}
+        agent.tools.update(selected)
+        native.extend(selected.values())
+        if code_mode:
+            return native, ""
+        if tape.context.state[MCP_TOOLS_STATE_KEY]:
+            native.append(mcp_describe)
+        pending = [item for name, item in available.items() if name not in loaded]
+        return native, render_tools_prompt(pending)
 
     async def bind_runtime_tools(
         self, framework: BubFramework, message: Envelope
@@ -446,7 +465,7 @@ class MCPChannel(Lifecycle):
             return None
         bub_name = _tool_name(server_name, remote_name)
         output_schema, result_mode = _output_schema(remote_tool)
-        return MCPTool(
+        return Tool(
             name=bub_name,
             description=str(remote_tool.description or f"MCP tool {remote_name}"),
             parameters=_tool_parameters(remote_tool),

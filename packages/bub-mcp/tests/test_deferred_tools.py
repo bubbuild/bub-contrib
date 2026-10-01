@@ -17,7 +17,6 @@ from bub.tools import REGISTRY, Tool
 from bub_mcp import plugin
 from bub_mcp.config import MCPSettings
 from bub_mcp.plugin import MCPChannel, MCPServerState
-from bub_mcp.tools import MCPTool
 
 
 class Provider:
@@ -103,7 +102,7 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
         calls.append(path)
         return f"found {path}"
 
-    remote = MCPTool.from_callable(
+    remote = Tool.from_callable(
         lookup,
         name="mcp.notes_lookup",
         description="Read a remote note. Detailed instructions stay in the native definition.",
@@ -114,13 +113,13 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
 def make_agent(framework: BubFramework, *, tools: list[Tool], **kwargs: Any) -> Agent:
     agent = Agent(
         framework,
-        tools=[item for item in tools if not isinstance(item, MCPTool)],
+        tools=[item for item in tools if not item.name.startswith("mcp.")],
         skill_dirs=[],
         **kwargs,
     )
     channel = MCPChannel.from_server_configs({})
     channel._servers["notes"] = MCPServerState(
-        tools=[item for item in tools if isinstance(item, MCPTool)], connected=True
+        tools=[item for item in tools if item.name.startswith("mcp.")], connected=True
     )
     channel.bind_agent(agent)
     return agent
@@ -142,7 +141,7 @@ async def test_builtins_are_direct_and_only_described_mcp_tools_become_native(
     runtime: Runtime,
 ) -> None:
     framework, provider, remote, calls = runtime
-    other = MCPTool.from_callable(lambda: "other", name="mcp.notes_other")
+    other = Tool.from_callable(lambda: "other", name="mcp.notes_other")
     agent = make_agent(framework, tools=[REGISTRY["tape.info"], remote, other])
     provider.replies = [
         ("tape_info", {}),
@@ -167,7 +166,7 @@ async def test_scope_allows_discovery_and_calls_only_for_selected_tools(
     runtime: Runtime,
 ) -> None:
     framework, provider, remote, calls = runtime
-    other = MCPTool.from_callable(lambda: "other", name="mcp.notes_other")
+    other = Tool.from_callable(lambda: "other", name="mcp.notes_other")
     agent = make_agent(framework, tools=[remote, other])
     provider.replies = [
         ("mcp_describe", {"names": ["mcp_notes_other"]}),
@@ -333,7 +332,7 @@ async def test_configured_allow_and_exclude_control_discovery(
     channel.settings = MCPSettings.model_validate(
         {"allowed_tools": allowed, "excluded_tools": excluded}
     )
-    other = MCPTool.from_callable(lambda: "other", name="mcp.notes_other")
+    other = Tool.from_callable(lambda: "other", name="mcp.notes_other")
     channel._servers["notes"] = MCPServerState(tools=[remote, other], connected=True)
     channel.bind_agent(agent)
     provider.replies = ["done"]
@@ -353,7 +352,7 @@ async def test_subagent_can_discover_a_tool_not_loaded_by_its_parent(
         (
             "subagent",
             {
-                "prompt": "Read a note.",
+                "prompt": "Read the note in a child session.",
                 "allowed_tools": ["mcp_notes_lookup"],
                 "model": "openrouter:test-model",
             },
@@ -364,5 +363,10 @@ async def test_subagent_can_discover_a_tool_not_loaded_by_its_parent(
         "done",
     ]
     await run(agent, "parent")
+    assert any(
+        message["role"] == "user"
+        and message["content"] == "Read the note in a child session."
+        for message in provider.requests[1]["messages"]
+    )
     assert calls == ["note"]
     assert "found note" in tool_results(provider.requests[-1])

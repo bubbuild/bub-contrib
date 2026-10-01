@@ -213,6 +213,9 @@ async def test_model_receives_only_current_session_mcp_tools(
 
     monkeypatch.setattr(ModelRunner, "run", run)
     agent = make_agent(framework)
+    # Automatic session titles issue their own model call; this test asserts on
+    # the tool surface of prompt turns only.
+    monkeypatch.setattr(agent, "_schedule_session_title", lambda *a, **k: None)
     first = await agent.new_session(
         cwd=str(tmp_path), mcp_servers=[stdio("first", "first")]
     )

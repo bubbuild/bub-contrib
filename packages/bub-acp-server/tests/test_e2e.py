@@ -15,6 +15,7 @@ from acp.schema import (
     CreateTerminalResponse,
     DeclineElicitationResponse,
     ElicitationFormSessionMode,
+    Implementation,
     ReadTextFileResponse,
     TerminalOutputResponse,
     TextContentBlock,
@@ -274,6 +275,7 @@ async def test_acknowledged_steering_starts_turn_over_extension_route(
                     fs={"readTextFile": True, "writeTextFile": True},
                     terminal=True,
                 ),
+                client_info=Implementation(name="lody", title="Lody", version="1"),
             )
             session = await connection.new_session(cwd=str(workspace))
             response = await connection.ext_method(
@@ -293,6 +295,8 @@ async def test_acknowledged_steering_starts_turn_over_extension_route(
         assert process.returncode is None
         assert initialized.field_meta == {"steering": {"supported": True}}
         assert initialized.agent_capabilities is not None
+        # A Lody client also receives the session-title promise, which has no
+        # client-side capability to negotiate.
         assert initialized.agent_capabilities.field_meta == {
             "lody": {
                 "steering": {
@@ -300,7 +304,9 @@ async def test_acknowledged_steering_starts_turn_over_extension_route(
                     "transport": "request",
                     "upstreamTurn": "same",
                     "configPolicy": "active",
-                }
+                },
+                "subagentEvents": {"version": 1},
+                "sessionTitle": {"version": 1},
             }
         }
         assert response == {"outcome": "injected"}

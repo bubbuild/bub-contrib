@@ -42,8 +42,6 @@ async def mcp_describe(names: list[str], *, context: ToolContext) -> str:
     await context.tape.append_event(
         DEFINITIONS_LOADED_EVENT, {"names": sorted(resolved)}, context=False
     )
-    agent = context.state["_runtime_agent"]
-    agent.tools.update({name: available[name] for name in resolved})
     aliases = ", ".join(name.replace(".", "_") for name in sorted(resolved))
     return f"Complete native definitions are now available for: {aliases}. Call these tools directly."
 

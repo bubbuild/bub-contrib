@@ -252,8 +252,7 @@ class MCPChannel(Lifecycle):
         self._bindings[agent] = bindings
         # Explicit tool sets may omit the globally registered discovery helper.
         agent.tools.setdefault(mcp_describe.name, mcp_describe)
-        if self not in agent.catalogs:
-            agent.catalogs.insert(-1, self)
+        agent.add_catalog(self)
 
     @staticmethod
     def _restore_tools(agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]) -> None:
@@ -278,7 +277,6 @@ class MCPChannel(Lifecycle):
         code_mode = tape.context.state.get("code_mode") and any(item.name == "run_code" for item in native)
         loaded = set(available) if code_mode else await loaded_tool_names(tape)
         selected = {name: item for name, item in available.items() if name in loaded}
-        agent.tools.update(selected)
         native.extend(selected.values())
         if code_mode:
             return native, ""

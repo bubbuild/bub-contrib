@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -251,6 +252,48 @@ def make_agent(framework: BubFramework, *, tools: list[Tool], **kwargs: Any) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("allow_describe", [False, True])
+async def test_explicit_scope_discovers_only_allowed_tools_with_or_without_an_explicit_helper(
+    runtime: Runtime, allow_describe: bool
+) -> None:
+    framework, provider, remote, calls = runtime
+    agent = make_agent(framework, tools=[remote], skill_dirs=[])
+    allowed = ["mcp_notes_lookup"]
+    replies: list[str | tuple[str, dict[str, Any]]] = [
+        ("mcp_notes_lookup", {"path": "note"}),
+        "found note",
+    ]
+    if allow_describe:
+        allowed.append("mcp_describe")
+    replies.insert(0, ("mcp_describe", {"names": ["mcp_notes_lookup"]}))
+    provider.replies = replies
+    assert await run(agent, "notes", allowed_tools=allowed) == "found note"
+    assert calls == ["note"]
+    assert definitions(provider.requests[0]).keys() == {"mcp_describe"}
+    assert "mcp_tools" in system_prompt(provider.requests[0])
+
+
+@pytest.mark.asyncio
+async def test_one_agent_keeps_loaded_definitions_within_each_session(
+    runtime: Runtime,
+) -> None:
+    framework, provider, remote, calls = runtime
+    agent = make_agent(framework, tools=[remote], skill_dirs=[])
+    provider.replies = [("mcp_describe", {"names": ["mcp_notes_lookup"]}), "ready"]
+    assert await run(agent, "first") == "ready"
+    provider.requests.clear()
+    provider.replies = ["ready"]
+    assert await run(agent, "second") == "ready"
+    assert definitions(provider.requests[0]).keys() == {"mcp_describe"}
+    assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
+    provider.requests.clear()
+    provider.replies = [("mcp_notes_lookup", {"path": "note"}), "found note"]
+    assert await run(agent, "first") == "found note"
+    assert "mcp_notes_lookup" in definitions(provider.requests[0])
+    assert calls == ["note"]
+
+
+@pytest.mark.asyncio
 async def test_multiple_mcp_sources_share_discovery_and_stop_removes_only_the_closed_sources(
     runtime: Runtime,
 ) -> None:
@@ -301,3 +344,136 @@ async def test_multiple_mcp_sources_share_discovery_and_stop_removes_only_the_cl
     finally:
         await first.stop()
         await second.stop()
+
+
+@pytest.mark.asyncio
+async def test_closing_the_last_source_removes_the_discovery_command(
+    runtime: Runtime,
+) -> None:
+    framework, provider, remote, _ = runtime
+    agent = Agent(framework, tools=[], skill_dirs=[])
+    channel = MCPChannel.from_server_configs({})
+    channel._servers["notes"] = MCPServerState(tools=[remote], connected=True)
+    channel.bind_agent(agent)
+    provider.replies = [("mcp_describe", {"names": ["mcp_notes_lookup"]}), "ready"]
+    assert await run(agent, "notes") == "ready"
+    await channel.stop()
+    with pytest.raises(ValueError, match="bash tool is not available"):
+        await agent.run_stream(session_id="notes", prompt=",mcp.describe")
+
+
+@pytest.mark.asyncio
+async def test_rebinding_an_empty_catalog_exposes_no_discovery_or_remote_tools(
+    runtime: Runtime,
+) -> None:
+    framework, provider, remote, _ = runtime
+    agent = Agent(framework, tools=[], skill_dirs=[])
+    channel = MCPChannel.from_server_configs({})
+    channel._servers["notes"] = MCPServerState(tools=[remote], connected=True)
+    channel.bind_agent(agent)
+    channel._servers["notes"].tools = []
+    channel.bind_agent(agent)
+    provider.replies = ["no tools"]
+    assert await run(agent, "notes") == "no tools"
+    assert definitions(provider.requests[0]) == {}
+    with pytest.raises(ValueError, match="bash tool is not available"):
+        await agent.run_stream(session_id="notes", prompt=",mcp.describe")
+    await channel.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("separate_sources", [False, True])
+@pytest.mark.parametrize("code_mode", [False, True])
+@pytest.mark.parametrize("restricted", [False, True])
+async def test_multiple_servers_with_the_same_remote_name_use_the_right_server_and_scope(
+    runtime: Runtime,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    separate_sources: bool,
+    code_mode: bool,
+    restricted: bool,
+) -> None:
+    from bub.builtin.codemode import run_code
+    from fastmcp import Client, FastMCP
+    from bub_mcp import plugin
+
+    framework, provider, _, _ = runtime
+    calls: list[tuple[str, str]] = []
+    servers = {name: FastMCP(name) for name in ("notes", "archive")}
+
+    def handler(server_name: str) -> Callable[[str], str]:
+        def lookup(path: str) -> str:
+            """Look up a remote note."""
+            calls.append((server_name, path))
+            return f"{server_name}: {path}"
+
+        return lookup
+
+    for name, server in servers.items():
+        server.tool(name="lookup")(handler(name))
+    monkeypatch.setattr(
+        plugin,
+        "_create_fastmcp_client",
+        lambda config, **kwargs: Client(servers[next(iter(config))]),
+    )
+    configs = {name: {"command": name} for name in servers}
+    channels = (
+        [
+            MCPChannel.from_server_configs({name: config})
+            for name, config in configs.items()
+        ]
+        if separate_sources
+        else [MCPChannel.from_server_configs(configs)]
+    )
+    agent = Agent(framework, tools=[run_code] if code_mode else [], skill_dirs=[])
+    selected = ["notes"] if restricted else ["notes", "archive"]
+    names = [f"mcp_{name}_lookup" for name in selected]
+    allowed = names + (["run_code"] if code_mode else []) if restricted else None
+    if code_mode:
+        code = "\n".join(
+            f"print(await tools.mcp_{name}_lookup(path='note'))" for name in selected
+        )
+        provider.replies = [("run_code", {"code": code}), "done"]
+    else:
+        provider.replies = [
+            ("mcp_describe", {"names": names}),
+            *((name, {"path": "note"}) for name in names),
+            "done",
+        ]
+    try:
+        for channel in channels:
+            await channel.connect()
+            channel.bind_agent(agent)
+        stream = await agent.run_stream(
+            session_id="multi-server",
+            prompt="Read the remote notes.",
+            model="openrouter:test-model",
+            allowed_tools=allowed,
+            state={"code_mode": code_mode, "_runtime_workspace": str(tmp_path)},
+        )
+        events = [event async for event in stream]
+        assert any(
+            event.kind == "final" and event.data.get("text") == "done"
+            for event in events
+        )
+        assert calls == [(name, "note") for name in selected]
+        assert len(provider.requests[0].get("tools") or []) == 1
+        assert definitions(provider.requests[0]).keys() == (
+            {"run_code"} if code_mode else {"mcp_describe"}
+        )
+        outputs = "\n".join(
+            message.get("content", "")
+            for message in provider.requests[-1]["messages"]
+            if message["role"] == "tool"
+        )
+        assert all(f"{name}: note" in outputs for name in selected)
+        if code_mode:
+            assert "mcp_tools" not in system_prompt(provider.requests[0])
+        else:
+            catalog = system_prompt(provider.requests[0])
+            assert "mcp_notes_lookup" in catalog
+            assert ("mcp_archive_lookup" in catalog) == (not restricted)
+            assert definitions(provider.requests[1]).keys() == {"mcp_describe", *names}
+    finally:
+        for channel in channels:
+            await channel.stop()

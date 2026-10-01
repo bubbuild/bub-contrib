@@ -15,6 +15,8 @@ Expose Bub as an Agent Client Protocol agent.
 - Session MCP servers over stdio, Streamable HTTP, and SSE via `bub-mcp`
 - ACP context-compaction notifications when `tape.handoff` runs
 - Mid-turn steering through the `_lody/session/steer` ACP extension
+- Streamed subagent execution events through `_lody/subagents/event`
+- Automatic session titles pushed as `session_info_update`
 
 ## Installation
 
@@ -245,6 +247,48 @@ transport = await create_websocket_stream("ws://127.0.0.1:28200/acp")
 
 Initialization, session loading, prompts and tool callbacks work over the socket; `connection.close()` closes it. WebSocket does not require HTTP/2. Like HTTP, it does not advertise the SDK's disabled unstable resume/close routes and adds no authentication.
 
+## Lody extension capabilities
+
+Everything Lody adds lives under `agentCapabilities._meta.lody`, and that block
+is reported only to clients that identify themselves as Lody in
+`InitializeRequest.clientInfo`:
+
+```json
+{
+  "clientInfo": { "name": "lody", "title": "Lody", "version": "1" }
+}
+```
+
+The `name` is matched case-insensitively as a prefix, so variants such as
+`lody-cli` are recognized; an absent or unknown identity is not Lody. Other
+clients receive no Lody-namespaced capability and no Lody-specific behavior.
+The generic `{"steering": {"supported": true}}` field on the initialize response
+is not Lody-namespaced and stays unconditional, so clients using the original
+Codex steering route can still detect it.
+
+A Lody client sees the complete set:
+
+```json
+{
+  "agentCapabilities": {
+    "_meta": {
+      "lody": {
+        "steering": {
+          "version": 1,
+          "transport": "request",
+          "upstreamTurn": "same",
+          "configPolicy": "active"
+        },
+        "subagentEvents": { "version": 1 },
+        "sessionTitle": { "version": 1 }
+      }
+    }
+  }
+}
+```
+
+Each section below describes one entry.
+
 ## Steering
 
 Clients can detect steering support in the initialize response:
@@ -260,7 +304,8 @@ Clients can detect steering support in the initialize response:
 ```
 
 Clients that require acknowledged steering can also negotiate the Lody
-extension under `agentCapabilities._meta`:
+extension under `agentCapabilities._meta`, which Lody clients receive in the
+capability block above:
 
 ```json
 {
@@ -306,6 +351,90 @@ distinguish submission from application.
 For compatibility with clients using the original Codex steering extension,
 Bub also accepts `_session/steering`. Its optional `steerId` uses the matching
 `_session/steering_applied` notification.
+
+## Subagent events
+
+Bub's `subagent` tool consumes the child agent's stream internally, so an ACP
+client would otherwise see only the outer tool call. Clients that want the child
+run can negotiate the Lody `subagentEvents` contract. Both sides opt in
+independently, so the agent advertises the capability:
+
+```json
+{
+  "agentCapabilities": {
+    "_meta": {
+      "lody": {
+        "subagentEvents": {
+          "version": 1
+        }
+      }
+    }
+  }
+}
+```
+
+and a client opts in by sending the same version in
+`InitializeRequest.clientCapabilities._meta.lody`. Only then does Bub replace
+that session's `subagent` tool with a streaming variant and publish
+`_lody/subagents/event` notifications. The advertisement is part of the Lody
+capability block, so only Lody clients see it; the client's answer remains the
+switch, and an opt-in is honored even from a client that never saw the
+advertisement. The replacement keeps the tool's name,
+description, parameters, renderer and output schema, and still returns Bub's
+`{session_id, output, errors}` result to the model, so delegation behaves
+exactly as before.
+
+Each event carries the ACP `sessionId`, an opaque per-execution `runId`, and one
+of three payloads:
+
+| `type`     | Payload                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| `snapshot` | Task state (`running`, `completed`, `failed`, `cancelled`), description, model, summary    |
+| `progress` | Sparse absolute observations such as `lastToolName`, `toolCallCount`, `turnCount`, `durationMs` |
+| `output`   | One child stream chunk as an ACP session update: text, thought, or tool call/update         |
+
+Snapshots replace previously known task metadata, and output follows the child's
+connection order. There are no sequence numbers, no replay guarantees and no
+cross-reconnect deduplication, and progress counters are display observations
+rather than usage accounting. A client that cannot receive an event never fails
+the tool.
+
+`outputRead` is advertised as `none` and `cancel` as `false`, because runs are
+not addressable through the separate `_lody/subagents/list|cancel|output`
+request surface. Publishing is best effort: a client that cannot receive an
+event never fails the run, and the tool still returns its result.
+
+The capability is always advertised, and client negotiation alone decides
+whether events are published. Clients that never opt in keep Bub's stock
+`subagent` tool unchanged.
+
+## Session titles
+
+This contract has no client-side capability to negotiate, so it rides on the
+Lody client identification described above; other clients keep their own title
+process.
+
+After the first turn of a session, Bub asks the session's model for a short
+title with a single completion that carries no tools and no skills, then pushes
+the result on the standard ACP callback:
+
+```json
+{
+  "sessionId": "session-id",
+  "update": {
+    "sessionUpdate": "session_info_update",
+    "title": "Fix login redirect",
+    "_meta": { "lody": { "titleSource": "generated" } }
+  }
+}
+```
+
+The title is stored in `acp-sessions.json` and returned by `session/list`
+afterwards. Advertising the capability tells a Lody client that it can skip its
+own title generator for the session. Generation happens at most once per
+session, is skipped for sessions that already have a title, and is best effort:
+a failure or a timeout leaves the client's draft title in place and no second
+generator is requested.
 
 ## Use In Zed
 

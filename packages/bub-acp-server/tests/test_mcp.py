@@ -20,7 +20,7 @@ from acp.schema import (
 )
 from bub.builtin.agent import Agent
 from bub.framework import BubFramework
-from bub.tools import REGISTRY, Tool
+from bub.tools import REGISTRY
 from bub_mcp import plugin as mcp_plugin
 
 from bub_acp_server.agent import BubACPAgent
@@ -201,28 +201,42 @@ async def test_model_receives_only_current_session_mcp_summaries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from bub.builtin.model_runner import ModelRunner
-    from bub.streaming import AsyncStreamEvents, StreamEvent
+    from any_llm.types.completion import ChatCompletion
 
     seen: list[tuple[set[str], str]] = []
 
-    def run(
-        self: ModelRunner,
-        *,
-        tools: list[Tool],
-        system_prompt: str | None,
-        **kwargs: Any,
-    ) -> AsyncStreamEvents:
-        seen.append(({tool.name for tool in tools}, system_prompt or ""))
+    class Provider:
+        SUPPORTS_COMPLETION_STREAMING = False
 
-        async def events():
-            yield StreamEvent("text", {"delta": "ok"})
-            yield StreamEvent("final", {"text": "ok", "ok": True})
+        async def acompletion(self, **kwargs: Any) -> ChatCompletion:
+            names = {item["function"]["name"] for item in kwargs["tools"] or []}
+            prompt = "\n".join(
+                message["content"]
+                for message in kwargs["messages"]
+                if message["role"] == "system"
+            )
+            seen.append((names, prompt))
+            return ChatCompletion.model_validate(
+                {
+                    "id": "reply",
+                    "model": "test-model",
+                    "created": 0,
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "ok"},
+                        }
+                    ],
+                }
+            )
 
-        return AsyncStreamEvents(events())
-
-    monkeypatch.setattr(ModelRunner, "run", run)
+    monkeypatch.setattr(
+        "bub.builtin.model_runner.AnyLLM.create", lambda *args, **kwargs: Provider()
+    )
     agent = make_agent(framework)
+    monkeypatch.setattr(agent, "_schedule_session_title", lambda *a, **k: None)
     first = await agent.new_session(
         cwd=str(tmp_path), mcp_servers=[stdio("first", "first")]
     )

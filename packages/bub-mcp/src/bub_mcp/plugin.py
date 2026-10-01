@@ -213,11 +213,7 @@ class MCPChannel(Lifecycle):
 
         for agent, bindings in list(self._bindings.items()):
             self._restore_tools(agent, bindings)
-            if not any(isinstance(tool, MCPTool) for tool in agent.tools.values()):
-                if prepare_mcp_tools in agent.tool_providers:
-                    agent.tool_providers.remove(prepare_mcp_tools)
-                if agent.tools.get(DESCRIBE_TOOL.name) is DESCRIBE_TOOL:
-                    agent.tools.pop(DESCRIBE_TOOL.name)
+            self._sync_discovery(agent)
         self._bindings.clear()
 
         for client in clients:
@@ -225,7 +221,7 @@ class MCPChannel(Lifecycle):
 
     @property
     def tools(self) -> dict[str, Tool]:
-        """Selected tools from connected servers; never registered globally."""
+        """Tools from currently connected servers; never registered globally."""
         return {
             tool.name: tool
             for server in self._servers.values()
@@ -236,8 +232,6 @@ class MCPChannel(Lifecycle):
 
     def bind_agent(self, agent: Agent) -> None:
         """Refresh this channel's tools on an Agent, preserving name collisions."""
-        if prepare_mcp_tools not in agent.tool_providers:
-            agent.tool_providers.append(prepare_mcp_tools)
         previous = self._bindings.pop(agent, {})
         tools = self.tools
         self._restore_tools(
@@ -249,7 +243,21 @@ class MCPChannel(Lifecycle):
             original = previous[name][1] if name in previous else agent.tools.get(name)
             bindings[name] = (remote_tool, original)
             agent.tools[name] = remote_tool
-        self._bindings[agent] = bindings
+        if bindings:
+            self._bindings[agent] = bindings
+        self._sync_discovery(agent)
+
+    @staticmethod
+    def _sync_discovery(agent: Agent) -> None:
+        if any(isinstance(tool, MCPTool) for tool in agent.tools.values()):
+            if prepare_mcp_tools not in agent.tool_providers:
+                agent.tool_providers.append(prepare_mcp_tools)
+            agent.tools.setdefault(DESCRIBE_TOOL.name, DESCRIBE_TOOL)
+        else:
+            if prepare_mcp_tools in agent.tool_providers:
+                agent.tool_providers.remove(prepare_mcp_tools)
+            if agent.tools.get(DESCRIBE_TOOL.name) is DESCRIBE_TOOL:
+                agent.tools.pop(DESCRIBE_TOOL.name)
 
     @staticmethod
     def _restore_tools(
@@ -536,16 +544,15 @@ def _render_server_list(result: MCPServerList) -> str:
 
 @tool(name="mcp", context=True, renderer=_render_server_list)
 def mcp_list(*, context: ToolContext) -> MCPServerList:
-    """List configured MCP servers and their exposed tools."""
+    """List configured MCP servers."""
     manager = context.state.get("mcp")
     if not isinstance(manager, MCPChannel):
         raise RuntimeError("MCP channel is not available in state")
-    available = manager.tools
     return {
         "servers": {
             name: {
                 "connected": server.connected,
-                "tools": [tool.name for tool in server.tools if tool.name in available],
+                "tools": [tool.name for tool in server.tools],
                 "error": server.error,
             }
             for name, server in manager.list().items()

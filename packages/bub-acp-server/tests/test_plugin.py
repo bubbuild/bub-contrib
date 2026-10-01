@@ -269,16 +269,9 @@ async def test_initialize_advertises_session_capabilities(unstable: bool) -> Non
         response.agent_capabilities.session_capabilities.resume is not None
     ) is unstable
     assert response.agent_capabilities.load_session is True
-    assert response.agent_capabilities.field_meta == {
-        "lody": {
-            "steering": {
-                "version": 1,
-                "transport": "request",
-                "upstreamTurn": "same",
-                "configPolicy": "active",
-            }
-        }
-    }
+    # This connection did not identify itself as Lody, so no Lody-namespaced
+    # capability is reported at all.
+    assert response.agent_capabilities.field_meta is None
     assert response.field_meta == {"steering": {"supported": True}}
 
 

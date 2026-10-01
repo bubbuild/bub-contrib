@@ -81,10 +81,7 @@ async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], 
         for tool in tools
         if isinstance(tool, MCPTool) and tool.agent_use
     }
-    code_mode = tape.context.state.get("code_mode") and any(
-        tool.name == "run_code" for tool in tools
-    )
-    if not available or code_mode:
+    if not available:
         tape.context.state.pop(MCP_TOOLS_STATE_KEY, None)
         return tools, ""
     # The current allowed tool list, not recorded names, defines the lookup scope.

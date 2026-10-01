@@ -32,43 +32,21 @@ The file must contain a top-level `mcpServers` mapping:
 }
 ```
 
-## Tool definitions
+## Tool definitions and selection
 
-In ordinary tool mode, MCP tools initially appear as names and short summaries.
-The model uses `mcp_describe` to obtain selected native definitions, then calls
-the original tools normally. Definitions are reused within the current tape
-context, including after restart. Code mode continues to use its Python stub.
-New sessions, tape reset, and handoff start discovery again.
-MCP owns this policy; ordinary Bub tools need no loading flag. This requires a
-Bub version supporting `Agent.tool_providers`.
+In ordinary mode, MCP tools start as names and short summaries. `mcp_describe`
+exposes selected complete native definitions on the next model call; calls use
+those tools' original handlers. Definitions are reused within the current tape
+context, including after restart. New sessions, reset and handoff start fresh.
+Builtins remain directly available, and code mode continues to use its full stub.
+This requires Bub's `Agent.tool_providers` interface.
 
-## Tool selection
-
-Limit the remote tools bound to Agents through Bub's `config.yml`:
-
-```yaml
-mcp:
-  allowed_tools:
-    - mcp.lody_session_list
-    - mcp.lody_session_history
-    - mcp.time_*
-  excluded_tools:
-    - mcp.time_convert_time
-```
-
-The equivalent environment variables are `BUB_MCP_ALLOWED_TOOLS` and
-`BUB_MCP_EXCLUDED_TOOLS`, each containing a JSON array of name patterns. Patterns
-are case-sensitive and accept shell wildcards such as `*` and `?`. Use runtime
-names (`mcp.lody_session_list`) or model aliases (`mcp_lody_session_list`).
-Exclusions take precedence. Omitting `allowed_tools` allows all discovered tools;
-an empty list exposes none. Restart Bub after changing configuration.
-
-Selection applies to both direct model calls and code mode, including embedded
-MCP channels. It does not change tool descriptions or parameter schemas. Servers
-still connect and discover their complete tool catalogs; the operator's
-`bub mcp list` command shows that catalog, while the agent's `mcp` tool lists only
-allowed tools. Selection also limits the summaries and definitions available
-through `mcp_describe`; deferred exposure does not bypass these restrictions.
+Configure `mcp.allowed_tools` and `mcp.excluded_tools` in Bub's `config.yml`, or set
+`BUB_MCP_ALLOWED_TOOLS` and `BUB_MCP_EXCLUDED_TOOLS` to JSON arrays. Patterns accept
+runtime names (`mcp.notes_lookup`), model aliases (`mcp_notes_lookup`) and shell
+wildcards. Exclusions win; an omitted allowlist allows all, `[]` allows none.
+Restart Bub after changing configuration. Filtering applies before binding, so
+it also limits discovery and code mode; server discovery and listing remain unchanged.
 
 ## CLI Usage
 

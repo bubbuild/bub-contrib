@@ -32,6 +32,7 @@ async def mcp_describe(names: list[str], *, context: ToolContext) -> str:
     """Expose complete native definitions for selected MCP tools on the next model call.
 
     Use exact names from the mcp_tools catalog. Call already available tools directly.
+    Load the missing definitions needed for the current task together in one call.
     """
     from bub.builtin.tools import resolve_tool_names
 
@@ -57,8 +58,4 @@ def render_tools_prompt(tools: Iterable[Tool]) -> str:
         lines.append(f"- {name}: {summary}" if summary else f"- {name}")
     if not lines:
         return ""
-    return (
-        "Call tools whose complete native definitions are already available directly. "
-        "The catalog below lists available MCP tools; use mcp_describe to obtain missing native definitions by name.\n"
-        f"<mcp_tools>\n{'\n'.join(lines)}\n</mcp_tools>"
-    )
+    return f"<mcp_tools>\n{'\n'.join(lines)}\n</mcp_tools>"

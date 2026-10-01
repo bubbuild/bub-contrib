@@ -39,6 +39,9 @@ exposes selected complete native definitions on the next model call; calls use
 those tools' original handlers. Definitions are reused within the current tape
 context, including after restart. New sessions, reset and handoff start fresh.
 Builtins remain directly available, and code mode continues to use its full stub.
+Load the missing tools needed for a task together in one `mcp_describe` call,
+including tools from different sources. Shared discovery guidance appears in
+that helper's definition; each source contributes only its scoped summaries.
 The scoped catalog summaries stay unchanged as definitions load. Selected tools
 follow their first discovery order in each tape context, including across MCP
 sources, so other sessions do not change the request prefix.

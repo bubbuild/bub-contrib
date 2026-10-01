@@ -6,10 +6,11 @@ import contextlib
 import json
 import logging
 import re
+import time
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,6 +46,7 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionInfo,
+    SessionInfoUpdate,
     SessionListCapabilities,
     SessionResumeCapabilities,
     SetSessionConfigOptionResponse,
@@ -61,6 +63,7 @@ from bub.envelope import Envelope, content_of, field_of
 from bub.model_selection import ModelChoice, ModelOptions
 from bub.sidecars import sidecar_tape_name
 from bub.streaming import StreamEvent
+from bub.tools import ToolContext
 from bub.tape import (
     AsyncTapeStoreAdapter,
     Tape,
@@ -73,12 +76,19 @@ from pydantic import TypeAdapter, ValidationError
 from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 from bub_acp_server.config import ACPServerSettings
 from bub_acp_server.mcp import ACPMcpServer, connect_session_mcp, server_configs
+from bub_acp_server.subagents import (
+    LODY_SUBAGENT_EVENTS_CAPABILITY,
+    SubagentEventEmitter,
+    client_supports_subagent_events,
+    json_safe,
+)
 from bub_mcp.plugin import MCPChannel
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
-    from bub.framework import BubFramework
     from bub.builtin.agent import Agent
+    from bub.builtin.tools import SubAgentInput, SubAgentResult
+    from bub.framework import BubFramework
 
 type ACPPromptBlock = (
     TextContentBlock
@@ -122,6 +132,24 @@ _LODY_STEERING_CAPABILITY = {
     "upstreamTurn": "same",
     "configPolicy": "active",
 }
+
+_LODY_EXTENSION_CAPABILITIES: dict[str, object] = {
+    "steering": _LODY_STEERING_CAPABILITY,
+    "subagentEvents": dict(LODY_SUBAGENT_EVENTS_CAPABILITY),
+    "sessionTitle": {"version": 1},
+}
+
+#: How long a generated session title may take before it is abandoned. A title is
+#: best effort: the client keeps its own draft when generation fails.
+SESSION_TITLE_TIMEOUT_SECONDS = 30.0
+SESSION_TITLE_MAX_CHARS = 80
+SESSION_TITLE_INPUT_CHARS = 2000
+_SESSION_TITLE_INSTRUCTION = (
+    "Write a title for the coding session that starts with the user request below.\n"
+    "Reply with the title only: at most 8 words, no quotes, no surrounding text, "
+    "no markdown and no trailing punctuation.\n\n"
+    "User request:\n{request}"
+)
 
 _BUB_PROMPT_CONTEXT = re.compile(
     r"^(?=[^\n]*channel=\$)(?=[^\n]*chat_id=)[^\n]+\n"
@@ -445,6 +473,10 @@ class BubACPAgent:
         self._prompt_runs = prompt_runs if prompt_runs is not None else {}
         self._steering_locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task[PromptResponse]] = set()
+        self._subagent_events_enabled = False
+        self._lody_client = False
+        self._title_tasks: dict[str, asyncio.Task[None]] = {}
+        self._title_sessions: set[str] = set()
         self._closing_sessions = (
             closing_sessions if closing_sessions is not None else set()
         )
@@ -473,8 +505,18 @@ class BubACPAgent:
             bub_version = importlib.metadata.version("bub")
         except importlib.metadata.PackageNotFoundError:
             bub_version = "0.0.0"
-        del client_info, kwargs
+        del kwargs
         self.client_tools.set_capabilities(client_capabilities)
+        # Subagent events are opt-in on both sides: publishing needs the client to
+        # advertise the same version, whoever the client is.
+        self._subagent_events_enabled = client_supports_subagent_events(
+            client_capabilities
+        )
+        # `_meta.lody` is the Lody extension surface, so it is advertised only to
+        # clients that identify themselves as Lody. Other clients see nothing
+        # Lody-namespaced and never receive Lody-specific behavior such as
+        # automatic session titles.
+        self._lody_client = is_lody_client(client_info)
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_info=Implementation(name="bub", title="Bub", version=bub_version),
@@ -482,9 +524,11 @@ class BubACPAgent:
             agent_capabilities=AgentCapabilities(
                 load_session=True,
                 mcp_capabilities=McpCapabilities(http=True, sse=True),
-                field_meta={
-                    "lody": {"steering": _LODY_STEERING_CAPABILITY},
-                },
+                field_meta=(
+                    {"lody": dict(_LODY_EXTENSION_CAPABILITIES)}
+                    if self._lody_client
+                    else None
+                ),
                 session_capabilities=SessionCapabilities(
                     delete=SessionDeleteCapabilities(),
                     close=SessionCloseCapabilities()
@@ -638,6 +682,7 @@ class BubACPAgent:
             raise
         finally:
             self._steering_locks.pop(session_id, None)
+            self._title_sessions.discard(session_id)
             self._closing_sessions.discard(session_id)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
@@ -837,6 +882,7 @@ class BubACPAgent:
             return PromptResponse(stop_reason="end_turn")
         finally:
             self._complete_prompt_run(run)
+            self._schedule_session_title(prompt, session)
 
     def _build_inbound(
         self, prompt: list[ACPPromptBlock], session: ACPSession
@@ -864,11 +910,292 @@ class BubACPAgent:
 
             runtime_agent = Agent(self.framework)
             runtime_agent.tools.update(build_client_tools(self.client_tools))
+            if self._subagent_events_enabled:
+                self._install_streaming_subagent(runtime_agent, session)
             self._runtime_agents[session.session_id] = runtime_agent
         # Bub's builtin load_state uses this instance for recovery and execution.
         inbound._runtime_agent = runtime_agent
         inbound._mcp_channel = self._mcp_channels.get(session.session_id)
         return inbound
+
+    def _install_streaming_subagent(
+        self, runtime_agent: Agent, session: ACPSession
+    ) -> None:
+        """Replace this session's `subagent` tool with a streaming variant.
+
+        The replacement keeps the original tool's name, description, parameters,
+        renderer, output schema and code-mode flags, so the model sees no
+        difference. Only the handler changes: it republishes the child run
+        through `_lody/subagents/event` while still returning Bub's result.
+        """
+
+        tool = runtime_agent.tools.get("subagent")
+        if tool is None:
+            return
+
+        async def handler(*args: Any, **kwargs: Any) -> Any:
+            from bub.builtin.tools import SubAgentInput
+
+            context = kwargs.pop("context", None)
+            param = SubAgentInput(*args, **kwargs)
+            return await self._run_streaming_subagent(param, context, session)
+
+        runtime_agent.tools["subagent"] = replace(tool, handler=handler)
+
+    async def _run_streaming_subagent(
+        self,
+        param: SubAgentInput,
+        context: ToolContext | None,
+        session: ACPSession,
+    ) -> SubAgentResult:
+        from bub.builtin.tools import resolve_tool_names
+
+        if context is None:
+            raise RuntimeError("subagent tool requires a tool context")
+        agent = context.state.get("_runtime_agent")
+        if agent is None:
+            raise RuntimeError("no runtime agent found in tool context")
+
+        emitter = SubagentEventEmitter(self._require_client(), session.session_id)
+        child_session = _subagent_session_id(
+            param.session, str(context.state.get("session_id") or "")
+        )
+        child_state = {**context.state, "session_id": child_session}
+        allowed_tools = resolve_tool_names(
+            param.allowed_tools or None, exclude={"subagent"}, all_names=agent.tools
+        )
+        await emitter.started(
+            description=_subagent_description(param.prompt), model_id=param.model
+        )
+
+        started_at = time.time()
+        output: list[str] = []
+        errors: list[str] = []
+        pending: list[tuple[str, str]] = []
+        next_index = 0
+        turn_count = 0
+        tool_call_count = 0
+        last_tool_name: str | None = None
+        reported_usage: object = None
+
+        def elapsed_ms() -> int:
+            return int((time.time() - started_at) * 1000)
+
+        try:
+            stream = await agent.run_stream(
+                session_id=child_session,
+                prompt=param.prompt,
+                state=child_state,
+                model=param.model,
+                allowed_tools=allowed_tools,
+                allowed_skills=param.allowed_skills,
+            )
+            async with contextlib.aclosing(stream):
+                async for event in stream:
+                    if event.kind in ("text", "reasoning"):
+                        delta = str(event.data.get("delta", ""))
+                        if not delta:
+                            continue
+                        if event.kind == "text":
+                            output.append(delta)
+                        await emitter.output(
+                            _text_update(
+                                "agent_message_chunk"
+                                if event.kind == "text"
+                                else "agent_thought_chunk",
+                                delta,
+                            )
+                        )
+                    elif event.kind == "tool_call":
+                        for call in _list_payload(event.data.get("tool_calls")):
+                            tool_id = _tool_call_id(next_index, call)
+                            name = _tool_name(call)
+                            raw_input = _tool_raw_input(call)
+                            next_index += 1
+                            tool_call_count += 1
+                            last_tool_name = name
+                            title = _tool_title(name, raw_input)
+                            pending.append((tool_id, title))
+                            await emitter.output(
+                                {
+                                    "sessionUpdate": "tool_call",
+                                    "toolCallId": tool_id,
+                                    "title": title,
+                                    "kind": _tool_kind(name),
+                                    "status": "in_progress",
+                                    "rawInput": json_safe(raw_input),
+                                }
+                            )
+                        await emitter.progress(
+                            lastToolName=last_tool_name,
+                            turnCount=turn_count,
+                            toolCallCount=tool_call_count,
+                            durationMs=elapsed_ms(),
+                        )
+                    elif event.kind == "tool_result":
+                        results = _list_payload(event.data.get("tool_results"))
+                        for position, result in enumerate(results):
+                            if position < len(pending):
+                                tool_id, title = pending[position]
+                            else:
+                                tool_id, title = f"tool-{next_index}", "tool"
+                                next_index += 1
+                            await emitter.output(
+                                {
+                                    "sessionUpdate": "tool_call_update",
+                                    "toolCallId": tool_id,
+                                    "title": title,
+                                    "status": "completed",
+                                    "content": [
+                                        {
+                                            "type": "content",
+                                            "content": {
+                                                "type": "text",
+                                                "text": _stringify(result),
+                                            },
+                                        }
+                                    ],
+                                }
+                            )
+                        pending = []
+                    elif event.kind == "error":
+                        errors.append(
+                            str(
+                                event.data.get("message")
+                                or event.data.get("error")
+                                or "unknown error"
+                            )
+                        )
+                    elif event.kind == "usage":
+                        reported_usage = _event_usage(event)
+                    elif event.kind == "final":
+                        turn_count += 1
+        except asyncio.CancelledError:
+            await emitter.snapshot("cancelled", reason_code="cancelled")
+            raise
+        except Exception as error:
+            await emitter.snapshot(
+                "failed", reason_code="error", reason_message=str(error)
+            )
+            raise
+
+        text = "".join(output)
+        # Progress counters are display observations, never usage accounting input.
+        await emitter.progress(
+            lastToolName=last_tool_name,
+            turnCount=turn_count,
+            toolCallCount=tool_call_count,
+            durationMs=elapsed_ms(),
+            totalTokens=_subagent_total_tokens(
+                getattr(stream, "usage", None) or reported_usage
+            ),
+        )
+        await emitter.snapshot("completed", summary=_summary(text))
+        return {"session_id": child_session, "output": text, "errors": errors}
+
+    def _schedule_session_title(
+        self, prompt: list[ACPPromptBlock], session: ACPSession
+    ) -> None:
+        """Start best-effort title generation for a session's first turn.
+
+        Only Lody clients receive titles: the capability is a promise that the
+        client can drop its own title generator for this session.
+        """
+
+        if not self._lody_client:
+            return
+        if session.session_id not in self._sessions:
+            return
+        if session.title is not None or session.session_id in self._title_sessions:
+            return
+        request = _prompt_text(prompt)
+        if not request:
+            return
+
+        self._title_sessions.add(session.session_id)
+        task = asyncio.create_task(
+            self._publish_session_title(session, request),
+            name=f"acp-session-title-{session.session_id}",
+        )
+        self._title_tasks[session.session_id] = task
+        task.add_done_callback(
+            lambda _task, session_id=session.session_id: self._title_tasks.pop(
+                session_id, None
+            )
+        )
+
+    async def _publish_session_title(self, session: ACPSession, request: str) -> None:
+        """Generate a title, persist it and push it to the client."""
+
+        try:
+            generated = await asyncio.wait_for(
+                self._generate_session_title(session, request),
+                SESSION_TITLE_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            # A title is best effort: the client keeps its own draft.
+            logger.warning(
+                "Session title generation failed for {}: {}",
+                session.session_id,
+                error,
+            )
+            return
+
+        title = _clean_title(generated)
+        if not title or session.session_id not in self._sessions:
+            return
+        session.title = title
+        self._save_sessions()
+        client = self._client
+        if client is None:
+            return
+        try:
+            await client.session_update(
+                session.session_id,
+                SessionInfoUpdate(
+                    title=title, field_meta={"lody": {"titleSource": "generated"}}
+                ),
+            )
+        except Exception as error:
+            # The title is already persisted; a failed push must not strand the task.
+            logger.warning(
+                "Failed to push the session title for {}: {}",
+                session.session_id,
+                error,
+            )
+
+    async def _generate_session_title(self, session: ACPSession, request: str) -> str:
+        """Ask the session's model for a short title using a throwaway tape."""
+
+        agent = self._runtime_agents.get(session.session_id)
+        if agent is None:
+            return ""
+        title_session = f"temp/{uuid4().hex[:8]}"
+        state: dict[str, Any] = {
+            "_runtime_agent": agent,
+            "_runtime_workspace": str(session.cwd),
+            "session_id": title_session,
+        }
+        prompt = _SESSION_TITLE_INSTRUCTION.format(
+            request=request[:SESSION_TITLE_INPUT_CHARS]
+        )
+        parts: list[str] = []
+        # A title needs one completion, not the session's tool surface or skills.
+        stream = await agent.run_stream(
+            session_id=title_session,
+            prompt=prompt,
+            state=state,
+            model=session.runtime.get("model"),
+            allowed_tools=set(),
+            allowed_skills=set(),
+        )
+        async with contextlib.aclosing(stream):
+            async for event in stream:
+                if event.kind == "text":
+                    parts.append(str(event.data.get("delta", "")))
+        return "".join(parts)
 
     async def _replace_session_mcp(
         self, session: ACPSession, servers: list[ACPMcpServer] | None
@@ -1419,3 +1746,99 @@ def _stringify(value: object) -> str:
     if isinstance(value, str):
         return value
     return repr(value)
+
+
+#: Client identity the Lody app sends in `InitializeRequest.clientInfo`:
+#: `{name: "lody", title: "Lody", version: "1"}`. Matching is prefix-based on
+#: `name` so variants such as `lody-cli` are still recognized.
+_LODY_CLIENT_NAME = "lody"
+
+
+def is_lody_client(client_info: Implementation | None) -> bool:
+    """Whether this connection comes from the Lody client.
+
+    Session titles are the only contract here that has no client-side capability
+    to negotiate, so the client has to be recognized from `clientInfo` instead.
+    An unknown or absent identity is not Lody.
+    """
+
+    name = getattr(client_info, "name", None)
+    if isinstance(name, str) and name.strip().casefold().startswith(_LODY_CLIENT_NAME):
+        return True
+    title = getattr(client_info, "title", None)
+    return isinstance(title, str) and title.strip().casefold() == _LODY_CLIENT_NAME
+
+
+#: Quotation pairs a model may wrap a title in.
+_QUOTE_PAIRS = {'"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "`": "`"}
+
+
+def _prompt_text(prompt: list[ACPPromptBlock]) -> str:
+    """Return the concatenated text blocks of one prompt."""
+
+    parts = [
+        str(_block_value(block, "text", ""))
+        for block in prompt
+        if _block_type(block) == "text"
+    ]
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _text_update(session_update: str, text: str) -> dict[str, object]:
+    return {
+        "sessionUpdate": session_update,
+        "content": {"type": "text", "text": text},
+    }
+
+
+def _tool_title(name: str, raw_input: object) -> str:
+    """Human-readable tool title, matching the live stream's bash handling."""
+
+    if name == "bash":
+        command = _block_value(raw_input, "command")
+        if isinstance(command, str) and command:
+            return command
+    return name
+
+
+def _subagent_session_id(strategy: str, parent_session_id: str) -> str:
+    """Mirror Bub's `subagent` session strategy."""
+
+    if strategy == "inherit":
+        return parent_session_id or f"temp/{uuid4().hex[:8]}"
+    if strategy == "temp":
+        return f"temp/{uuid4().hex[:8]}"
+    return strategy
+
+
+def _subagent_description(prompt: object) -> str | None:
+    if not isinstance(prompt, str):
+        return None
+    text = prompt.strip()
+    if not text:
+        return None
+    return text.splitlines()[0].strip()[:200] or None
+
+
+def _subagent_total_tokens(usage: object) -> int | None:
+    if not isinstance(usage, Mapping):
+        return None
+    return _usage_total_tokens(usage)
+
+
+def _summary(text: str) -> str | None:
+    line = text.strip().splitlines()[0].strip() if text.strip() else ""
+    return line[:200] or None
+
+
+def _clean_title(value: str) -> str:
+    """Normalize a generated title into a single short line."""
+
+    title = " ".join(str(value).split()).strip()
+    if not title:
+        return ""
+    if title.casefold().startswith("title:"):
+        title = title[len("title:") :].strip()
+    if len(title) > 1 and _QUOTE_PAIRS.get(title[0]) == title[-1]:
+        title = title[1:-1].strip()
+    return title[:SESSION_TITLE_MAX_CHARS].strip()

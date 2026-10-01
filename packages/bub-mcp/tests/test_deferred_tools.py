@@ -219,6 +219,48 @@ async def test_loading_in_one_session_does_not_expose_definitions_in_another(
     assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
 
 
+async def test_discovery_keeps_catalog_stable_and_appends_tools_in_session_order(
+    runtime: Runtime,
+) -> None:
+    framework, provider, remote, calls = runtime
+    other = Tool.from_callable(lambda: "other", name="mcp.notes_other")
+    agent = make_agent(framework, tools=[REGISTRY["tape.info"], remote, other])
+    provider.replies = [
+        ("mcp_describe", {"names": ["mcp_notes_other"]}),
+        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
+        ("mcp_notes_lookup", {"path": "note"}),
+        "done",
+    ]
+    await run(agent, "first")
+    first = provider.requests[0]
+    assert all(
+        system_prompt(request) == system_prompt(first) for request in provider.requests
+    )
+    assert list(definitions(provider.requests[1])) == [
+        *definitions(first),
+        "mcp_notes_other",
+    ]
+    assert list(definitions(provider.requests[2])) == [
+        *definitions(first),
+        "mcp_notes_other",
+        "mcp_notes_lookup",
+    ]
+    provider.requests.clear()
+    provider.replies = [
+        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
+        ("mcp_describe", {"names": ["mcp_notes_other"]}),
+        "done",
+    ]
+    await run(agent, "second")
+    assert system_prompt(provider.requests[0]) == system_prompt(first)
+    assert list(definitions(provider.requests[2])) == [
+        *definitions(first),
+        "mcp_notes_lookup",
+        "mcp_notes_other",
+    ]
+    assert calls == ["note"]
+
+
 @pytest.mark.parametrize("clear_context", ["reset", "handoff"])
 async def test_clearing_context_requires_discovery_again(
     runtime: Runtime, clear_context: str
@@ -272,13 +314,23 @@ async def test_two_mcp_sources_route_same_named_tools_and_close_independently(
             await channel.connect()
             channel.bind_agent(agent)
         provider.replies = [
-            ("mcp_describe", {"names": ["mcp_notes_lookup", "mcp_archive_lookup"]}),
-            ("mcp_notes_lookup", {"path": "a"}),
+            ("mcp_describe", {"names": ["mcp_archive_lookup"]}),
             ("mcp_archive_lookup", {"path": "b"}),
+            ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
+            ("mcp_notes_lookup", {"path": "a"}),
             "done",
         ]
         await run(agent)
-        assert calls == [("notes", "a"), ("archive", "b")]
+        assert calls == [("archive", "b"), ("notes", "a")]
+        assert list(definitions(provider.requests[3])) == [
+            "mcp_describe",
+            "mcp_archive_lookup",
+            "mcp_notes_lookup",
+        ]
+        assert all(
+            system_prompt(request) == system_prompt(provider.requests[0])
+            for request in provider.requests
+        )
         assert "notes: a" in tool_results(provider.requests[-1])
         assert "archive: b" in tool_results(provider.requests[-1])
         await notes.stop()

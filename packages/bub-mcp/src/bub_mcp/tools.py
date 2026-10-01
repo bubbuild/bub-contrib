@@ -12,9 +12,9 @@ MCP_TOOLS_STATE_KEY = "_mcp_tools"
 DEFINITIONS_LOADED_EVENT = "mcp.definitions.loaded"
 
 
-async def loaded_tool_names(tape: Tape) -> set[str]:
+async def loaded_tool_names(tape: Tape) -> list[str]:
     query = tape.context.build_query(tape.query()).kinds("event")
-    names: set[str] = set()
+    names: dict[str, None] = {}
     for entry in await tape.store.fetch_all(query):
         data = entry.payload.get("data")
         if entry.payload.get("name") != DEFINITIONS_LOADED_EVENT or not isinstance(
@@ -23,8 +23,8 @@ async def loaded_tool_names(tape: Tape) -> set[str]:
             continue
         recorded = data.get("names")
         if isinstance(recorded, list):
-            names.update(name for name in recorded if isinstance(name, str))
-    return names
+            names.update((name, None) for name in recorded if isinstance(name, str))
+    return list(names)
 
 
 @tool(name="mcp.describe", context=True, preserve=True)
@@ -59,6 +59,6 @@ def render_tools_prompt(tools: Iterable[Tool]) -> str:
         return ""
     return (
         "Call tools whose complete native definitions are already available directly. "
-        "The catalog below lists MCP tools without native definitions; use mcp_describe to obtain them by name.\n"
+        "The catalog below lists available MCP tools; use mcp_describe to obtain missing native definitions by name.\n"
         f"<mcp_tools>\n{'\n'.join(lines)}\n</mcp_tools>"
     )

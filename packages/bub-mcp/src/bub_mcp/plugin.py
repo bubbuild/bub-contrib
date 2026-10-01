@@ -23,7 +23,12 @@ from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
-from bub_mcp.tools import MCP_TOOLS_STATE_KEY, loaded_tool_names, mcp_describe, render_tools_prompt
+from bub_mcp.tools import (
+    MCP_TOOLS_STATE_KEY,
+    loaded_tool_names,
+    mcp_describe,
+    render_tools_prompt,
+)
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
@@ -255,7 +260,9 @@ class MCPChannel(Lifecycle):
         agent.add_catalog(self)
 
     @staticmethod
-    def _restore_tools(agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]) -> None:
+    def _restore_tools(
+        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]
+    ) -> None:
         for name, (installed, original) in bindings.items():
             if agent.tools.get(name) is not installed:
                 continue
@@ -267,23 +274,37 @@ class MCPChannel(Lifecycle):
     async def prepare(self, tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
         """Select this source's scoped tools and contribute its discovery summary."""
         agent = tape.context.state["_runtime_agent"]
-        first_source = next(catalog for catalog in agent.catalogs if isinstance(catalog, MCPChannel))
+        first_source = next(
+            catalog for catalog in agent.catalogs if isinstance(catalog, MCPChannel)
+        )
         if first_source is self:
             tape.context.state[MCP_TOOLS_STATE_KEY] = {}
         owned = self.tools
-        available = {item.name: item for item in tools if owned.get(item.name) is item and item.agent_use}
-        native = [item for item in tools if owned.get(item.name) is not item and item is not mcp_describe]
+        scoped = {
+            item.name: item
+            for item in tools
+            if owned.get(item.name) is item and item.agent_use
+        }
+        available = {name: item for name, item in owned.items() if name in scoped}
+        native = [
+            item
+            for item in tools
+            if owned.get(item.name) is not item and item is not mcp_describe
+        ]
         tape.context.state[MCP_TOOLS_STATE_KEY].update(available)
-        code_mode = tape.context.state.get("code_mode") and any(item.name == "run_code" for item in native)
-        loaded = set(available) if code_mode else await loaded_tool_names(tape)
-        selected = {name: item for name, item in available.items() if name in loaded}
-        native.extend(selected.values())
+        code_mode = tape.context.state.get("code_mode") and any(
+            item.name == "run_code" for item in native
+        )
         if code_mode:
+            native.extend(available.values())
             return native, ""
-        if tape.context.state[MCP_TOOLS_STATE_KEY]:
+        discovered = tape.context.state[MCP_TOOLS_STATE_KEY]
+        native = [item for item in native if discovered.get(item.name) is not item]
+        if discovered:
             native.append(mcp_describe)
-        pending = [item for name, item in available.items() if name not in loaded]
-        return native, render_tools_prompt(pending)
+        loaded = await loaded_tool_names(tape)
+        native.extend(discovered[name] for name in loaded if name in discovered)
+        return native, render_tools_prompt(available.values())
 
     async def bind_runtime_tools(
         self, framework: BubFramework, message: Envelope

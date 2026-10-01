@@ -39,6 +39,9 @@ exposes selected complete native definitions on the next model call; calls use
 those tools' original handlers. Definitions are reused within the current tape
 context, including after restart. New sessions, reset and handoff start fresh.
 Builtins remain directly available, and code mode continues to use its full stub.
+The scoped catalog summaries stay unchanged as definitions load. Selected tools
+follow their first discovery order in each tape context, including across MCP
+sources, so other sessions do not change the request prefix.
 Each MCP channel uses `Agent.add_catalog` to provide its current tools and
 per-request selection. Bub registers selected tools in `Agent.tools` before code
 mode; stopping a channel removes its catalog and restores its bindings independently.

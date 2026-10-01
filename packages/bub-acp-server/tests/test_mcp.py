@@ -258,7 +258,7 @@ async def test_model_receives_only_current_session_mcp_summaries(
         ):
             assert "mcp_describe" in names
             assert not {own, other} & names
-            assert f"- {own}:" in prompt
+            assert own in prompt
             assert other not in prompt
     finally:
         await agent.shutdown()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from bub import tool
 from bub.tape import Tape
 from bub.tools import Tool, ToolContext
 
@@ -30,7 +31,12 @@ async def loaded_tool_names(tape: Tape) -> set[str]:
     return names
 
 
-async def describe_tools(names: list[str], *, context: ToolContext) -> str:
+@tool(name="mcp.describe", context=True, preserve=True)
+async def mcp_describe(names: list[str], *, context: ToolContext) -> str:
+    """Expose complete native definitions for selected MCP tools on the next model call.
+
+    Use exact names from the mcp_tools catalog. Call already available tools directly.
+    """
     from bub.builtin.tools import resolve_tool_names
 
     available: dict[str, Tool] = context.state.get(MCP_TOOLS_STATE_KEY, {})
@@ -44,26 +50,14 @@ async def describe_tools(names: list[str], *, context: ToolContext) -> str:
     return f"Complete native definitions are now available for: {aliases}. Call these tools directly."
 
 
-DESCRIBE_TOOL = Tool.from_callable(
-    describe_tools,
-    name="mcp.describe",
-    description=(
-        "Expose complete native definitions for the named MCP tools in the mcp_tools catalog on the next model call. "
-        "Use exact catalog names; tools whose definitions are already available can be called directly."
-    ),
-    context=True,
-    preserve=True,
-)
-
-
 def render_tools_prompt(tools: Iterable[Tool]) -> str:
     lines: list[str] = []
-    for tool in tools:
+    for item in tools:
         description = next(
-            (line.strip() for line in tool.description.splitlines() if line.strip()), ""
+            (line.strip() for line in item.description.splitlines() if line.strip()), ""
         )
         summary = description.split(". ", 1)[0][:180]
-        name = tool.name.replace(".", "_")
+        name = item.name.replace(".", "_")
         lines.append(f"- {name}: {summary}" if summary else f"- {name}")
     if not lines:
         return ""
@@ -75,7 +69,7 @@ def render_tools_prompt(tools: Iterable[Tool]) -> str:
 
 
 async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
-    tools = [tool for tool in tools if tool is not DESCRIBE_TOOL]
+    tools = [tool for tool in tools if tool is not mcp_describe]
     available = {
         tool.name: tool
         for tool in tools
@@ -89,4 +83,4 @@ async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], 
     loaded = await loaded_tool_names(tape)
     pending = {name: tool for name, tool in available.items() if name not in loaded}
     native = [tool for tool in tools if tool.name not in pending]
-    return native + [DESCRIBE_TOOL], render_tools_prompt(pending.values())
+    return native + [mcp_describe], render_tools_prompt(pending.values())

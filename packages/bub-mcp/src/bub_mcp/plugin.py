@@ -22,7 +22,7 @@ from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
-from bub_mcp.tools import DESCRIBE_TOOL, MCPTool, prepare_mcp_tools
+from bub_mcp.tools import MCPTool, mcp_describe, prepare_mcp_tools
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
@@ -213,7 +213,6 @@ class MCPChannel(Lifecycle):
 
         for agent, bindings in list(self._bindings.items()):
             self._restore_tools(agent, bindings)
-            self._sync_discovery(agent)
         self._bindings.clear()
 
         for client in clients:
@@ -245,19 +244,10 @@ class MCPChannel(Lifecycle):
             agent.tools[name] = remote_tool
         if bindings:
             self._bindings[agent] = bindings
-        self._sync_discovery(agent)
-
-    @staticmethod
-    def _sync_discovery(agent: Agent) -> None:
-        if any(isinstance(tool, MCPTool) for tool in agent.tools.values()):
-            if prepare_mcp_tools not in agent.tool_providers:
-                agent.tool_providers.append(prepare_mcp_tools)
-            agent.tools.setdefault(DESCRIBE_TOOL.name, DESCRIBE_TOOL)
-        else:
-            if prepare_mcp_tools in agent.tool_providers:
-                agent.tool_providers.remove(prepare_mcp_tools)
-            if agent.tools.get(DESCRIBE_TOOL.name) is DESCRIBE_TOOL:
-                agent.tools.pop(DESCRIBE_TOOL.name)
+        # Explicit tool sets may omit the globally registered discovery helper.
+        agent.tools.setdefault(mcp_describe.name, mcp_describe)
+        if prepare_mcp_tools not in agent.tool_providers:
+            agent.tool_providers.append(prepare_mcp_tools)
 
     @staticmethod
     def _restore_tools(

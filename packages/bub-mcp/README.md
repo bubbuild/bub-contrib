@@ -114,7 +114,7 @@ Discovered tools belong to the channel and are available through `channel.tools`
 not modify `bub.tools.REGISTRY`. Bub snapshots that registry when an `Agent` is created, so changing
 it afterward would not update existing agents. The plugin's `load_state` hook waits for startup
 discovery and binds tools to the turn's Agent (including an explicit `_runtime_agent`). Stopping
-the channel removes its bindings and restores any tools it replaced.
+the channel removes its remote bindings and restores any tools it replaced.
 
 An embedding application can call `channel.bind_agent(agent)` after startup discovery completes,
 or `await channel.bind_runtime_tools(framework, message)` from its own `load_state` hook. Both paths

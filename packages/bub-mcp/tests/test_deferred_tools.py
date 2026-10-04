@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from bub.builtin.agent import Agent
 from bub.builtin.codemode import run_code
 from bub.framework import BubFramework
 from bub.store import FileTapeStore
+from bub.tape import Tape
 from bub.tools import REGISTRY, Tool
 from bub_mcp import plugin
 from bub_mcp.config import MCPSettings
@@ -143,6 +145,14 @@ async def test_builtins_are_direct_and_only_described_mcp_tools_become_native(
     framework, provider, remote, calls = runtime
     other = Tool.from_callable(lambda: "other", name="mcp.notes_other")
     agent = make_agent(framework, tools=[REGISTRY["tape.info"], remote, other])
+
+    async def render_uppercase(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
+        return [
+            replace(item, renderer=str.upper) if item.name == remote.name else item
+            for item in tools
+        ], ""
+
+    agent.tool_providers.insert(0, render_uppercase)
     provider.replies = [
         ("tape_info", {}),
         ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
@@ -159,7 +169,7 @@ async def test_builtins_are_direct_and_only_described_mcp_tools_become_native(
     assert "mcp_notes_lookup" not in definitions(initial)
     assert "mcp_notes_lookup" in definitions(loaded)
     assert "mcp_notes_other" not in definitions(loaded)
-    assert "found note" in tool_results(completed)
+    assert "FOUND NOTE" in tool_results(completed)
 
 
 async def test_scope_allows_discovery_and_calls_only_for_selected_tools(
@@ -202,23 +212,6 @@ async def test_loaded_definitions_survive_restart(
     assert calls == ["note"]
 
 
-async def test_loading_in_one_session_does_not_expose_definitions_in_another(
-    runtime: Runtime,
-) -> None:
-    framework, provider, remote, _ = runtime
-    agent = make_agent(framework, tools=[remote])
-    provider.replies = [
-        ("mcp_describe", {"names": ["mcp_notes_lookup"]}),
-        "ready",
-        "ready",
-    ]
-    await run(agent, "first")
-    provider.requests.clear()
-    await run(agent, "second")
-    assert "mcp_notes_lookup" not in definitions(provider.requests[0])
-    assert "mcp_notes_lookup" in system_prompt(provider.requests[0])
-
-
 async def test_discovery_keeps_catalog_stable_and_appends_tools_in_session_order(
     runtime: Runtime,
 ) -> None:
@@ -252,6 +245,10 @@ async def test_discovery_keeps_catalog_stable_and_appends_tools_in_session_order
         "done",
     ]
     await run(agent, "second")
+    assert (
+        not {"mcp_notes_lookup", "mcp_notes_other"}
+        & definitions(provider.requests[0]).keys()
+    )
     assert system_prompt(provider.requests[0]) == system_prompt(first)
     assert list(definitions(provider.requests[2])) == [
         *definitions(first),

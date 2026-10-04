@@ -35,27 +35,18 @@ The file must contain a top-level `mcpServers` mapping:
 ## Tool definitions and selection
 
 In ordinary mode, MCP tools start as names and short summaries. `mcp_describe`
-exposes selected complete native definitions on the next model call; calls use
-those tools' original handlers. Definitions are reused within the current tape
-context, including after restart. New sessions, reset and handoff start fresh.
-Builtins remain directly available, and code mode continues to use its full stub.
-Load the missing tools needed for a task together in one `mcp_describe` call,
-including tools from different sources. Shared discovery guidance appears in
-that helper's definition; each source contributes only its scoped summaries.
-The scoped catalog summaries stay unchanged as definitions load. Selected tools
-follow their first discovery order in each tape context, including across MCP
-sources, so other sessions do not change the request prefix.
-Each MCP channel registers its definitions in `Agent.tool_sources`. One shared
-`ToolProvider` selects scoped tools across sources before builtin code-mode preparation.
-Bub registers selected tools in `Agent.tools`; stopping a channel removes its
-inventory and restores its bindings independently.
+exposes selected native definitions on the next model call. Load missing tools
+from any source together in one call; their original handlers remain unchanged.
+Definitions follow first-discovery order in each tape context and survive restart.
+New sessions, reset and handoff start fresh. Summaries stay stable as definitions
+load. Builtins remain directly available; code mode uses its complete allowed stub.
 
 Configure `mcp.allowed_tools` and `mcp.excluded_tools` in Bub's `config.yml`, or set
 `BUB_MCP_ALLOWED_TOOLS` and `BUB_MCP_EXCLUDED_TOOLS` to JSON arrays. Patterns accept
 runtime names (`mcp.notes_lookup`), model aliases (`mcp_notes_lookup`) and shell
 wildcards. Exclusions win; an omitted allowlist allows all, `[]` allows none.
-Restart Bub after changing configuration. Filtering applies before binding, so
-it also limits discovery and code mode; server discovery and listing remain unchanged.
+Restart Bub after changing configuration. Filtering limits discovery, native calls
+and code mode; server discovery and listing remain unchanged.
 
 ## CLI Usage
 

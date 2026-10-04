@@ -565,21 +565,21 @@ def mcp_list(*, context: ToolContext) -> MCPServerList:
 async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
     """Prepare scoped MCP tools across sources in the tape's discovery order."""
     agent = tape.context.state["_runtime_agent"]
+    known = agent.known_tools
     owned = {
         name: item
         for source, definitions in agent.tool_sources.items()
         if isinstance(source, MCPChannel)
         for name, item in definitions.items()
+        if known.get(name) is item
     }
     available = {
-        item.name: item
-        for item in tools
-        if owned.get(item.name) is item and item.agent_use
+        item.name: item for item in tools if item.name in owned and item.agent_use
     }
     native = [
         item
         for item in tools
-        if owned.get(item.name) is not item and item is not mcp_describe
+        if item.name not in owned and item.name != mcp_describe.name
     ]
     tape.context.state[MCP_TOOLS_STATE_KEY] = available
     code_mode = tape.context.state.get("code_mode") and any(

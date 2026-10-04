@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
+from any_llm.types.completion import ChatCompletion
 from bub.builtin.agent import Agent
+from bub.builtin.codemode import run_code
 from bub.framework import BubFramework
+from bub.tape import Tape
 from bub.tools import REGISTRY
 from bub_mcp import plugin
 
@@ -490,6 +496,7 @@ async def test_late_discovery_reaches_existing_agent_and_stop_restores_tools(
     try:
         # build_state waits for discovery, even though the Agent predates it.
         state = await framework.build_state({}, "test:weather")
+        assert state["_runtime_agent"] is agent
         events = await agent.run_stream(
             session_id="test:weather",
             prompt=',mcp.weather_get_forecast city="Paris"',
@@ -505,27 +512,190 @@ async def test_late_discovery_reaches_existing_agent_and_stop_restores_tools(
         await framework.build_state({}, "test:weather")
     finally:
         await channel.stop()
-    stream = await agent.run_stream(session_id="test:weather", prompt=",mcp.weather_get_forecast")
-    assert [event.data.get("text") async for event in stream if event.kind == "final"] == ["original"]
+    assert agent.tools[original.name] is original
+    assert channel.tools == {}
 
 
 @pytest.mark.asyncio
-async def test_embedded_agent_can_call_mcp_and_keep_a_replacement_after_channel_stop(
+async def test_mcp_binds_explicit_runtime_agent_without_changing_default(
     tmp_path: Path,
 ) -> None:
     framework = BubFramework(config_file=tmp_path / "config.yml")
     framework.load_builtin_hooks()
+    default = framework.plugin_manager.get_plugin("builtin")._get_agent()
     embedded = Agent(framework, tools=[])
     channel = plugin.MCPChannel()
     remote = plugin.Tool(name="mcp.embedded", handler=lambda: "ok")
     channel._servers["embedded"] = plugin.MCPServerState(tools=[remote], connected=True)
 
     await channel.bind_runtime_tools(framework, {"_runtime_agent": embedded})
-    stream = await embedded.run_stream(session_id="embedded", prompt=",mcp.embedded")
-    assert [event.data.get("text") async for event in stream if event.kind == "final"] == ["ok"]
+    assert embedded.known_tools[remote.name].run() == "ok"
+    assert remote.name not in default.tools
+    assert remote.name not in REGISTRY
     # Shutdown must not remove a replacement installed by someone else.
     replacement = plugin.Tool(name=remote.name, handler=lambda: "new")
     embedded.tools[remote.name] = replacement
     await channel.stop()
-    stream = await embedded.run_stream(session_id="embedded", prompt=",mcp.embedded")
-    assert [event.data.get("text") async for event in stream if event.kind == "final"] == ["new"]
+    assert embedded.tools[remote.name] is replacement
+
+
+@pytest.mark.parametrize("code_mode", [False, True])
+@pytest.mark.parametrize(
+    ("allowed", "excluded", "visible"),
+    [
+        (None, [], ["alpha", "beta"]),
+        ([], [], []),
+        (["mcp.*"], ["mcp_beta_weather_get_forecast"], ["alpha"]),
+        (["mcp_alpha_weather_get_forecast"], ["mcp.alpha_weather_get_forecast"], []),
+    ],
+)
+async def test_mcp_discovery_scope_and_cleanup_with_independent_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code_mode: bool,
+    allowed: list[str] | None,
+    excluded: list[str],
+    visible: list[str],
+) -> None:
+    monkeypatch.setenv("BUB_HOME", str(tmp_path))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.workspace = tmp_path
+    framework.load_builtin_hooks()
+    monkeypatch.setattr(plugin, "_create_fastmcp_client", FakeClient)
+    replies: list[str | tuple[str, dict[str, Any]]] = []
+    requests: list[dict[str, Any]] = []
+
+    class Provider:
+        SUPPORTS_COMPLETION_STREAMING = False
+
+        async def acompletion(self, **kwargs: Any) -> ChatCompletion:
+            requests.append(kwargs)
+            reply = replies.pop(0)
+            message: dict[str, Any] = {"role": "assistant", "content": reply}
+            if isinstance(reply, tuple):
+                name, arguments = reply
+                function = {"name": name, "arguments": json.dumps(arguments)}
+                call = {
+                    "id": str(len(requests)),
+                    "type": "function",
+                    "function": function,
+                }
+                message = {"role": "assistant", "tool_calls": [call]}
+            choice = {
+                "index": 0,
+                "message": message,
+                "finish_reason": "stop" if isinstance(reply, str) else "tool_calls",
+            }
+            return ChatCompletion(
+                id="reply",
+                model="test",
+                created=0,
+                object="chat.completion",
+                choices=[choice],
+            )
+
+    monkeypatch.setattr(
+        "bub.builtin.model_runner.AnyLLM.create", lambda *a, **k: Provider()
+    )
+    channels = [
+        plugin.MCPChannel.from_server_configs({name: {"command": name}})
+        for name in ("alpha", "beta")
+    ]
+    for channel in channels:
+        channel.settings = plugin.MCPSettings(
+            allowed_tools=allowed, excluded_tools=excluded
+        )
+
+    async def uppercase(
+        tools: list[plugin.Tool], tape: Tape
+    ) -> tuple[list[plugin.Tool], str]:
+        return [
+            replace(item, renderer=str.upper) if item.name.startswith("mcp.") else item
+            for item in tools
+        ], ""
+
+    async def run(agent: Agent, session: str = "task") -> list[dict[str, Any]]:
+        requests.clear()
+        replies.append("done")
+        stream = await agent.run_stream(
+            session_id=session,
+            prompt="Read forecasts.",
+            model="openrouter:test",
+            state={"code_mode": code_mode},
+        )
+        async for _ in stream:
+            pass
+        return list(requests)
+
+    def names(request: dict[str, Any]) -> list[str]:
+        return [item["function"]["name"] for item in request.get("tools") or []]
+
+    def call(name: str) -> tuple[str, dict[str, Any]]:
+        alias = f"mcp_{name}_weather_get_forecast"
+        return (
+            ("run_code", {"code": f"print(await tools.{alias}(city='{name}'))"})
+            if code_mode
+            else (alias, {"city": name})
+        )
+
+    try:
+        for channel in channels:
+            await channel.connect()
+        agent = Agent(framework, tools=[REGISTRY["tape.info"], run_code], skill_dirs=[])
+        agent.tool_providers.append(uppercase)
+        for channel in channels:
+            channel.bind_agent(agent)
+        replies.append(
+            ("run_code", {"code": "print(await tools.tape_info())"})
+            if code_mode
+            else ("tape_info", {})
+        )
+        for name in reversed(visible):
+            if not code_mode:
+                replies.append(
+                    ("mcp_describe", {"names": [f"mcp_{name}_weather_get_forecast"]})
+                )
+            replies.append(call(name))
+        first = await run(agent)
+        assert not any(
+            name.startswith("mcp_") and name != "mcp_describe"
+            for name in names(first[0])
+        )
+        if not code_mode:
+            assert names(first[-1]) == [
+                *names(first[0]),
+                *(f"mcp_{name}_weather_get_forecast" for name in reversed(visible)),
+            ]
+            prompts = [
+                next(m["content"] for m in r["messages"] if m["role"] == "system")
+                for r in first
+            ]
+            for name in ("alpha", "beta"):
+                assert (f"mcp_{name}_weather_get_forecast" in prompts[0]) == (
+                    name in visible
+                )
+            assert all(prompt == prompts[0] for prompt in prompts)
+        for name in ("alpha", "beta"):
+            client = channels[("alpha", "beta").index(name)].list()[name].client
+            assert client.tool_calls == (
+                [("weather_get_forecast", {"city": name})] if name in visible else []
+            )
+        results = "\n".join(
+            m.get("content", "") for m in first[-1]["messages"] if m["role"] == "tool"
+        )
+        assert "entries" in results
+        for name in visible:
+            expected = f"forecast for {name}"
+            assert (expected if code_mode else expected.upper()) in results
+        fresh = await run(agent, "fresh")
+        assert not any(
+            n.startswith("mcp_") and n != "mcp_describe" for n in names(fresh[0])
+        )
+        for channel, name in zip(channels, ("alpha", "beta"), strict=True):
+            await channel.stop()
+            remaining = await run(agent)
+            assert f"mcp_{name}_weather_get_forecast" not in names(remaining[0])
+        assert "mcp_describe" not in names(remaining[0])
+    finally:
+        for channel in channels:
+            await channel.stop()

@@ -109,17 +109,10 @@ async def call_echo(agent, session_id):
     )
 
 
-async def command_output(agent: Agent, session_id: str, command: str) -> str:
-    stream = await agent.run_stream(session_id=session_id, prompt=command)
-    return "".join(
-        [event.data.get("text", "") async for event in stream if event.kind == "final"]
-    )
-
-
 async def runtime_tools(agent, session_id):
     inbound = agent._build_inbound([], agent._sessions[session_id])
     state = await agent.framework.build_state(inbound, inbound.session_id)
-    return state["_runtime_agent"].tools
+    return state["_runtime_agent"].known_tools
 
 
 def test_transport_configs_preserve_arguments_environment_headers_and_cwd(tmp_path):
@@ -235,12 +228,10 @@ async def test_model_receives_only_current_session_mcp_tools(
                 session_id=session.session_id, prompt=[TextContentBlock(text="hello")]
             )
         # Bub aliases dots for the model, but execution still uses each session's tool object.
-        for (names, prompt), (own, other) in zip(
+        for (names, prompt), own, other in zip(
             seen,
-            [
-                ("mcp_first_echo", "mcp_second_echo"),
-                ("mcp_second_echo", "mcp_first_echo"),
-            ],
+            ["mcp_first_echo", "mcp_second_echo"],
+            ["mcp_second_echo", "mcp_first_echo"],
             strict=True,
         ):
             assert "mcp_describe" in names and not {own, other} & names
@@ -407,18 +398,10 @@ async def test_real_stdio_server_runs_with_session_cwd_and_env_and_exits(
         ],
     )
     try:
-        inbound = agent._build_inbound([], agent._sessions[session.session_id])
-        state = await framework.build_state(inbound, inbound.session_id)
-        runtime_agent = state["_runtime_agent"]
-        result = await command_output(
-            runtime_agent, session.session_id, ",mcp.local_describe"
-        )
+        tools = await runtime_tools(agent, session.session_id)
+        result = await tools["mcp.local_describe"].run()
         assert result == f"{tmp_path}:session-env"
-        pid = int(
-            await command_output(
-                runtime_agent, session.session_id, ",mcp.local_process_id"
-            )
-        )
+        pid = int(await tools["mcp.local_process_id"].run())
         channel = agent._mcp_channels[session.session_id]
         clients = [server.client for server in channel.list().values()]
         try:
@@ -497,10 +480,7 @@ async def test_session_tools_override_configured_mcp_and_restore_on_close(
         assert len(clients[1].calls) == 2
         runtime_agent = agent._runtime_agents[session.session_id]
         await agent.close_session(session.session_id)
-        assert (
-            await command_output(runtime_agent, session.session_id, ",mcp.shared_echo")
-            == "configured"
-        )
+        assert await runtime_agent.known_tools["mcp.shared_echo"].run() == "configured"
         await configured._manager.stop()
         assert "mcp.shared_echo" not in runtime_agent.tools
     finally:

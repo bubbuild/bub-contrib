@@ -16,25 +16,21 @@ import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
 from bub.tools import Tool, ToolContext
-from bub.tape import Tape
 from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope, field_of
+from bub.tape import Tape
 from bub.turn import TurnState
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
-from bub_mcp.tools import (
-    MCP_TOOLS_STATE_KEY,
-    loaded_tool_names,
-    mcp_describe,
-    render_tools_prompt,
-)
 
 if TYPE_CHECKING:
     from bub.builtin.agent import Agent
     from bub.framework import BubFramework
 
 TOOL_PREFIX = "mcp."
+MCP_TOOLS_STATE_KEY = "_mcp_tools"
+DEFINITIONS_LOADED_EVENT = "mcp.definitions.loaded"
 TEXT_OUTPUT_SCHEMA: dict[str, Any] = {"type": "string"}
 
 type ResultMode = Literal["text", "structured", "wrapped"]
@@ -562,6 +558,26 @@ def mcp_list(*, context: ToolContext) -> MCPServerList:
     }
 
 
+@tool(name="mcp.describe", context=True, preserve=True)
+async def mcp_describe(names: list[str], *, context: ToolContext) -> str:
+    """Expose complete native definitions for selected MCP tools on the next model call.
+
+    Use exact names from the mcp_tools catalog. Call already available tools directly.
+    Load the missing definitions needed for the current task together in one call.
+    """
+    from bub.builtin.tools import resolve_tool_names
+
+    available: dict[str, Tool] = context.state.get(MCP_TOOLS_STATE_KEY, {})
+    resolved = resolve_tool_names(names, all_names=available)
+    if not resolved:
+        raise ValueError("provide at least one available MCP tool name")
+    await context.tape.append_event(
+        DEFINITIONS_LOADED_EVENT, {"names": sorted(resolved)}, context=False
+    )
+    aliases = ", ".join(name.replace(".", "_") for name in sorted(resolved))
+    return f"Complete native definitions are now available for: {aliases}. Call these tools directly."
+
+
 async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
     """Prepare scoped MCP tools across sources in the tape's discovery order."""
     agent = tape.context.state["_runtime_agent"]
@@ -589,6 +605,16 @@ async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], 
         return [*native, *available.values()], ""
     if available:
         native.append(mcp_describe)
-    loaded = await loaded_tool_names(tape)
+    loaded: dict[str, None] = {}
+    query = tape.context.build_query(tape.query()).kinds("event")
+    for entry in await tape.store.fetch_all(query):
+        if entry.payload.get("name") == DEFINITIONS_LOADED_EVENT:
+            loaded.update(dict.fromkeys(entry.payload["data"]["names"]))
     native.extend(available[name] for name in loaded if name in available)
-    return native, render_tools_prompt(available.values())
+    lines = []
+    for name, item in available.items():
+        summary = item.description.strip().split("\n", 1)[0].split(". ", 1)[0][:180]
+        lines.append(
+            f"- {name.replace('.', '_')}" + (f": {summary}" if summary else "")
+        )
+    return native, f"<mcp_tools>\n{'\n'.join(lines)}\n</mcp_tools>" if lines else ""

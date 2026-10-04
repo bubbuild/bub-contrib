@@ -18,6 +18,7 @@ from bub.channels import Channel, Lifecycle
 from bub.tools import Tool, ToolContext
 from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope, field_of
+from bub.tape import Tape
 from bub.turn import TurnState
 from loguru import logger
 
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from bub.framework import BubFramework
 
 TOOL_PREFIX = "mcp."
+MCP_TOOLS_STATE_KEY = "_mcp_tools"
+DEFINITIONS_LOADED_EVENT = "mcp.definitions.loaded"
 TEXT_OUTPUT_SCHEMA: dict[str, Any] = {"type": "string"}
 
 type ResultMode = Literal["text", "structured", "wrapped"]
@@ -212,6 +215,11 @@ class MCPChannel(Lifecycle):
 
         for agent, bindings in list(self._bindings.items()):
             self._restore_tools(agent, bindings)
+            agent.tool_sources.pop(self, None)
+            if not any(isinstance(source, MCPChannel) for source in agent.tool_sources):
+                agent.tool_providers.remove(prepare_mcp_tools)
+                if agent.tools.get(mcp_describe.name) is mcp_describe:
+                    agent.tools.pop(mcp_describe.name)
         self._bindings.clear()
 
         for client in clients:
@@ -225,10 +233,11 @@ class MCPChannel(Lifecycle):
             for server in self._servers.values()
             if server.connected
             for tool in server.tools
+            if self.settings.allows_tool(tool.name)
         }
 
     def bind_agent(self, agent: Agent) -> None:
-        """Refresh this channel's tools on an Agent, preserving name collisions."""
+        """Register discovery definitions separately from request preparation."""
         previous = self._bindings.pop(agent, {})
         tools = self.tools
         self._restore_tools(
@@ -239,9 +248,14 @@ class MCPChannel(Lifecycle):
         for name, remote_tool in tools.items():
             original = previous[name][1] if name in previous else agent.tools.get(name)
             bindings[name] = (remote_tool, original)
-            agent.tools[name] = remote_tool
-        if bindings:
-            self._bindings[agent] = bindings
+            if name in previous and agent.tools.get(name) is previous[name][0]:
+                agent.tools[name] = remote_tool
+        self._bindings[agent] = bindings
+        # Explicit tool sets may omit the globally registered discovery helper.
+        agent.tools.setdefault(mcp_describe.name, mcp_describe)
+        agent.tool_sources[self] = tools
+        if prepare_mcp_tools not in agent.tool_providers:
+            agent.tool_providers.append(prepare_mcp_tools)
 
     @staticmethod
     def _restore_tools(
@@ -542,3 +556,65 @@ def mcp_list(*, context: ToolContext) -> MCPServerList:
             for name, server in manager.list().items()
         }
     }
+
+
+@tool(name="mcp.describe", context=True, preserve=True)
+async def mcp_describe(names: list[str], *, context: ToolContext) -> str:
+    """Expose complete native definitions for selected MCP tools on the next model call.
+
+    Use exact names from the mcp_tools catalog. Call already available tools directly.
+    Load the missing definitions needed for the current task together in one call.
+    """
+    from bub.builtin.tools import resolve_tool_names
+
+    available: dict[str, Tool] = context.state.get(MCP_TOOLS_STATE_KEY, {})
+    resolved = resolve_tool_names(names, all_names=available)
+    if not resolved:
+        raise ValueError("provide at least one available MCP tool name")
+    await context.tape.append_event(
+        DEFINITIONS_LOADED_EVENT, {"names": sorted(resolved)}, context=False
+    )
+    aliases = ", ".join(name.replace(".", "_") for name in sorted(resolved))
+    return f"Complete native definitions are now available for: {aliases}. Call these tools directly."
+
+
+async def prepare_mcp_tools(tools: list[Tool], tape: Tape) -> tuple[list[Tool], str]:
+    """Prepare scoped MCP tools across sources in the tape's discovery order."""
+    agent = tape.context.state["_runtime_agent"]
+    known = agent.known_tools
+    owned = {
+        name: item
+        for source, definitions in agent.tool_sources.items()
+        if isinstance(source, MCPChannel)
+        for name, item in definitions.items()
+        if known.get(name) is item
+    }
+    available = {
+        item.name: item for item in tools if item.name in owned and item.agent_use
+    }
+    native = [
+        item
+        for item in tools
+        if item.name not in owned and item.name != mcp_describe.name
+    ]
+    tape.context.state[MCP_TOOLS_STATE_KEY] = available
+    code_mode = tape.context.state.get("code_mode") and any(
+        item.name == "run_code" for item in native
+    )
+    if code_mode:
+        return [*native, *available.values()], ""
+    if available:
+        native.append(mcp_describe)
+    loaded: dict[str, None] = {}
+    query = tape.context.build_query(tape.query()).kinds("event")
+    for entry in await tape.store.fetch_all(query):
+        if entry.payload.get("name") == DEFINITIONS_LOADED_EVENT:
+            loaded.update(dict.fromkeys(entry.payload["data"]["names"]))
+    native.extend(available[name] for name in loaded if name in available)
+    lines = []
+    for name, item in available.items():
+        summary = item.description.strip().split("\n", 1)[0].split(". ", 1)[0][:180]
+        lines.append(
+            f"- {name.replace('.', '_')}" + (f": {summary}" if summary else "")
+        )
+    return native, f"<mcp_tools>\n{'\n'.join(lines)}\n</mcp_tools>" if lines else ""

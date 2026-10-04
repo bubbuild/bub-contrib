@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,28 @@ class MCPSettings(bub.Settings):
 
     config_path: Path = Field(default_factory=default_config_path)
     init_timeout_seconds: float | None = 20.0
+    allowed_tools: list[str] | None = Field(
+        None,
+        description="Tool name patterns to expose; None allows all, an empty list allows none.",
+    )
+    excluded_tools: list[str] = Field(
+        default_factory=list,
+        description="Tool name patterns to exclude, even when allowed.",
+    )
+
+    def allows_tool(self, name: str) -> bool:
+        """Match runtime names or model aliases without changing remote schemas."""
+        alias = name.replace(".", "_")
+
+        def matches(patterns: list[str]) -> bool:
+            return any(
+                fnmatchcase(name, pattern) or fnmatchcase(alias, pattern)
+                for pattern in patterns
+            )
+
+        return (
+            self.allowed_tools is None or matches(self.allowed_tools)
+        ) and not matches(self.excluded_tools)
 
     def read_mcp_servers(self) -> dict[str, Any]:
         return read_config(self.config_path)

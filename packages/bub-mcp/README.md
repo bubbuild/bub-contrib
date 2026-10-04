@@ -32,6 +32,22 @@ The file must contain a top-level `mcpServers` mapping:
 }
 ```
 
+## Tool definitions and selection
+
+In ordinary mode, MCP tools start as names and short summaries. `mcp_describe`
+exposes selected native definitions on the next model call. Load missing tools
+from any source together in one call; their original handlers remain unchanged.
+Definitions follow first-discovery order in each tape context and survive restart.
+New sessions, reset and handoff start fresh. Summaries stay stable as definitions
+load. Builtins remain directly available; code mode uses its complete allowed stub.
+
+Configure `mcp.allowed_tools` and `mcp.excluded_tools` in Bub's `config.yml`, or set
+`BUB_MCP_ALLOWED_TOOLS` and `BUB_MCP_EXCLUDED_TOOLS` to JSON arrays. Patterns accept
+runtime names (`mcp.notes_lookup`), model aliases (`mcp_notes_lookup`) and shell
+wildcards. Exclusions win; an omitted allowlist allows all, `[]` allows none.
+Restart Bub after changing configuration. Filtering limits discovery, native calls
+and code mode; server discovery and listing remain unchanged.
+
 ## CLI Usage
 
 Use the CLI to inspect and manage `mcp.json`:
@@ -97,8 +113,10 @@ finally:
 Discovered tools belong to the channel and are available through `channel.tools`; discovery does
 not modify `bub.tools.REGISTRY`. Bub snapshots that registry when an `Agent` is created, so changing
 it afterward would not update existing agents. The plugin's `load_state` hook waits for startup
-discovery and binds tools to the turn's Agent (including an explicit `_runtime_agent`). Stopping
-the channel removes its bindings and restores any tools it replaced.
+discovery and binds the inventory and provider to the turn's Agent (including an explicit `_runtime_agent`). Remote
+tools enter `Agent.tools` only when selected by `mcp_describe` or explicitly called by a comma
+command. Code mode loads the allowed catalog into its complete stub. Stopping
+the channel removes its remote bindings and restores any tools it replaced.
 
 An embedding application can call `channel.bind_agent(agent)` after startup discovery completes,
 or `await channel.bind_runtime_tools(framework, message)` from its own `load_state` hook. Both paths

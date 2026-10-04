@@ -45,9 +45,10 @@ that helper's definition; each source contributes only its scoped summaries.
 The scoped catalog summaries stay unchanged as definitions load. Selected tools
 follow their first discovery order in each tape context, including across MCP
 sources, so other sessions do not change the request prefix.
-Each MCP channel uses `Agent.add_catalog` to provide its current tools and
-per-request selection. Bub registers selected tools in `Agent.tools` before code
-mode; stopping a channel removes its catalog and restores its bindings independently.
+Each MCP channel registers its definitions in `Agent.tool_sources`. One shared
+`ToolProvider` selects scoped tools across sources before builtin code-mode preparation.
+Bub registers selected tools in `Agent.tools`; stopping a channel removes its
+inventory and restores its bindings independently.
 
 Configure `mcp.allowed_tools` and `mcp.excluded_tools` in Bub's `config.yml`, or set
 `BUB_MCP_ALLOWED_TOOLS` and `BUB_MCP_EXCLUDED_TOOLS` to JSON arrays. Patterns accept
@@ -121,7 +122,7 @@ finally:
 Discovered tools belong to the channel and are available through `channel.tools`; discovery does
 not modify `bub.tools.REGISTRY`. Bub snapshots that registry when an `Agent` is created, so changing
 it afterward would not update existing agents. The plugin's `load_state` hook waits for startup
-discovery and binds the catalog to the turn's Agent (including an explicit `_runtime_agent`). Remote
+discovery and binds the inventory and provider to the turn's Agent (including an explicit `_runtime_agent`). Remote
 tools enter `Agent.tools` only when selected by `mcp_describe` or explicitly called by a comma
 command. Code mode loads the allowed catalog into its complete stub. Stopping
 the channel removes its remote bindings and restores any tools it replaced.

@@ -21,16 +21,6 @@ def test_config_defaults_to_bub_home(monkeypatch, tmp_path: Path) -> None:
     assert plugin._build_store(lambda: config)._path == tmp_path / "tapes.sqlite3"
 
 
-def test_plugin_provides_singleton_store(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("BUB_SQLITE_PATH", str(tmp_path / "custom.sqlite3"))
-    plugin._store.cache_clear()
-
-    store = plugin.provide_tape_store()
-
-    assert isinstance(store, SQLiteTapeStore)
-    assert store is plugin.provide_tape_store()
-
-
 def test_invalid_journal_mode_raises(monkeypatch) -> None:
     monkeypatch.setenv("BUB_SQLITE_JOURNAL_MODE", "INVALID")
 

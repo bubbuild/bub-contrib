@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -78,8 +78,12 @@ def tape_store_from_env() -> SQLiteTapeStore:
 
 
 @hookimpl
-def provide_tape_store() -> SQLiteTapeStore:
-    return _store()
+async def provide_tape_store() -> AsyncIterator[SQLiteTapeStore]:
+    store = _store()
+    try:
+        yield store
+    finally:
+        await store.close()
 
 
 @hookimpl

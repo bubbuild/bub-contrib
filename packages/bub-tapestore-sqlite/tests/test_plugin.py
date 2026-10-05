@@ -27,8 +27,11 @@ def test_config_defaults_to_bub_home(monkeypatch, tmp_path: Path) -> None:
 
 def test_cli_exits_after_using_sqlite_store(tmp_path: Path) -> None:
     script = textwrap.dedent("""\
+        import asyncio
         from pathlib import Path
+        from bub.errors import BubError
         from bub.framework import BubFramework
+        from bub.tape import TapeQuery
         from bub_tapestore_sqlite import plugin
 
         framework = BubFramework(config_file=Path('config.yml'))
@@ -37,6 +40,15 @@ def test_cli_exits_after_using_sqlite_store(tmp_path: Path) -> None:
         app = framework.create_cli_app()
         for _ in range(2):
             app(args=['run', ',tape.info'], standalone_mode=False)
+
+        async def query_missing_anchor():
+            async with framework.running():
+                await TapeQuery('missing', framework.get_tape_store()).after_anchor('missing').all()
+
+        try:
+            asyncio.run(query_missing_anchor())
+        except BubError as error:
+            print(error, flush=True)
         """)
     database = tmp_path / "tapes.sqlite3"
     result = subprocess.run(
@@ -49,7 +61,8 @@ def test_cli_exits_after_using_sqlite_store(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("[cli:local]") == 2
+    assert result.stdout.count("entries:") == 2
+    assert "Anchor 'missing' was not found." in result.stdout
     assert database.exists()
 
 

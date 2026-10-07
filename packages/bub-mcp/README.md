@@ -114,13 +114,13 @@ Discovered tools belong to the channel and are available through `channel.tools`
 not modify `bub.tools.REGISTRY`. Bub snapshots that registry when an `Agent` is created, so changing
 it afterward would not update existing agents. The plugin's `load_state` hook waits for startup
 discovery and binds the inventory and provider to the turn's Agent (including an explicit `_runtime_agent`). Remote
-tools enter `Agent.tools` only when selected by `mcp_describe` or explicitly called by a comma
-command. Code mode loads the allowed catalog into its complete stub. Stopping
-the channel removes its remote bindings and restores any tools it replaced.
+tools are selected per request without changing `Agent.tools`; comma commands resolve them
+through the discovery inventory. Code mode loads the allowed catalog into its complete stub.
+Stopping the channel removes its inventory, revealing any tools shadowed by that source.
 
 An embedding application can call `channel.bind_agent(agent)` after startup discovery completes,
 or `await channel.bind_runtime_tools(framework, message)` from its own `load_state` hook. Both paths
-use instance tools. This requires Bub's instance-tool API introduced in upstream PR #311.
+use instance tools. This requires Bub's tool-discovery API introduced in upstream PR #339.
 
 The default `MCPChannel()` behavior remains backed by Bub's `mcp.json`. Read-only channels reject
 `add()` and `remove()` so an embedding plugin remains the owner of its source configuration. The

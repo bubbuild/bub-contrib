@@ -508,7 +508,7 @@ async def test_late_discovery_reaches_existing_agent_and_stop_restores_tools(
         assert output == ["forecast for Paris"]
         assert REGISTRY == original_registry
         assert original.name not in unrelated.tools
-        # Repeated binding must not save our own tool as the collision fallback.
+        # Repeated discovery keeps the same source precedence.
         await framework.build_state({}, "test:weather")
     finally:
         await channel.stop()
@@ -675,11 +675,6 @@ async def test_mcp_discovery_scope_and_cleanup_with_independent_sources(
                     name in visible
                 )
             assert all(prompt == prompts[0] for prompt in prompts)
-        for name in ("alpha", "beta"):
-            client = channels[("alpha", "beta").index(name)].list()[name].client
-            assert client.tool_calls == (
-                [("weather_get_forecast", {"city": name})] if name in visible else []
-            )
         results = "\n".join(
             m.get("content", "") for m in first[-1]["messages"] if m["role"] == "tool"
         )
@@ -687,7 +682,19 @@ async def test_mcp_discovery_scope_and_cleanup_with_independent_sources(
         for name in visible:
             expected = f"forecast for {name}"
             assert (expected if code_mode else expected.upper()) in results
+        if visible and not code_mode:
+            replies.append(call(visible[0]))
         fresh = await run(agent, "fresh")
+        if visible and not code_mode:
+            assert any(
+                "does not exist" in m.get("content", "")
+                for m in fresh[-1]["messages"]
+                if m["role"] == "tool"
+            )
+        for name, channel in zip(("alpha", "beta"), channels, strict=True):
+            assert channel.list()[name].client.tool_calls == (
+                [("weather_get_forecast", {"city": name})] if name in visible else []
+            )
         assert not any(
             n.startswith("mcp_") and n != "mcp_describe" for n in names(fresh[0])
         )

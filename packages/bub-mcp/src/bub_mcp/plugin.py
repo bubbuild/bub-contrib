@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Self, TypedDict, final
-from weakref import WeakKeyDictionary
+from weakref import WeakSet
 
 import fastmcp
 import mcp.types
@@ -162,9 +162,7 @@ class MCPChannel(Lifecycle):
         self._lock = asyncio.Lock()
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
-        self._bindings: WeakKeyDictionary[
-            Agent, dict[str, tuple[Tool, Tool | None]]
-        ] = WeakKeyDictionary()
+        self._agents: WeakSet[Agent] = WeakSet()
         self._stop_event: asyncio.Event | None = None
 
     @classmethod
@@ -213,14 +211,13 @@ class MCPChannel(Lifecycle):
                 server.client = None
                 server.connected = False
 
-        for agent, bindings in list(self._bindings.items()):
-            self._restore_tools(agent, bindings)
+        for agent in self._agents:
             agent.tool_sources.pop(self, None)
             if not any(isinstance(source, MCPChannel) for source in agent.tool_sources):
                 agent.tool_providers.remove(prepare_mcp_tools)
                 if agent.tools.get(mcp_describe.name) is mcp_describe:
                     agent.tools.pop(mcp_describe.name)
-        self._bindings.clear()
+        self._agents.clear()
 
         for client in clients:
             await self._close_client(client)
@@ -238,36 +235,12 @@ class MCPChannel(Lifecycle):
 
     def bind_agent(self, agent: Agent) -> None:
         """Register discovery definitions separately from request preparation."""
-        previous = self._bindings.pop(agent, {})
-        tools = self.tools
-        self._restore_tools(
-            agent,
-            {name: binding for name, binding in previous.items() if name not in tools},
-        )
-        bindings = {}
-        for name, remote_tool in tools.items():
-            original = previous[name][1] if name in previous else agent.tools.get(name)
-            bindings[name] = (remote_tool, original)
-            if name in previous and agent.tools.get(name) is previous[name][0]:
-                agent.tools[name] = remote_tool
-        self._bindings[agent] = bindings
+        self._agents.add(agent)
         # Explicit tool sets may omit the globally registered discovery helper.
         agent.tools.setdefault(mcp_describe.name, mcp_describe)
-        agent.tool_sources[self] = tools
+        agent.tool_sources[self] = self.tools
         if prepare_mcp_tools not in agent.tool_providers:
             agent.tool_providers.append(prepare_mcp_tools)
-
-    @staticmethod
-    def _restore_tools(
-        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]
-    ) -> None:
-        for name, (installed, original) in bindings.items():
-            if agent.tools.get(name) is not installed:
-                continue
-            if original is None:
-                agent.tools.pop(name, None)
-            else:
-                agent.tools[name] = original
 
     async def bind_runtime_tools(
         self, framework: BubFramework, message: Envelope

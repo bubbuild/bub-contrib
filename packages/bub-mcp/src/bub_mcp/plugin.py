@@ -440,6 +440,7 @@ class MCPChannel(Lifecycle):
             handler=self._make_handler(server_name, remote_name, result_mode),
             renderer=_render_tool_value,
             output_schema=output_schema,
+            deferred=self.settings.deferred_tools,
         )
 
     def _record_failed_server(

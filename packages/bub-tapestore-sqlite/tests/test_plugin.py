@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -21,14 +25,45 @@ def test_config_defaults_to_bub_home(monkeypatch, tmp_path: Path) -> None:
     assert plugin._build_store(lambda: config)._path == tmp_path / "tapes.sqlite3"
 
 
-def test_plugin_provides_singleton_store(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("BUB_SQLITE_PATH", str(tmp_path / "custom.sqlite3"))
-    plugin._store.cache_clear()
+def test_cli_exits_after_using_sqlite_store(tmp_path: Path) -> None:
+    script = textwrap.dedent("""\
+        import asyncio
+        from pathlib import Path
+        from bub.errors import BubError
+        from bub.framework import BubFramework
+        from bub.tape import TapeQuery
+        from bub_tapestore_sqlite import plugin
 
-    store = plugin.provide_tape_store()
+        framework = BubFramework(config_file=Path('config.yml'))
+        framework.load_builtin_hooks()
+        framework.plugin_manager.register(plugin, name='tapestore-sqlite')
+        app = framework.create_cli_app()
+        for _ in range(2):
+            app(args=['run', ',tape.info'], standalone_mode=False)
 
-    assert isinstance(store, SQLiteTapeStore)
-    assert store is plugin.provide_tape_store()
+        async def query_missing_anchor():
+            async with framework.running():
+                await TapeQuery('missing', framework.get_tape_store()).after_anchor('missing').all()
+
+        try:
+            asyncio.run(query_missing_anchor())
+        except BubError as error:
+            print(error, flush=True)
+        """)
+    database = tmp_path / "tapes.sqlite3"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=os.environ | {"BUB_HOME": str(tmp_path), "BUB_SQLITE_PATH": str(database)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("entries:") == 2
+    assert "Anchor 'missing' was not found." in result.stdout
+    assert database.exists()
 
 
 def test_invalid_journal_mode_raises(monkeypatch) -> None:

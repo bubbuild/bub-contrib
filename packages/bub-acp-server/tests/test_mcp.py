@@ -202,8 +202,8 @@ async def test_model_receives_only_current_session_mcp_tools(
 
     seen = []
 
-    def run(self, *, tools, **kwargs):
-        seen.append({tool.name for tool in tools})
+    def run(self, *, system_prompt, **kwargs):
+        seen.append(system_prompt or "")
 
         async def events():
             yield StreamEvent("text", {"delta": "ok"})
@@ -227,7 +227,8 @@ async def test_model_receives_only_current_session_mcp_tools(
             await agent.prompt(
                 session_id=session.session_id, prompt=[TextContentBlock(text="hello")]
             )
-        # Bub aliases dots for the model, but execution still uses each session's tool object.
+        # MCP tools are deferred, so the model sees their aliased names in the prompt;
+        # execution still uses each session's tool object.
         assert "mcp_first_echo" in seen[0] and "mcp_second_echo" not in seen[0]
         assert "mcp_second_echo" in seen[1] and "mcp_first_echo" not in seen[1]
     finally:

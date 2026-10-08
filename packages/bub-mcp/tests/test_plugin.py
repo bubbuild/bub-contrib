@@ -445,6 +445,22 @@ def test_build_tool_forwards_remote_output_schema() -> None:
     assert tool.render({"temperature": 21.5}) == '{\n  "temperature": 21.5\n}'
 
 
+def test_build_tool_defers_remote_tools_by_default(monkeypatch) -> None:
+    remote_tool = FakeRemoteTool(
+        "get_forecast", "Get forecast.", {"type": "object", "properties": {}}
+    )
+
+    channel = plugin.MCPChannel()
+    tool = channel._build_tool("weather", remote_tool)
+    assert tool is not None
+    assert tool.deferred is True
+
+    monkeypatch.setattr(channel.settings, "deferred_tools", False)
+    tool = channel._build_tool("weather", remote_tool)
+    assert tool is not None
+    assert tool.deferred is False
+
+
 def test_fastmcp_wrapped_results_are_unwrapped() -> None:
     remote_tool = FakeRemoteTool(
         "describe", "Describe.", {"type": "object", "properties": {}}

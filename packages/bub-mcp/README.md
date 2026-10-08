@@ -32,6 +32,10 @@ The file must contain a top-level `mcpServers` mapping:
 }
 ```
 
+Discovered MCP tools are registered as Bub deferred tools by default: the model only sees their
+names until it loads their definitions with `tool.describe`, which keeps large MCP tool sets out of
+the prompt. Set `BUB_MCP_DEFERRED_TOOLS=false` to expose them directly instead.
+
 ## CLI Usage
 
 Use the CLI to inspect and manage `mcp.json`:

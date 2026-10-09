@@ -221,7 +221,7 @@ export BUB_QQ_RECEIVE_MODE=websocket
 
 ### 运维逗号命令
 
-插件内置了对模型不可见（`agent_use=False`）、仅授权发送者可用的逗号命令：
+插件内置了对模型不可见（`exposure="command"`）、仅授权发送者可用的逗号命令：
 
 | 命令 | 说明 |
 | --- | --- |

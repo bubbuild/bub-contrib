@@ -371,8 +371,8 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.5.1.dev11+gb4a61bf13"
-source = { git = "https://github.com/bubbuild/bub.git#b4a61bf1326729a024161d22ba20019b8500f907" }
+version = "0.5.1.dev15+g085dcd9ab"
+source = { git = "https://github.com/bubbuild/bub.git#085dcd9ab558cc05c9ccda9bb264c9e643552cb6" }
 dependencies = [
     { name = "aiohttp" },
     { name = "any-llm-sdk" },

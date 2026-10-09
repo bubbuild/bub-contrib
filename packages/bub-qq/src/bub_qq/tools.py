@@ -7,7 +7,7 @@ silent. It reuses the channel's send services, so passive
 ``msg_id``/``msg_seq`` targeting, dedupe and the active-message fallback
 all behave exactly as in direct mode.
 
-Tools registered with ``agent_use=False`` are ops comma commands: they
+Tools registered with ``exposure="command"`` are ops comma commands: they
 never appear in the model's tool list and can only be run as ``,name``
 by senders who pass the comma-command gate (group owners/admins or
 ``admin_users``).
@@ -101,7 +101,7 @@ async def qq_send(content: str, *, context: ToolContext) -> QQSendResult:
     return {"status": "sent"}
 
 
-@tool(name="qq.version", agent_use=False)
+@tool(name="qq.version", exposure="command")
 def qq_version() -> str:
     """Show the installed bub-qq plugin version (ops comma command)."""
 

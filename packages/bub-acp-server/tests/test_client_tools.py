@@ -399,7 +399,7 @@ async def test_initialize_selects_client_tools_by_capability(
     }.items():
         assert (selected[name] is not originals[name]) == client_backed, name
         # Client-backed overrides stay model-facing in code mode like the builtins.
-        assert selected[name].preserve == originals[name].preserve, name
+        assert selected[name].exposure == originals[name].exposure, name
     assert REGISTRY == originals
 
 

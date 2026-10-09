@@ -221,7 +221,7 @@ Note: with no configuration, comma commands are unusable in C2C (fail-closed). S
 
 ### Ops comma commands
 
-The plugin ships model-invisible comma commands (registered with `agent_use=False`) for authorized senders:
+The plugin ships model-invisible comma commands (registered with `exposure="command"`) for authorized senders:
 
 | Command | Description |
 | --- | --- |

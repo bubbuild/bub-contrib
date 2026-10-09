@@ -242,7 +242,7 @@ class ACPClientToolRuntime:
 def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
     """Build supported client tools, leaving unsupported tools on the agent intact."""
 
-    @partial(Tool.from_callable, name="bash", context=True, preserve=True)
+    @partial(Tool.from_callable, name="bash", context=True, exposure="direct")
     async def bash(
         command: str,
         cwd: str | None = None,
@@ -254,7 +254,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Run a shell command through the ACP client terminal."""
         return await runtime.bash(command, cwd, timeout_seconds, background, context)
 
-    @partial(Tool.from_callable, name="bash.output", context=True, preserve=True)
+    @partial(Tool.from_callable, name="bash.output", context=True, exposure="direct")
     async def bash_output(
         shell_id: str,
         offset: int = 0,
@@ -265,12 +265,12 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Read buffered output from an ACP client terminal."""
         return await runtime.bash_output(shell_id, offset, limit, context)
 
-    @partial(Tool.from_callable, name="bash.kill", context=True, preserve=True)
+    @partial(Tool.from_callable, name="bash.kill", context=True, exposure="direct")
     async def kill_bash(shell_id: str, *, context: ToolContext) -> str:
         """Terminate an ACP client terminal process."""
         return await runtime.kill_bash(shell_id, context)
 
-    @partial(Tool.from_callable, name="fs.read", context=True, preserve=True)
+    @partial(Tool.from_callable, name="fs.read", context=True, exposure="direct")
     async def fs_read(
         path: str,
         offset: int = 0,
@@ -281,7 +281,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Read a text file through the ACP client filesystem."""
         return await runtime.read_file(path, offset, limit, context)
 
-    @partial(Tool.from_callable, name="fs.write", context=True, preserve=True)
+    @partial(Tool.from_callable, name="fs.write", context=True, exposure="direct")
     async def fs_write(
         path: str,
         content: str,
@@ -291,7 +291,7 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         """Write a text file through the ACP client filesystem."""
         return await runtime.write_file(path, content, context)
 
-    @partial(Tool.from_callable, name="fs.edit", context=True, preserve=True)
+    @partial(Tool.from_callable, name="fs.edit", context=True, exposure="direct")
     async def fs_edit(
         path: str,
         old: str,

@@ -411,7 +411,7 @@ async def test_negotiated_session_replaces_only_this_session_tool() -> None:
     assert installed.description == REGISTRY["subagent"].description
     assert installed.parameters == REGISTRY["subagent"].parameters
     assert installed.renderer is REGISTRY["subagent"].renderer
-    assert installed.preserve == REGISTRY["subagent"].preserve
+    assert installed.exposure == REGISTRY["subagent"].exposure
     assert installed.output_schema == REGISTRY["subagent"].output_schema
     assert installed.handler is not REGISTRY["subagent"].handler
     assert REGISTRY["subagent"].handler is not installed.handler

@@ -3,6 +3,9 @@
 CLI tools and agent skill scripts spawned by Bub inherit the Bub process
 environment, so keys declared in the config file become visible to them
 without a ``.env`` file or shell profile exports.
+
+Bub sets up OTLP trace export before plugins load, so an OTLP endpoint
+declared here is applied by calling Bub's ``configure_otlp`` once more.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import os
 
 import bub
+from loguru import logger
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -68,8 +72,29 @@ def apply_env(settings: EnvSettings | None = None) -> dict[str, str]:
     return applied
 
 
+_OTLP_ENDPOINT_KEYS = ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT")
+
+
+def configure_tracing(applied: dict[str, str]) -> None:
+    """Start Bub's OTLP trace export when ``applied`` set its endpoint.
+
+    ``configure_otlp`` does nothing without the ``bub[trace]`` extra or when
+    a tracer provider is already installed, so calling it again is safe.
+    """
+    if not any(key in applied for key in _OTLP_ENDPOINT_KEYS):
+        return
+    try:
+        from bub.tracing import configure_otlp
+    except ImportError:  # Bub without native tracing
+        return
+    try:
+        configure_otlp()
+    except Exception as exc:
+        logger.warning("OTLP instrumentation disabled: {}", exc)
+
+
 class EnvPlugin:
     """Bub entry point; instantiated after the config file is loaded."""
 
     def __init__(self, framework: object | None = None) -> None:
-        apply_env()
+        configure_tracing(apply_env())

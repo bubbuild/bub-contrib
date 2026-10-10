@@ -23,6 +23,25 @@ matching Bub's usual "environment beats config file" precedence. Non-string
 YAML values are stringified (`true`/`false` for booleans); `null` values are
 skipped.
 
+### Trace export (OTLP)
+
+Bub decides whether to export traces before plugins load, so plain injection
+comes too late for it. When `env:` injects `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+or `OTEL_EXPORTER_OTLP_ENDPOINT`, the plugin calls Bub's
+`bub.tracing.configure_otlp()` once more, so trace settings can live in the
+config file. Bub needs the `trace` extra (`bub[trace]`):
+
+```yaml
+env:
+  OTEL_SERVICE_NAME: bub
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://phoenix.lan:6006/v1/traces
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: authorization=Bearer%20<api-key>,x-project-name=<project>
+```
+
+Header values are URL-encoded per the OTel spec (a space is `%20`). An
+endpoint already set in the process environment was handled by Bub at
+startup, and the plugin leaves it alone.
+
 ## Install (end users)
 
 `bub-env` is not on PyPI. With a global Bub install (`uv tool install bub`),

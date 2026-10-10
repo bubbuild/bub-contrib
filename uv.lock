@@ -686,12 +686,14 @@ version = "0.1.0"
 source = { editable = "packages/bub-env" }
 dependencies = [
     { name = "bub" },
+    { name = "loguru" },
     { name = "pydantic-settings" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
+    { name = "loguru" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
 ]
 

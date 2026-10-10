@@ -21,6 +21,28 @@ env:
 的优先级保持一致。非字符串的 YAML 值会被转换为字符串（布尔值转为
 `true`/`false`）；`null` 值会被跳过。
 
+### Trace 导出（OTLP）
+
+Bub 在加载插件之前就决定是否开启 trace 导出，所以普通的注入来不及影响它。
+当 `env:` 注入了 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 或
+`OTEL_EXPORTER_OTLP_ENDPOINT` 时，插件会再调用一次 Bub 的
+`bub.tracing.configure_otlp()`，因此可以把 trace 配置写在配置文件里。需要
+Bub 安装 `trace` extra（`bub[trace]`）：
+
+```yaml
+env:
+  OTEL_SERVICE_NAME: bub
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://phoenix.lan:6006/v1/traces
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: authorization=Bearer%20<api-key>,x-project-name=<project>
+```
+
+header 值按 OTel 规范做 URL 编码（空格写成 `%20`）。如果进程环境里已经设置了
+endpoint，Bub 启动时已处理，插件不会重复配置。
+
+启动时插件会输出日志：`env.applied` 列出注入的变量名（不含值），
+`env.kept_process_env` 列出因进程环境已设置而保留原值的变量名；处理 OTLP
+endpoint 时输出 `env.tracing.enabled`，未开启则输出 `env.tracing.skipped` 及原因。
+
 ## 安装（普通用户）
 
 `bub-env` 未发布到 PyPI。如果 Bub 是全局安装的（`uv tool install bub`），

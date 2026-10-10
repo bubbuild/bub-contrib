@@ -1,6 +1,6 @@
 [project]
 name = "bub-env"
-version = "0.1.0"
+version = "0.2.0"
 description = "Inject environment variables from the Bub config file at startup"
 readme = "README.md"
 authors = [
@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "bub",
+    "loguru",
     "pydantic-settings>=2.10.1",
 ]
 

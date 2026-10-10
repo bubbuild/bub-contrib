@@ -42,6 +42,11 @@ Header values are URL-encoded per the OTel spec (a space is `%20`). An
 endpoint already set in the process environment was handled by Bub at
 startup, and the plugin leaves it alone.
 
+At startup the plugin logs `env.applied` with the injected variable names
+(never their values), `env.kept_process_env` for names the process
+environment already set, and `env.tracing.enabled` or `env.tracing.skipped`
+with the reason when it handled an OTLP endpoint.
+
 ## Install (end users)
 
 `bub-env` is not on PyPI. With a global Bub install (`uv tool install bub`),

@@ -39,6 +39,10 @@ env:
 header 值按 OTel 规范做 URL 编码（空格写成 `%20`）。如果进程环境里已经设置了
 endpoint，Bub 启动时已处理，插件不会重复配置。
 
+启动时插件会输出日志：`env.applied` 列出注入的变量名（不含值），
+`env.kept_process_env` 列出因进程环境已设置而保留原值的变量名；处理 OTLP
+endpoint 时输出 `env.tracing.enabled`，未开启则输出 `env.tracing.skipped` 及原因。
+
 ## 安装（普通用户）
 
 `bub-env` 未发布到 PyPI。如果 Bub 是全局安装的（`uv tool install bub`），

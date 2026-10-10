@@ -3,6 +3,10 @@ from __future__ import annotations
 import os
 
 import bub
+import pytest
+from loguru import logger
+
+from bub_env import plugin
 from bub_env.plugin import EnvPlugin, EnvSettings, apply_env, configure_tracing
 
 
@@ -58,41 +62,94 @@ def test_entry_point_class_applies_config(monkeypatch) -> None:
         _cleanup("BUB_ENV_TEST_PLUGIN")
 
 
-def _record_configure_otlp(monkeypatch) -> list[bool]:
+@pytest.fixture
+def logs():
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
+    yield lines
+    logger.remove(sink)
+
+
+def _fake_tracing(monkeypatch, *, active: bool | None = False, enables: bool = True) -> list[bool]:
+    """Stand in for OpenTelemetry: ``active`` is the provider state before the call."""
+
     import bub.tracing
 
+    state = {"active": active}
     calls: list[bool] = []
-    monkeypatch.setattr(bub.tracing, "configure_otlp", lambda: calls.append(True))
+
+    def configure_otlp() -> None:
+        calls.append(True)
+        if enables:
+            state["active"] = True
+
+    monkeypatch.setattr(bub.tracing, "configure_otlp", configure_otlp)
+    monkeypatch.setattr(plugin, "_tracing_active", lambda: state["active"])
     return calls
 
 
-def test_injected_otlp_endpoint_starts_tracing(monkeypatch) -> None:
-    calls = _record_configure_otlp(monkeypatch)
-    configure_tracing({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://phoenix:6006/v1/traces"})
-    configure_tracing({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://phoenix:6006"})
-    assert calls == [True, True]
+ENDPOINT = {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://user:pw@phoenix.lan:6006/v1/traces"}
 
 
-def test_tracing_untouched_without_injected_endpoint(monkeypatch) -> None:
-    calls = _record_configure_otlp(monkeypatch)
+def test_injected_otlp_endpoint_starts_tracing(monkeypatch, logs) -> None:
+    calls = _fake_tracing(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ENDPOINT["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"])
+    configure_tracing(ENDPOINT)
+    assert calls == [True]
+    enabled = [line for line in logs if "env.tracing.enabled" in line]
+    assert enabled and "http://phoenix.lan:6006/v1/traces" in enabled[0]
+    assert "pw" not in enabled[0]
+
+
+def test_tracing_untouched_without_injected_endpoint(monkeypatch, logs) -> None:
+    calls = _fake_tracing(monkeypatch)
     # An endpoint already in the process env was handled by Bub at startup.
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://phoenix:6006/v1/traces")
     configure_tracing({"OTEL_SERVICE_NAME": "bub"})
     assert calls == []
+    assert not any("env.tracing" in line for line in logs)
 
 
-def test_tracing_errors_do_not_break_startup(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("active", "enables", "expected"),
+    [
+        (None, True, "install bub[trace]"),
+        (True, True, "already installed"),
+        (False, False, "OTEL_SDK_DISABLED"),
+    ],
+)
+def test_tracing_logs_why_it_did_not_start(monkeypatch, logs, active, enables, expected) -> None:
+    _fake_tracing(monkeypatch, active=active, enables=enables)
+    configure_tracing(ENDPOINT)
+    assert any("env.tracing.skipped" in line and expected in line for line in logs)
+
+
+def test_tracing_errors_do_not_break_startup(monkeypatch, logs) -> None:
     import bub.tracing
 
     def fail() -> None:
         raise ValueError("Bub's trace extra supports OTLP http/protobuf only.")
 
+    _fake_tracing(monkeypatch)
     monkeypatch.setattr(bub.tracing, "configure_otlp", fail)
-    configure_tracing({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://phoenix:6006/v1/traces"})
+    configure_tracing(ENDPOINT)
+    assert any("env.tracing.failed" in line and "http/protobuf" in line for line in logs)
+
+
+def test_applied_keys_are_logged_without_values(monkeypatch, logs) -> None:
+    monkeypatch.setenv("BUB_ENV_TEST_SET", "from-process")
+    try:
+        apply_env(EnvSettings(BUB_ENV_TEST_SECRET="sk-secret-value", BUB_ENV_TEST_SET="from-config"))
+    finally:
+        _cleanup("BUB_ENV_TEST_SECRET")
+    text = "\n".join(logs)
+    assert "env.applied count=1 keys=BUB_ENV_TEST_SECRET" in text
+    assert "env.kept_process_env keys=BUB_ENV_TEST_SET" in text
+    assert "sk-secret-value" not in text and "from-config" not in text
 
 
 def test_entry_point_configures_tracing_from_config(monkeypatch) -> None:
-    calls = _record_configure_otlp(monkeypatch)
+    calls = _fake_tracing(monkeypatch)
     settings = EnvSettings(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://phoenix:6006/v1/traces")
     monkeypatch.setattr(bub, "ensure_config", lambda cls: settings)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)

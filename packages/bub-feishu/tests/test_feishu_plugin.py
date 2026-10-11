@@ -39,6 +39,36 @@ def test_onboard_config_collects_feishu_settings(monkeypatch) -> None:
     }
 
 
+def _accept_defaults(monkeypatch) -> None:
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_text", lambda message, default="": default
+    )
+    monkeypatch.setattr(plugin.bub_inquirer, "ask_secret", lambda message: "")
+    monkeypatch.setattr(
+        plugin.bub_inquirer,
+        "ask_select",
+        lambda message, choices, default="": default,
+    )
+
+
+def test_onboard_config_keeps_existing_feishu_settings(monkeypatch) -> None:
+    _accept_defaults(monkeypatch)
+    existing = {
+        "app_id": "app-id",
+        "app_secret": "app-secret",
+        "verification_token": "verification-token",
+        "encrypt_key": "encrypt-key",
+        "allow_users": "user-1",
+        "allow_chats": "chat-1",
+        "bot_open_id": "bot-open-id",
+        "log_level": "DEBUG",
+    }
+
+    assert plugin.onboard_config(
+        {"enabled_channels": "feishu", "feishu": existing}
+    ) == {"feishu": existing}
+
+
 def test_onboard_config_skips_when_feishu_is_disabled() -> None:
     assert plugin.onboard_config({"enabled_channels": "discord"}) is None
 

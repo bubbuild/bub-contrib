@@ -32,11 +32,17 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
     if not _channel_enabled(current_config):
         return None
 
-    client_id = bub_inquirer.ask_text("DingTalk client ID")
-    client_secret = bub_inquirer.ask_secret("DingTalk client secret")
+    current = current_config.get(CHANNEL_NAME)
+    config = current if isinstance(current, dict) else {}
+    client_id = bub_inquirer.ask_text(
+        "DingTalk client ID", default=str(config.get("client_id") or "")
+    )
+    client_secret = bub_inquirer.ask_secret("DingTalk client secret") or str(
+        config.get("client_secret") or ""
+    )
     allow_users = bub_inquirer.ask_text(
         "DingTalk allowed users (comma-separated staff IDs, * for all)",
-        default="*",
+        default=str(config.get("allow_users") or "*"),
     )
 
     return {

@@ -203,9 +203,7 @@ def after_llm_call(
 
 
 @hookimpl
-def after_tool_call(
-    call: ToolCall, result: ToolCallResult, state: TurnState
-) -> None:
+def after_tool_call(call: ToolCall, result: ToolCallResult, state: TurnState) -> None:
     qq_state = _qq_state(state)
     if qq_state is None:
         return
@@ -241,7 +239,8 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
                 "QQ app ID",
                 default=str(config.get("appid") or ""),
             ),
-            "secret": bub_inquirer.ask_secret("QQ secret"),
+            "secret": bub_inquirer.ask_secret("QQ secret")
+            or str(config.get("secret") or ""),
             "receive_mode": bub_inquirer.ask_select(
                 "QQ receive mode",
                 choices=RECEIVE_MODES,

@@ -59,7 +59,8 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
                 "WeCom bot ID",
                 default=str(config.get("bot_id") or ""),
             ),
-            "secret": bub_inquirer.ask_secret("WeCom secret"),
+            "secret": bub_inquirer.ask_secret("WeCom secret")
+            or str(config.get("secret") or ""),
             "websocket_url": bub_inquirer.ask_text(
                 "WeCom websocket URL",
                 default=str(

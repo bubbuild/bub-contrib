@@ -30,17 +30,38 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
     if not _channel_enabled(current_config):
         return None
 
-    app_id = bub_inquirer.ask_text("Feishu app ID")
-    app_secret = bub_inquirer.ask_secret("Feishu app secret")
-    verification_token = bub_inquirer.ask_secret("Feishu verification token")
-    encrypt_key = bub_inquirer.ask_secret("Feishu encrypt key")
-    allow_users = bub_inquirer.ask_text("Feishu allowed users (optional)")
-    allow_chats = bub_inquirer.ask_text("Feishu allowed chats (optional)")
-    bot_open_id = bub_inquirer.ask_text("Feishu bot open ID (optional)")
+    current = current_config.get(CHANNEL_NAME)
+    config = current if isinstance(current, dict) else {}
+    app_id = bub_inquirer.ask_text(
+        "Feishu app ID", default=str(config.get("app_id") or "")
+    )
+    app_secret = bub_inquirer.ask_secret("Feishu app secret") or str(
+        config.get("app_secret") or ""
+    )
+    verification_token = bub_inquirer.ask_secret("Feishu verification token") or str(
+        config.get("verification_token") or ""
+    )
+    encrypt_key = bub_inquirer.ask_secret("Feishu encrypt key") or str(
+        config.get("encrypt_key") or ""
+    )
+    allow_users = bub_inquirer.ask_text(
+        "Feishu allowed users (optional)",
+        default=str(config.get("allow_users") or ""),
+    )
+    allow_chats = bub_inquirer.ask_text(
+        "Feishu allowed chats (optional)",
+        default=str(config.get("allow_chats") or ""),
+    )
+    bot_open_id = bub_inquirer.ask_text(
+        "Feishu bot open ID (optional)",
+        default=str(config.get("bot_open_id") or ""),
+    )
+    log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    log_level_default = str(config.get("log_level") or "INFO").upper()
     log_level = bub_inquirer.ask_select(
         "Feishu log level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default="INFO",
+        choices=log_levels,
+        default=log_level_default if log_level_default in log_levels else "INFO",
     )
 
     return {

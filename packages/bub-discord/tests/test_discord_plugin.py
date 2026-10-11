@@ -31,6 +31,33 @@ def test_onboard_config_collects_discord_settings(monkeypatch) -> None:
     }
 
 
+def _accept_defaults(monkeypatch) -> None:
+    monkeypatch.setattr(
+        plugin.bub_inquirer, "ask_text", lambda message, default="": default
+    )
+    monkeypatch.setattr(plugin.bub_inquirer, "ask_secret", lambda message: "")
+    monkeypatch.setattr(
+        plugin.bub_inquirer,
+        "ask_select",
+        lambda message, choices, default="": default,
+    )
+
+
+def test_onboard_config_keeps_existing_discord_settings(monkeypatch) -> None:
+    _accept_defaults(monkeypatch)
+    existing = {
+        "token": "token",
+        "allow_users": "user-1",
+        "allow_channels": "channel-1",
+        "command_prefix": "?",
+        "proxy": "http://proxy",
+    }
+
+    assert plugin.onboard_config(
+        {"enabled_channels": "discord", "discord": existing}
+    ) == {"discord": existing}
+
+
 def test_onboard_config_skips_when_discord_is_disabled() -> None:
     assert plugin.onboard_config({"enabled_channels": "feishu"}) is None
 

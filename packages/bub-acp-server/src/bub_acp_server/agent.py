@@ -55,6 +55,7 @@ from acp.schema import (
     ToolCallProgress,
     ToolCallStart,
     ToolKind,
+    Usage,
     UsageUpdate,
     UserMessageChunk,
 )
@@ -246,6 +247,28 @@ class ACPStreamState:
     next_tool_index: int = 0
     sent_text: bool = False
     reported_usage: tuple[int, int] | None = None
+    turn_usage: dict[str, int] = field(default_factory=dict)
+
+    def add_usage(self, usage: object) -> None:
+        if not isinstance(usage, Mapping):
+            return
+        for key, value in _usage_token_counts(usage).items():
+            self.turn_usage[key] = self.turn_usage.get(key, 0) + value
+
+    def prompt_usage(self) -> Usage | None:
+        counts = self.turn_usage
+        if "input_tokens" not in counts and "output_tokens" not in counts:
+            return None
+        input_tokens = counts.get("input_tokens", 0)
+        output_tokens = counts.get("output_tokens", 0)
+        return Usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=counts.get("total_tokens", input_tokens + output_tokens),
+            thought_tokens=counts.get("thought_tokens"),
+            cached_read_tokens=counts.get("cached_read_tokens"),
+            cached_write_tokens=counts.get("cached_write_tokens"),
+        )
 
 
 class ACPStreamRouter:
@@ -265,6 +288,8 @@ class ACPStreamRouter:
             try:
                 async for event in stream:
                     await self.publish_event(session_id, event)
+                    # Each usage event reports one model call; sum them for the turn.
+                    state.add_usage(_event_usage(event))
                     await self._publish_usage_if_changed(
                         session_id,
                         state,
@@ -879,7 +904,10 @@ class BubACPAgent:
                             content=TextContentBlock(text=result.model_output)
                         ),
                     )
-            return PromptResponse(stop_reason="end_turn")
+            return PromptResponse(
+                stop_reason="end_turn",
+                usage=stream_state.prompt_usage() if stream_state else None,
+            )
         finally:
             self._complete_prompt_run(run)
             self._schedule_session_title(prompt, session)
@@ -1610,6 +1638,39 @@ def _usage_total_tokens(usage: Mapping[str, object] | None) -> int | None:
     if input_tokens is None and output_tokens is None:
         return None
     return (input_tokens or 0) + (output_tokens or 0)
+
+
+def _usage_token_counts(usage: Mapping[str, object]) -> dict[str, int]:
+    input_details = _usage_details(
+        usage, "prompt_tokens_details", "input_tokens_details"
+    )
+    output_details = _usage_details(
+        usage, "completion_tokens_details", "output_tokens_details"
+    )
+    cached_read_tokens = _first_token_count(usage, "cache_read_input_tokens")
+    if cached_read_tokens is None:
+        cached_read_tokens = _first_token_count(input_details, "cached_tokens")
+    candidates = {
+        "input_tokens": _first_token_count(usage, "input_tokens", "prompt_tokens"),
+        "output_tokens": _first_token_count(
+            usage, "output_tokens", "completion_tokens"
+        ),
+        "total_tokens": _usage_total_tokens(usage),
+        "thought_tokens": _first_token_count(output_details, "reasoning_tokens"),
+        "cached_read_tokens": cached_read_tokens,
+        "cached_write_tokens": _first_token_count(usage, "cache_creation_input_tokens"),
+    }
+    if candidates["input_tokens"] is None and candidates["output_tokens"] is None:
+        return {}
+    return {key: value for key, value in candidates.items() if value is not None}
+
+
+def _usage_details(usage: Mapping[str, object], *keys: str) -> Mapping[str, object]:
+    for key in keys:
+        details = usage.get(key)
+        if isinstance(details, Mapping):
+            return details
+    return {}
 
 
 def _usage_context_window_size(usage: Mapping[str, object] | None) -> int | None:

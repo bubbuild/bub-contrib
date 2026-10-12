@@ -1199,6 +1199,82 @@ async def test_stream_router_reports_usage_before_turn_finishes() -> None:
     ]
 
 
+class UsageFramework(FakeFramework):
+    def __init__(self, usages: list[dict[str, object]]) -> None:
+        super().__init__()
+        self.usages = usages
+
+    async def process_inbound(
+        self, inbound: object, stream_output: bool = False
+    ) -> TurnResult:
+        self.messages.append(inbound)
+
+        async def stream():
+            for usage in self.usages:
+                yield StreamEvent("text", {"delta": "chunk"})
+                yield StreamEvent("usage", {"usage": usage, "elapsed_seconds": 0.1})
+
+        async for _ in self.router.wrap_stream(inbound, stream()):
+            pass
+        return TurnResult(
+            session_id=inbound.session_id,
+            prompt=inbound.content,
+            model_output="chunk",
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_response_reports_turn_usage() -> None:
+    framework = UsageFramework(
+        [
+            {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "total_tokens": 110,
+                "prompt_tokens_details": {"cached_tokens": 60},
+                "completion_tokens_details": {"reasoning_tokens": 4},
+            },
+            {
+                "input_tokens": 150,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 30,
+            },
+        ]
+    )
+    agent = BubACPAgent(framework)
+    agent.on_connect(FakeClient())
+    session = await agent.new_session(cwd=str(Path.cwd()))
+
+    response = await agent.prompt(
+        [TextContentBlock(type="text", text="hello")], session_id=session.session_id
+    )
+
+    assert response.usage is not None
+    assert response.usage.model_dump(by_alias=True, exclude_none=True) == {
+        "inputTokens": 250,
+        "outputTokens": 30,
+        "totalTokens": 280,
+        "thoughtTokens": 4,
+        "cachedReadTokens": 60,
+        "cachedWriteTokens": 30,
+    }
+
+
+@pytest.mark.asyncio
+async def test_prompt_response_omits_usage_without_usage_events() -> None:
+    framework = UsageFramework([{"elapsed": 1}])
+    agent = BubACPAgent(framework)
+    agent.on_connect(FakeClient())
+    session = await agent.new_session(cwd=str(Path.cwd()))
+
+    response = await agent.prompt(
+        [TextContentBlock(type="text", text="hello")], session_id=session.session_id
+    )
+
+    assert response.usage is None
+
+
 @pytest.mark.asyncio
 async def test_prompt_sends_complete_output_when_stream_has_no_text_chunks() -> None:
     framework = NoTextFramework()

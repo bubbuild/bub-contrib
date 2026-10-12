@@ -48,6 +48,8 @@ While the command runs, tool updates attach the client terminal. On completion, 
 
 The agent sends an ACP `usage_update` whenever the streamed usage snapshot changes, with a final end-of-stream check as a fallback. Missing token usage is reported as `0`. If the model provider does not report its context-window size, set `BUB_ACP_SERVER_CONTEXT_WINDOW_SIZE`; the default is `128000` tokens.
 
+The `PromptResponse` returned at the end of each turn carries an ACP `usage` summed over every model call in that turn: `inputTokens`, `outputTokens`, and `totalTokens`, plus `thoughtTokens`, `cachedReadTokens`, and `cachedWriteTokens` when the provider reports them. A turn without any reported usage leaves `usage` unset.
+
 ACP clients can select both the model and reasoning effort for each session. Reasoning effort defaults to `auto`; the selected value is persisted with the ACP session and passed into Bub's turn state for subsequent model calls.
 
 Available reasoning efforts are `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`. Values are passed through to the model provider; actual support depends on the selected model and provider.

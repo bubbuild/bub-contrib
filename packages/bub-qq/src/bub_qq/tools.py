@@ -21,7 +21,7 @@ from typing import Literal, NotRequired, TypedDict, final
 
 import bub
 from bub.channels.message import ChannelMessage
-from bub.tools import ToolContext, tool
+from bub.core.tools import ToolContext, tool
 
 from .config import QQConfig
 from .runtime import get_active_channel

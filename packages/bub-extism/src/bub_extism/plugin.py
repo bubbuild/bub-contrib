@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 import bub
 from bub import hookimpl
 from bub.streaming import AsyncStreamEvents
-from bub.tape import LAST_ANCHOR, TapeContext
+from bub.core.tape import LAST_ANCHOR, TapeContext
 
 from bub_extism.bridge import ExtismBridge
 from bub_extism.channel import channels_from_value
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from bub.channels.contracts import MessageHandler
     from bub.envelope import Envelope
     from bub.framework import BubFramework
-    from bub.tape import TapeStore
+    from bub.core.tape import TapeStore
     from bub.turn import TurnState
 
 

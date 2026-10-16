@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import bub.builtin.tools  # noqa: F401 - importing the builtin tools fills the registry
@@ -11,7 +12,7 @@ import pytest
 from acp.schema import ClientCapabilities, TextContentBlock
 from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
-from bub.tools import REGISTRY, ToolContext
+from bub.core.tools import REGISTRY, ToolContext
 
 from bub_acp_server.agent import BubACPAgent
 from bub_acp_server.subagents import (
@@ -47,7 +48,13 @@ class BrokenClient(FakeClient):
 
 class FakeFramework:
     def get_agent_hooks(self):
+        return SimpleNamespace(subscribe=lambda events: events)
+
+    def build_tape_context(self):
         return None
+
+    def get_tape_sidecars(self):
+        return ()
 
     def __init__(self) -> None:
         self.workspace = Path.cwd()

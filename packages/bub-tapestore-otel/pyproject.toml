@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "bub",
+    "bub[app]",
     "loguru",
     "opentelemetry-api",
     "opentelemetry-exporter-otlp-proto-http>=1.39.0",

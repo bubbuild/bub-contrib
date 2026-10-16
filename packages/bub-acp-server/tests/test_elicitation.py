@@ -14,7 +14,7 @@ from acp.schema import (
     DeclineElicitationResponse,
     ElicitationFormSessionMode,
 )
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 
 from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 

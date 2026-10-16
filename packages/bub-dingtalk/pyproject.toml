@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Chojan Shang", email = "psiace@apache.org" }]
 requires-python = ">=3.12"
 dependencies = [
-    "bub",
+    "bub[app]",
     "dingtalk-stream>=0.24.0",
     "loguru",
     "pydantic-settings",

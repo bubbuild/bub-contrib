@@ -6,9 +6,9 @@ from bub import inquirer as bub_inquirer
 from bub.channels import Channel
 from bub.channels.contracts import MessageHandler
 from bub.envelope import field_of
-from bub.hooks.interception import LlmCallDecision
-from bub.hooks.interception import LlmCallRequest
-from bub.hooks.interception import LlmCallResult
+from bub.hooks.interception import LLMCallDecision
+from bub.hooks.interception import LLMCallRequest
+from bub.hooks.interception import LLMCallResult
 from bub.hooks.interception import ToolCall
 from bub.hooks.interception import ToolCallDecision
 from bub.hooks.interception import ToolCallResult
@@ -62,7 +62,7 @@ def _is_reply_tool(tool: str) -> bool:
     return tool == REPLY_TOOL_NAME or tool.replace("_", ".") == REPLY_TOOL_NAME
 
 
-def _turn_declined_reply(qq_state: dict[str, Any], result: LlmCallResult) -> bool:
+def _turn_declined_reply(qq_state: dict[str, Any], result: LLMCallResult) -> bool:
     """Whether this LLM result ends the turn with the model declining to reply.
 
     In tool reply mode the agent loop stops at the first LLM response
@@ -139,8 +139,8 @@ def system_prompt(prompt: Any, state: TurnState) -> str | None:
 
 @hookimpl
 def before_llm_call(
-    request: LlmCallRequest, state: TurnState
-) -> LlmCallDecision | None:
+    request: LLMCallRequest, state: TurnState
+) -> LLMCallDecision | None:
     qq_state = _qq_state(state)
     if qq_state is None:
         return None
@@ -156,7 +156,7 @@ def before_llm_call(
         qq_state.get("session_id"),
         qq_state.get("sender_id"),
     )
-    return LlmCallDecision.finish(config.llm_rate_limit_notice)
+    return LLMCallDecision.finish(config.llm_rate_limit_notice)
 
 
 @hookimpl
@@ -180,7 +180,7 @@ def before_tool_call(call: ToolCall, state: TurnState) -> ToolCallDecision | Non
 
 @hookimpl
 def after_llm_call(
-    request: LlmCallRequest, result: LlmCallResult, state: TurnState
+    request: LLMCallRequest, result: LLMCallResult, state: TurnState
 ) -> None:
     qq_state = _qq_state(state)
     if qq_state is None:

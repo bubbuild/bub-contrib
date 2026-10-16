@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from bub.tools import REGISTRY
+from bub.core.tools import REGISTRY
 
 from bub_qq import tools
 

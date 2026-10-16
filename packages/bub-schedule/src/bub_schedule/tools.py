@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from bub import tool
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 from pydantic import BaseModel, Field
 
 from bub_schedule.jobs import run_scheduled_reminder

@@ -11,7 +11,7 @@ from acp.schema import (
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
-from bub.tools import REGISTRY, ToolContext
+from bub.core.tools import REGISTRY, ToolContext
 from bub.streaming import StreamEvent
 
 from bub_acp_server.agent import ACPStreamRouter
@@ -444,7 +444,7 @@ async def test_real_agents_keep_acp_tools_connection_local(
     tmp_path: Path, monkeypatch
 ) -> None:
     from acp.schema import TextContentBlock
-    from bub.builtin.agent import Agent
+    from bub.builtin.agent import BubAgent
     from bub.framework import BubFramework
 
     from bub_acp_server.agent import BubACPAgent
@@ -454,7 +454,7 @@ async def test_real_agents_keep_acp_tools_connection_local(
     framework = BubFramework(config_file=tmp_path / "config.yml")
     framework.load_builtin_hooks()
     framework.plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
-    # Force the default Agent to snapshot tools before either ACP connection exists.
+    # Force the default BubAgent to snapshot tools before either ACP connection exists.
     default = framework.plugin_manager.get_plugin("builtin")._get_agent()
     original_tools = default.tools.copy()
     original_registry = REGISTRY.copy()
@@ -483,8 +483,8 @@ async def test_real_agents_keep_acp_tools_connection_local(
         )
         assert REGISTRY == original_registry
         assert default.tools == original_tools
-        # Even an Agent created during an ACP connection gets only default tools.
-        assert Agent(framework).tools["fs.read"] is original_registry["fs.read"]
+        # Even an BubAgent created during an ACP connection gets only default tools.
+        assert BubAgent(framework).tools["fs.read"] is original_registry["fs.read"]
 
     assert len(first_client.read_requests) == 2
     assert len(second_client.read_requests) == 1

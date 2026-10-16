@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -32,14 +33,15 @@ from bub.channels import Channel, Interface
 from bub.channels.manager import ChannelManager
 from bub.channels.message import ChannelMessage
 from bub.streaming import StreamEvent
-from bub.tape import (
+from bub.core.tape import (
     AsyncTapeStoreAdapter,
     InMemoryTapeStore,
     Tape,
     TapeContext,
     TapeEntry,
+    session_tape_name,
 )
-from bub.tools import REGISTRY, ToolContext
+from bub.core.tools import REGISTRY, ToolContext
 from bub.turn import TurnResult
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
@@ -61,7 +63,13 @@ def isolated_acp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class HTTPFramework:
     def get_agent_hooks(self):
+        return SimpleNamespace(subscribe=lambda events: events)
+
+    def build_tape_context(self):
         return None
+
+    def get_tape_sidecars(self):
+        return ()
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
@@ -373,8 +381,8 @@ async def test_http_load_persisted_session_on_fresh_connection(
     # restore the session without a session/new request on this connection.
     session = await BubACPAgent(HTTPFramework(tmp_path)).new_session(cwd=str(tmp_path))
     store = AsyncTapeStoreAdapter(InMemoryTapeStore())
-    tape = Tape(tmp_path, store, TapeContext()).session_tape(
-        f"acp-server:{session.session_id}", tmp_path
+    tape = Tape(store, TapeContext()).scoped(
+        session_tape_name(f"acp-server:{session.session_id}", tmp_path)
     )
     for index in range(history_size):
         await store.append(
@@ -532,8 +540,8 @@ async def test_websocket_load_and_tool_callbacks(
         finally:
             await connection.close()
 
-        tape = Tape(tmp_path, store, TapeContext()).session_tape(
-            f"acp-server:{session.session_id}", tmp_path
+        tape = Tape(store, TapeContext()).scoped(
+            session_tape_name(f"acp-server:{session.session_id}", tmp_path)
         )
         await store.append(
             tape.name,

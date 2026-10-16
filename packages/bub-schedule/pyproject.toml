@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "apscheduler>=3.11.2",
-    "bub",
+    "bub[app]",
     "loguru",
     "pydantic",
 ]

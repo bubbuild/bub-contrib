@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Protocol
 
 from loguru import logger
-from bub.tape import AsyncTapeStore, TapeEntry, TapeQuery, TapeStore, is_async_tape_store
+from bub.core.tape import AsyncTapeStore, TapeEntry, TapeQuery, TapeStore, is_async_tape_store
 
 
 class TapeExporter(Protocol):

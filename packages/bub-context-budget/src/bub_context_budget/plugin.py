@@ -8,9 +8,10 @@ from functools import cache
 from typing import Any
 
 import bub
+import republic
 import tiktoken
 from bub import hookimpl
-from bub.hooks.interception import LlmCallRequest, LlmCallResult
+from bub.hooks.interception import LLMCallRequest, LLMCallResult
 from bub.turn import TurnState
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
@@ -45,8 +46,17 @@ def _get_encoding(name: str) -> tiktoken.Encoding:
     return tiktoken.get_encoding(name)
 
 
+type ContextMessage = republic.Message | Mapping[str, Any]
+
+
+def _message_dict(message: ContextMessage) -> Mapping[str, Any]:
+    if isinstance(message, republic.Message):
+        return message.to_dict()
+    return message
+
+
 def estimate_context_tokens(
-    messages: list[dict[str, Any]],
+    messages: list[ContextMessage],
     *,
     encoding_name: str,
 ) -> int:
@@ -56,9 +66,9 @@ def estimate_context_tokens(
     return len(encoding.encode(_serialize_messages(messages), disallowed_special=()))
 
 
-def _serialize_messages(messages: list[dict[str, Any]]) -> str:
+def _serialize_messages(messages: list[ContextMessage]) -> str:
     return json.dumps(
-        messages,
+        [_message_dict(message) for message in messages],
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -66,7 +76,7 @@ def _serialize_messages(messages: list[dict[str, Any]]) -> str:
     )
 
 
-def _message_digest(messages: list[dict[str, Any]]) -> str:
+def _message_digest(messages: list[ContextMessage]) -> str:
     return hashlib.sha256(_serialize_messages(messages).encode()).hexdigest()
 
 
@@ -94,14 +104,14 @@ def _usage_total_tokens(usage: Mapping[str, Any] | None) -> int | None:
     return (prompt or 0) + (completion or 0)
 
 
-def _assistant_message(result: LlmCallResult) -> dict[str, Any]:
-    if result.tool_calls:
-        return {"role": "assistant", "content": "", "tool_calls": result.tool_calls}
-    return {"role": "assistant", "content": result.text or ""}
+def _assistant_message(result: LLMCallResult) -> republic.Message:
+    content = [result.text] if result.text else []
+    tool_calls = [republic.ToolCall(**call) for call in result.tool_calls]
+    return republic.assistant(*content, tool_calls=tool_calls)
 
 
 def _estimate_request_tokens(
-    request: LlmCallRequest,
+    request: LLMCallRequest,
     state: TurnState,
     *,
     encoding_name: str,
@@ -147,38 +157,35 @@ def _handoff_instruction(
 
 
 def _inject_system_instruction(
-    messages: list[dict[str, Any]],
+    messages: list[republic.Message],
     instruction: str,
-) -> list[dict[str, Any]]:
+) -> list[republic.Message]:
     if any(
-        message.get("role") == "system"
-        and isinstance(message.get("content"), str)
-        and HANDOFF_INSTRUCTION_MARKER in message["content"]
+        message.role == "system" and HANDOFF_INSTRUCTION_MARKER in message.text
         for message in messages
     ):
         return messages
 
-    updated = [dict(message) for message in messages]
+    updated = list(messages)
     for index, message in enumerate(updated):
-        if message.get("role") != "system" or not isinstance(
-            message.get("content"), str
+        if message.role != "system" or not all(
+            isinstance(part, republic.Text) for part in message.parts
         ):
             continue
-        content = message["content"]
-        updated[index] = {
-            **message,
-            "content": f"{content}\n\n{instruction}" if content else instruction,
-        }
+        content = message.text
+        updated[index] = republic.system(
+            f"{content}\n\n{instruction}" if content else instruction
+        )
         return updated
 
-    return [{"role": "system", "content": instruction}, *updated]
+    return [republic.system(instruction), *updated]
 
 
 @hookimpl(trylast=True)
 def before_llm_call(
-    request: LlmCallRequest,
+    request: LLMCallRequest,
     state: TurnState,
-) -> LlmCallRequest | None:
+) -> LLMCallRequest | None:
     settings = bub.ensure_config(ContextBudgetSettings)
     estimated_tokens = _estimate_request_tokens(
         request,
@@ -205,8 +212,8 @@ def before_llm_call(
 
 @hookimpl
 def after_llm_call(
-    request: LlmCallRequest,
-    result: LlmCallResult,
+    request: LLMCallRequest,
+    result: LLMCallResult,
     state: TurnState,
 ) -> None:
     total_tokens = _usage_total_tokens(result.usage)

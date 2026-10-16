@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from apscheduler.schedulers.background import BackgroundScheduler
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 
 from bub_schedule import tools
 

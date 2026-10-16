@@ -1,6 +1,6 @@
 import asyncio
 
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 
 from bub_wechat import plugin
 from bub_wechat.channel import OutgoingMessage

@@ -99,7 +99,7 @@ finally:
 ```
 
 Discovered tools belong to the channel and are available through `channel.tools`; discovery does
-not modify `bub.tools.REGISTRY`. Bub snapshots that registry when an `Agent` is created, so changing
+not modify `bub.core.tools.REGISTRY`. Bub snapshots that registry when a `BubAgent` is created, so changing
 it afterward would not update existing agents. The plugin's `load_state` hook waits for startup
 discovery and binds tools to the turn's Agent (including an explicit `_runtime_agent`). Stopping
 the channel removes its bindings and restores any tools it replaced.

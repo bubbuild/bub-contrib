@@ -5,7 +5,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import replace
 
-from bub.tape import InMemoryQueryMixin, TapeEntry, TapeQuery
+from bub.core.tape import InMemoryQueryMixin, TapeEntry, TapeQuery
 from sqlalchemy import (
     Engine,
     Text,

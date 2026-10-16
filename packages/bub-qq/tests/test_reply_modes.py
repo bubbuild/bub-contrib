@@ -4,10 +4,10 @@ import asyncio
 
 import bub
 from bub.channels.message import ChannelMessage
-from bub.hooks.interception import LlmCallResult
+from bub.hooks.interception import LLMCallResult
 from bub.hooks.interception import ToolCall
 from bub.hooks.interception import ToolCallResult
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 
 from bub_qq import plugin
 from bub_qq import runtime
@@ -293,12 +293,12 @@ def test_denied_tool_reason_matches_model_facing_aliases() -> None:
 
 
 def test_turn_declined_reply_detection() -> None:
-    final_without_tools = LlmCallResult(run_id="r1")
-    step_with_tools = LlmCallResult(
+    final_without_tools = LLMCallResult(run_id="r1")
+    step_with_tools = LLMCallResult(
         run_id="r1",
         tool_calls=[{"function": {"name": "qq_send", "arguments": "{}"}}],
     )
-    failed = LlmCallResult(run_id="r1", error=RuntimeError("boom"))
+    failed = LLMCallResult(run_id="r1", error=RuntimeError("boom"))
 
     assert plugin._turn_declined_reply({}, final_without_tools) is True
     assert plugin._turn_declined_reply({}, step_with_tools) is False

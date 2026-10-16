@@ -91,7 +91,7 @@ Useful flags:
 
 ```python
 from opendal import Operator
-from bub.tape import InMemoryTapeStore, TapeEntry
+from bub.core.tape import InMemoryTapeStore, TapeEntry
 
 from tape_dataset_opendal import ExportableTapeStore
 
@@ -112,7 +112,7 @@ print(report.manifest_path)
 import asyncio
 
 import opendal
-from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
+from bub.core.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
 
 from tape_dataset_opendal import AsyncExportableTapeStore
 

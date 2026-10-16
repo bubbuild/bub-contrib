@@ -62,15 +62,16 @@ from acp.schema import (
 from bub.channels.message import ChannelMessage, MediaItem, MediaType
 from bub.envelope import Envelope, content_of, field_of
 from bub.model_selection import ModelChoice, ModelOptions
-from bub.sidecars import sidecar_tape_name
+from bub.core.sidecars import sidecar_tape_name
 from bub.streaming import StreamEvent
-from bub.tools import ToolContext
-from bub.tape import (
+from bub.core.tools import ToolContext
+from bub.core.tape import (
     AsyncTapeStoreAdapter,
     Tape,
     TapeContext,
     TapeEntry,
     is_async_tape_store,
+    session_tape_name,
 )
 from pydantic import TypeAdapter, ValidationError
 
@@ -87,7 +88,7 @@ from bub_mcp.plugin import MCPChannel
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
-    from bub.builtin.agent import Agent
+    from bub.builtin.agent import BubAgent
     from bub.builtin.tools import SubAgentInput, SubAgentResult
     from bub.framework import BubFramework
 
@@ -461,7 +462,7 @@ active_stream_router: ContextVar[ACPStreamRouter | None] = ContextVar(
 
 @dataclass
 class ACPInboundMessage(ChannelMessage):
-    _runtime_agent: Agent | None = None
+    _runtime_agent: BubAgent | None = None
     _mcp_channel: MCPChannel | None = None
 
 
@@ -483,7 +484,7 @@ class BubACPAgent:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
         self.client_tools = client_tools or ACPClientToolRuntime()
-        self._runtime_agents: dict[str, Agent] = {}
+        self._runtime_agents: dict[str, BubAgent] = {}
         self._mcp_channels = mcp_channels if mcp_channels is not None else {}
         self._mcp_connect_tasks: set[asyncio.Task[MCPChannel | None]] = set()
         self._closed = False
@@ -934,9 +935,9 @@ class BubACPAgent:
         )
         runtime_agent = self._runtime_agents.get(session.session_id)
         if runtime_agent is None:
-            from bub.builtin.agent import Agent
+            from bub.builtin.agent import BubAgent
 
-            runtime_agent = Agent(self.framework)
+            runtime_agent = BubAgent(self.framework)
             runtime_agent.tools.update(build_client_tools(self.client_tools))
             if self._subagent_events_enabled:
                 self._install_streaming_subagent(runtime_agent, session)
@@ -947,7 +948,7 @@ class BubACPAgent:
         return inbound
 
     def _install_streaming_subagent(
-        self, runtime_agent: Agent, session: ACPSession
+        self, runtime_agent: BubAgent, session: ACPSession
     ) -> None:
         """Replace this session's `subagent` tool with a streaming variant.
 
@@ -1433,12 +1434,13 @@ class BubACPAgent:
         if store is None:
             return None
         return Tape(
-            archive_path=bub.home / "tapes",
             store=store if is_async_tape_store(store) else AsyncTapeStoreAdapter(store),
             context=TapeContext(),
-        ).session_tape(
-            _bub_session_id(self.settings.channel_name, session.session_id),
-            session.cwd,
+        ).scoped(
+            session_tape_name(
+                _bub_session_id(self.settings.channel_name, session.session_id),
+                session.cwd,
+            )
         )
 
     async def _session_config_options(

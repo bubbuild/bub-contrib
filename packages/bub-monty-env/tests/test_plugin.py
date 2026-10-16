@@ -8,7 +8,7 @@ import pytest
 from bub.builtin.codemode import CODE_TOOLS_STATE_KEY, run_code
 from bub.environment import ENVIRONMENT_STATE_KEY
 from bub.errors import BubError
-from bub.tools import ToolContext, tool
+from bub.core.tools import ToolContext, tool
 from bub.builtin.environment import LocalEnvironment
 from bub.hooks import BUB_HOOK_NAMESPACE, BubHookSpecs, hookimpl
 from bub.hooks.runtime import HookRuntime

@@ -16,7 +16,7 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from pydantic import BaseModel, TypeAdapter
-from bub.tools import Tool, ToolContext
+from bub.core.tools import Tool, ToolContext
 
 type TerminalObserver = Callable[[str, str, str], Awaitable[None]]
 

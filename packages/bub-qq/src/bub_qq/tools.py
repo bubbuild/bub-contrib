@@ -22,7 +22,7 @@ from typing import Literal, NotRequired, TypedDict, final
 import aiohttp
 import bub
 from bub.channels.message import ChannelMessage
-from bub.tools import ToolContext, tool
+from bub.core.tools import ToolContext, tool
 
 from .config import QQConfig
 from .outbound.media import MediaSpec

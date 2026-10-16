@@ -31,7 +31,7 @@ def test_cli_exits_after_using_sqlite_store(tmp_path: Path) -> None:
         from pathlib import Path
         from bub.errors import BubError
         from bub.framework import BubFramework
-        from bub.tape import TapeQuery
+        from bub.core.tape import TapeQuery
         from bub_tapestore_sqlite import plugin
 
         framework = BubFramework(config_file=Path('config.yml'))

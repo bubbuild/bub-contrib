@@ -11,7 +11,7 @@ import pluggy
 import pytest
 from bub.hooks import BUB_HOOK_NAMESPACE, BubHookSpecs
 from bub.hooks.runtime import HookRuntime
-from bub.tape import TapeEntry, TapeQuery
+from bub.core.tape import TapeEntry, TapeQuery
 from bub_extism.config import ExtismSettings
 from bub_extism.plugin import ExtismPlugin
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import bub
 from bub import hookimpl, tool
 from bub import inquirer as bub_inquirer
-from bub.tools import REGISTRY
+from bub.core.tools import REGISTRY
 
 from bub_web_search import jina, ollama, searxng
 from bub_web_search.config import (
@@ -20,7 +20,7 @@ from bub_web_search.config import (
 )
 
 if TYPE_CHECKING:
-    from bub.tools import Tool
+    from bub.core.tools import Tool
 
 SEARCH_TOOL_NAME = "web.search"
 READ_TOOL_NAME = "web.read"

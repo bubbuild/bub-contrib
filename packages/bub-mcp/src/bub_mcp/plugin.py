@@ -15,7 +15,7 @@ import typer
 import bub
 from bub import hookimpl, tool
 from bub.channels import Channel, Lifecycle
-from bub.tools import Tool, ToolContext
+from bub.core.tools import Tool, ToolContext
 from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope, field_of
 from bub.turn import TurnState
@@ -24,7 +24,7 @@ from loguru import logger
 from bub_mcp.config import MCPSettings
 
 if TYPE_CHECKING:
-    from bub.builtin.agent import Agent
+    from bub.builtin.agent import BubAgent
     from bub.framework import BubFramework
 
 TOOL_PREFIX = "mcp."
@@ -160,7 +160,7 @@ class MCPChannel(Lifecycle):
         self._bootstrap_task: asyncio.Task[None] | None = None
         self._servers: dict[str, MCPServerState] = {}
         self._bindings: WeakKeyDictionary[
-            Agent, dict[str, tuple[Tool, Tool | None]]
+            BubAgent, dict[str, tuple[Tool, Tool | None]]
         ] = WeakKeyDictionary()
         self._stop_event: asyncio.Event | None = None
 
@@ -227,7 +227,7 @@ class MCPChannel(Lifecycle):
             for tool in server.tools
         }
 
-    def bind_agent(self, agent: Agent) -> None:
+    def bind_agent(self, agent: BubAgent) -> None:
         """Refresh this channel's tools on an Agent, preserving name collisions."""
         previous = self._bindings.pop(agent, {})
         tools = self.tools
@@ -245,7 +245,7 @@ class MCPChannel(Lifecycle):
 
     @staticmethod
     def _restore_tools(
-        agent: Agent, bindings: dict[str, tuple[Tool, Tool | None]]
+        agent: BubAgent, bindings: dict[str, tuple[Tool, Tool | None]]
     ) -> None:
         for name, (installed, original) in bindings.items():
             if agent.tools.get(name) is not installed:

@@ -1,4 +1,4 @@
-from bub.tools import REGISTRY
+from bub.core.tools import REGISTRY
 
 from bub_web_search import jina, searxng, tools
 from bub_web_search.config import WebSearchSettings

@@ -4,11 +4,12 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 from bub.turn import TurnResult
 
 from bub_acp_server.agent import run_acp_agent
@@ -16,7 +17,13 @@ from bub_acp_server.agent import run_acp_agent
 
 class E2EFramework:
     def get_agent_hooks(self):
+        return SimpleNamespace(subscribe=lambda events: events)
+
+    def build_tape_context(self):
         return None
+
+    def get_tape_sidecars(self):
+        return ()
 
     def get_tape_store(self):
         return None

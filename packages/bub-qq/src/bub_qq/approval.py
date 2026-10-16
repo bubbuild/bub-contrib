@@ -194,7 +194,7 @@ def comma_command_to_call(line: str) -> ToolCall:
     """
 
     from bub.builtin import tools as _builtin_tools  # noqa: F401
-    from bub.tools import REGISTRY
+    from bub.core.tools import REGISTRY
 
     from . import tools as _qq_tools  # noqa: F401
 

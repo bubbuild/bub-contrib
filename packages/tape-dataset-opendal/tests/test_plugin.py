@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from bub import hookimpl
 from bub.framework import BubFramework
-from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
+from bub.core.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
 from tape_dataset_opendal import plugin
 from typer.testing import CliRunner
 

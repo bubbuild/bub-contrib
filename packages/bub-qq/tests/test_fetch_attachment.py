@@ -8,7 +8,7 @@ import bub
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from bub.tools import ToolContext
+from bub.core.tools import ToolContext
 
 from bub_qq import tools
 from bub_qq.config import QQConfig

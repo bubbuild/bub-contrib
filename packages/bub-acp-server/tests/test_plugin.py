@@ -4,6 +4,7 @@ import asyncio
 import builtins
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -11,13 +12,14 @@ import typer
 from acp.schema import TextContentBlock
 from bub.model_selection import ModelChoice, ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
-from bub.tape import (
+from bub.core.tape import (
     AsyncTapeStoreAdapter,
     InMemoryTapeStore,
     Tape,
     TapeContext,
     TapeEntry,
     TapeQuery,
+    session_tape_name,
 )
 from bub.turn import TurnResult
 from bub_acp_server import agent as agent_module
@@ -43,7 +45,13 @@ class FakeClient:
 
 class FakeFramework:
     def get_agent_hooks(self):
+        return SimpleNamespace(subscribe=lambda events: events)
+
+    def build_tape_context(self):
         return None
+
+    def get_tape_sidecars(self):
+        return ()
 
     def __init__(self) -> None:
         self.workspace = Path.cwd()
@@ -282,9 +290,8 @@ async def test_delete_session_clears_only_its_tapes_and_persists(
     monkeypatch: pytest.MonkeyPatch,
     backend: str,
 ) -> None:
-    from types import SimpleNamespace
-    from bub.sidecars import sidecar_tape_name
-    from bub.store import FileTapeStore
+    from bub.core.sidecars import sidecar_tape_name
+    from bub.core.store import FileTapeStore
 
     store = (
         FileTapeStore(tmp_path / "tapes") if backend == "file" else InMemoryTapeStore()
@@ -306,13 +313,12 @@ async def test_delete_session_clears_only_its_tapes_and_persists(
     session = await agent.new_session(cwd=str(tmp_path))
     other = await agent.new_session(cwd=str(tmp_path))
     agent._build_inbound([], agent._sessions[session.session_id])
-    tape = Tape(tmp_path, async_store, TapeContext())
-    target = tape.session_tape(f"acp-server:{session.session_id}", tmp_path).name
+    target = session_tape_name(f"acp-server:{session.session_id}", tmp_path)
     sidecar = sidecar_tape_name(target, "notes")
     unrelated = [
-        tape.session_tape(f"acp-server:{other.session_id}", tmp_path).name,
-        tape.session_tape(f"other:{session.session_id}", tmp_path).name,
-        tape.session_tape(f"acp-server:{session.session_id}", tmp_path / "other").name,
+        session_tape_name(f"acp-server:{other.session_id}", tmp_path),
+        session_tape_name(f"other:{session.session_id}", tmp_path),
+        session_tape_name(f"acp-server:{session.session_id}", tmp_path / "other"),
     ]
     for name in [target, sidecar, *unrelated]:
         await async_store.append(
@@ -511,13 +517,7 @@ async def test_load_session_attaches_tape_history_through_streaming_router(
 
     assert response is not None
     assert framework.tape_store.queries == [
-        Tape(
-            archive_path=tmp_path,
-            store=AsyncTapeStoreAdapter(InMemoryTapeStore()),
-            context=TapeContext(),
-        )
-        .session_tape(f"acp-server:{session_id}", tmp_path)
-        .name
+        session_tape_name(f"acp-server:{session_id}", tmp_path)
     ]
     update_names = [update.session_update for _, update in client.updates]
     assert update_names == [
@@ -540,14 +540,14 @@ async def test_load_session_attaches_tape_history_through_streaming_router(
 async def test_load_session_uses_bub_tape_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
 ) -> None:
-    from bub.store import FileTapeStore
+    from bub.core.store import FileTapeStore
 
     store = (
         FileTapeStore(tmp_path / "tapes") if backend == "file" else InMemoryTapeStore()
     )
     async_store = AsyncTapeStoreAdapter(store)
-    tape = Tape(tmp_path, async_store, TapeContext()).session_tape(
-        "acp-server:history", tmp_path
+    tape = Tape(async_store, TapeContext()).scoped(
+        session_tape_name("acp-server:history", tmp_path)
     )
     await async_store.append(
         tape.name,

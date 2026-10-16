@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -36,7 +37,13 @@ class ControlledFramework:
         return None
 
     def get_agent_hooks(self):
+        return SimpleNamespace(subscribe=lambda events: events)
+
+    def build_tape_context(self):
         return None
+
+    def get_tape_sidecars(self):
+        return ()
 
     def __init__(self, inbox: ACPSteeringInbox) -> None:
         self.workspace = Path.cwd()

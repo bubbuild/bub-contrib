@@ -10,7 +10,7 @@ import aiosqlite
 import sqlite_vec
 from any_llm import AnyLLM
 from bub.errors import BubError, ErrorKind
-from bub.tape import TapeEntry, TapeQuery
+from bub.core.tape import TapeEntry, TapeQuery
 
 ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
 ALLOWED_SYNCHRONOUS_MODES = {"OFF", "NORMAL", "FULL", "EXTRA"}

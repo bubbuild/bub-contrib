@@ -546,15 +546,15 @@ def test_fixable_denial_leaves_retrying_open(config, tmp_path) -> None:
 
 
 def test_llm_audit_names_the_requested_model(config, tmp_path) -> None:
-    from bub.hooks.interception import LlmCallRequest, LlmCallResult
+    from bub.hooks.interception import LLMCallRequest, LLMCallResult
     from loguru import logger
 
     lines: list[str] = []
     sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
     try:
         plugin.after_llm_call(
-            LlmCallRequest(run_id="r", model="primary/model", messages=[]),
-            LlmCallResult(run_id="r", text="hi", duration_ms=5),
+            LLMCallRequest(run_id="r", model="primary/model", messages=[]),
+            LLMCallResult(run_id="r", text="hi", duration_ms=5),
             _state(ADMIN, tmp_path),
         )
     finally:

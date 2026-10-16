@@ -9,9 +9,9 @@ from bub import inquirer as bub_inquirer
 from bub.channels import Channel
 from bub.channels.contracts import MessageHandler
 from bub.envelope import field_of
-from bub.hooks.interception import LlmCallDecision
-from bub.hooks.interception import LlmCallRequest
-from bub.hooks.interception import LlmCallResult
+from bub.hooks.interception import LLMCallDecision
+from bub.hooks.interception import LLMCallRequest
+from bub.hooks.interception import LLMCallResult
 from bub.hooks.interception import ToolCall
 from bub.hooks.interception import ToolCallDecision
 from bub.hooks.interception import ToolCallResult
@@ -81,7 +81,7 @@ def _qq_state(state: TurnState) -> dict[str, Any] | None:
     return qq_state if isinstance(qq_state, dict) else None
 
 
-def _turn_declined_reply(qq_state: dict[str, Any], result: LlmCallResult) -> bool:
+def _turn_declined_reply(qq_state: dict[str, Any], result: LLMCallResult) -> bool:
     """Whether this LLM result ends the turn with the model declining to reply.
 
     In tool reply mode the agent loop stops at the first LLM response
@@ -206,8 +206,8 @@ def system_prompt(prompt: Any, state: TurnState) -> str | None:
 
 @hookimpl
 async def before_llm_call(
-    request: LlmCallRequest, state: TurnState
-) -> LlmCallRequest | LlmCallDecision | None:
+    request: LLMCallRequest, state: TurnState
+) -> LLMCallRequest | LLMCallDecision | None:
     del request
     qq_state = _qq_state(state)
     if qq_state is None:
@@ -234,7 +234,7 @@ async def before_llm_call(
         # Tool mode drops direct output, so the finish text below would
         # never reach the chat; send the notice ourselves.
         await _notify_rate_limited(qq_state, config, key)
-    return LlmCallDecision.finish(config.llm_rate_limit_notice)
+    return LLMCallDecision.finish(config.llm_rate_limit_notice)
 
 
 async def _notify_rate_limited(
@@ -377,7 +377,7 @@ async def _guarded_web_fetch(call: ToolCall) -> ToolCallDecision:
 
 @hookimpl
 def after_llm_call(
-    request: LlmCallRequest, result: LlmCallResult, state: TurnState
+    request: LLMCallRequest, result: LLMCallResult, state: TurnState
 ) -> None:
     qq_state = _qq_state(state)
     if qq_state is None:

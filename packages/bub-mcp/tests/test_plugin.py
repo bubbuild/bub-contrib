@@ -4,9 +4,9 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from bub.builtin.agent import Agent
+from bub.builtin.agent import BubAgent
 from bub.framework import BubFramework
-from bub.tools import REGISTRY
+from bub.core.tools import REGISTRY
 from bub_mcp import plugin
 
 
@@ -494,7 +494,7 @@ async def test_late_discovery_reaches_existing_agent_and_stop_restores_tools(
     framework.plugin_manager.register(mcp_plugin, name="mcp")
     builtin = framework.plugin_manager.get_plugin("builtin")
     agent = builtin._get_agent()
-    unrelated = Agent(framework)
+    unrelated = BubAgent(framework)
     original_registry = REGISTRY.copy()
     original = plugin.Tool(name="mcp.weather_get_forecast", handler=lambda: "original")
     agent.tools[original.name] = original
@@ -533,7 +533,7 @@ async def test_mcp_binds_explicit_runtime_agent_without_changing_default(
     framework = BubFramework(config_file=tmp_path / "config.yml")
     framework.load_builtin_hooks()
     default = framework.plugin_manager.get_plugin("builtin")._get_agent()
-    embedded = Agent(framework, tools=[])
+    embedded = BubAgent(framework, tools=[])
     channel = plugin.MCPChannel()
     remote = plugin.Tool(name="mcp.embedded", handler=lambda: "ok")
     channel._servers["embedded"] = plugin.MCPServerState(tools=[remote], connected=True)

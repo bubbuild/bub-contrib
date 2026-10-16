@@ -85,7 +85,7 @@ def _write_runtime_files(
 async def _exercise_channels(
     framework: Any, channels: dict[str, Any], mcp_enabled: bool
 ) -> dict[str, Any]:
-    from bub.tools import REGISTRY
+    from bub.core.tools import REGISTRY
 
     baseline = channels["mcp.lifecycle"]
     plugin_channel = channels.get("agent-plugins.mcp")

@@ -45,7 +45,7 @@ def command_prefix() -> str:
 def strip_command(text: str) -> str | None:
     """The command without Bub's prefix, or None when ``text`` is not one."""
 
-    from bub.builtin.commands import strip_command_prefix
+    from bub.core.commands import strip_command_prefix
 
     return strip_command_prefix(text, command_prefix())
 

@@ -27,6 +27,7 @@ members = [
     "bub-mcp",
     "bub-mcp-server",
     "bub-qq",
+    "bub-sandbox-env",
     "bub-schedule",
     "bub-session-prompt",
     "bub-slack",
@@ -541,6 +542,7 @@ dependencies = [
     { name = "bub-mcp" },
     { name = "bub-mcp-server" },
     { name = "bub-qq" },
+    { name = "bub-sandbox-env" },
     { name = "bub-schedule" },
     { name = "bub-session-prompt" },
     { name = "bub-slack" },
@@ -585,6 +587,7 @@ requires-dist = [
     { name = "bub-mcp", editable = "packages/bub-mcp" },
     { name = "bub-mcp-server", editable = "packages/bub-mcp-server" },
     { name = "bub-qq", editable = "packages/bub-qq" },
+    { name = "bub-sandbox-env", editable = "packages/bub-sandbox-env" },
     { name = "bub-schedule", editable = "packages/bub-schedule" },
     { name = "bub-session-prompt", editable = "packages/bub-session-prompt" },
     { name = "bub-slack", editable = "packages/bub-slack" },
@@ -893,6 +896,25 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "cryptography", specifier = ">=45.0.0" },
+    { name = "loguru" },
+    { name = "pydantic" },
+    { name = "pydantic-settings", specifier = ">=2.10.1" },
+]
+
+[[package]]
+name = "bub-sandbox-env"
+version = "0.1.0"
+source = { editable = "packages/bub-sandbox-env" }
+dependencies = [
+    { name = "bub" },
+    { name = "loguru" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bub", git = "https://github.com/bubbuild/bub.git" },
     { name = "loguru" },
     { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },

@@ -425,7 +425,7 @@ class DockerEnvironment(Environment):
         call_tool: CallTool,
         write: Callable[[str], None],
     ) -> None:
-        from bub.builtin.codemode.code_runner import run_code_in_subprocess
+        from bub.core.codemode.runner import run_code_in_subprocess
 
         await run_code_in_subprocess(
             self, code, tools=tools, call_tool=call_tool, write=write

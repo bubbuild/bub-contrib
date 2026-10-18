@@ -20,7 +20,7 @@ from functools import cache
 from pathlib import Path
 
 import bub
-from bub.builtin.environment import LocalEnvironment, LocalProcess
+from bub.environment import LocalEnvironment, LocalProcess
 from loguru import logger
 
 from .config import SandboxEnvConfig

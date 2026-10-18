@@ -4,15 +4,11 @@ import base64
 
 import pytest
 import republic
+from bub.core.codemode.republic_bridge import decode_value, encode_value
 from bub.environment import CodeFailed
 from bub_monty_env import MontyEnvironment
 from bub_monty_env.republic_module import STREAM_UNSUPPORTED, rewrite_republic_imports
 from bub_monty_env.runner import UNSUPPORTED_HINT
-
-try:
-    from bub.core.codemode.republic_bridge import decode_value, encode_value
-except ImportError:  # Bub before code mode moved into bub.core
-    from bub.builtin.codemode.republic_bridge import decode_value, encode_value
 
 
 @pytest.fixture

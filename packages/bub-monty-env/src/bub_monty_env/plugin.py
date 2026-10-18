@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING
 
 import bub
 from bub import hookimpl
-from bub.builtin.environment import LocalEnvironment
-from bub.environment import Environment
+from bub.environment import Environment, LocalEnvironment
 from loguru import logger
 
 from .config import MontyEnvConfig

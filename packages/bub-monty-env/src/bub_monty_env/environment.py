@@ -20,8 +20,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bub.builtin.environment import LocalEnvironment
-from bub.environment import Environment, Process
+from bub.environment import Environment, LocalEnvironment, Process
 from pydantic_monty import AsyncMonty
 
 from .runner import EnvironmentFiles, MontyOptions, run_code_in_monty

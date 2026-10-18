@@ -5,8 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
-from bub.builtin.environment import LocalEnvironment
-from bub.environment import CodeFailed, Environment
+from bub.environment import CodeFailed, Environment, LocalEnvironment
 from bub_monty_env import (
     MontyCodeMixin,
     MontyEnvironment,

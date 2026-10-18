@@ -6,6 +6,7 @@
 
 - `tools.<name>(...)` 仍然经过 Bub 的工具执行器和 hooks，与默认实现一致；`asyncio.gather` 会并发执行。
 - 文件访问（`pathlib.Path.read_text` / `write_text`）走执行环境的 `read_text` / `write_text`，代码看到的文件和 `fs.*` 一致。
+- 和默认实现一样可以用 `republic` 模块：模型调用会回到 Bub，由 Bub 用自己的凭据和配置执行。见 [`republic` 模块](#republic-模块)。
 - 代码不能启动进程、打开 socket、读取宿主的环境变量，也不能 import 第三方包。
 - 每次运行的启动开销是微秒级，不需要启动 Python 进程。
 
@@ -15,9 +16,29 @@ English documentation: [README.md](./README.md)
 
 ## Python 子集
 
-Monty 只支持 Python 的一个子集。模型写的胶水代码常用的写法都能跑：函数、闭包、推导式、f-string、`try`/`except`、简单类和 `@dataclass`、`async`/`await` 加 `asyncio.gather`，以及 `json`、`re`、`datetime`、`collections`、`itertools`、`math`、`pathlib` 的大部分功能。不支持类继承、`match`、生成器（`yield`）、`del`、方法装饰器（`@property`）和任何第三方包。代码因语法不支持而失败时，错误信息会告诉模型代码运行在 Monty 里，让它改写。详见 Monty 的 [limitations](https://pydantic.dev/docs/monty/limitations/)。
+Monty 只支持 Python 的一个子集。模型写的胶水代码常用的写法都能跑：函数、闭包、推导式、f-string、`try`/`except`、简单类和 `@dataclass`、`async`/`await` 加 `asyncio.gather`，以及 `json`、`re`、`datetime`、`collections`、`itertools`、`math`、`pathlib` 的大部分功能。不支持类继承、`match`、生成器（`yield`）、`async with`、`async for`、`del`、方法装饰器（`@property`）和任何第三方包。代码因语法不支持而失败时，错误信息会告诉模型代码运行在 Monty 里，让它改写。详见 Monty 的 [limitations](https://pydantic.dev/docs/monty/limitations/)。
 
 适合 code mode 代码主要是串联工具的场景；如果模型需要 `pandas`、`numpy` 等包，请保留默认实现。
+
+## `republic` 模块
+
+Bub 的默认实现会给 code mode 代码提供一个 `republic` 模块，用来处理媒体和调用模型；本插件在 Monty 里提供同样的模块。模型调用以 `republic.<operation>` 的形式经由 `run_code` 的 `call_tool` 交给 Bub，Republic 值编码为带 `"$republic"` 键的 JSON 对象，协议与默认实现相同，所以 Bub 侧无需改动，代码也接触不到 provider 凭据。
+
+```python
+from republic import Image, get_model, user
+
+model = get_model()  # 当前会话使用的模型；也可以 get_model("provider:model")
+chart = Image("image/png", url="https://example.com/chart.png")
+reply = await model.chat([user("Describe this chart.", chart)])
+print(reply.text, reply.token_usage.total_tokens)
+```
+
+可用的内容：`Image` / `Audio` / `Video`、`Message`、`system` / `user` / `assistant`、`get_model(spec=None).chat(...)`、`get_embedding_model(spec).embed(...)` / `embed_many(...)`、`get_decision_model(spec).decide(...)` 以及 `republic.decisions.Noul` / `Choice` / `Score`。`tools.*` 参数和结果里的媒体同样以 Republic 值传递。
+
+受 Monty 限制，与默认实现有以下不同：
+
+- `republic` 是预设的全局变量。Monty 无法 import 它没有内置的模块，所以插件会在运行前把 `import republic` 和 `from republic[.decisions] import ...` 改写成从这个全局变量赋值，行号保持不变。
+- 不支持流式输出：`model.stream(...)` 需要 `async with` 和 `async for`，Monty 不支持。请用 `await model.chat(...)` 拿完整响应，使用模型时也不要写 `async with`。
 
 ## 配置
 
@@ -68,3 +89,4 @@ class MyMontyEnvironment(MontyCodeMixin, MyEnvironment):
 - 不支持 `open()`，读写文件请用 `pathlib.Path`。`Path.exists`、`iterdir`、`mkdir` 等其他文件操作不可用。
 - Monty 还很新，部分行为与 CPython 不同，以官方 limitations 文档为准。
 - 工具结果以 JSON 兼容的数据传入沙箱，与默认实现一致。
+- 不支持 `Path.read_bytes`，文件里的媒体需要从别处拿到 `data=`，或者用 `tools.attach_image(image="<path>")` 让 Bub 读取。

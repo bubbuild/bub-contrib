@@ -6,6 +6,7 @@ Monty suspends the code at every call that leaves the sandbox and hands it to Bu
 
 - `tools.<name>(...)` calls still go through Bub's tool executor and hooks, as with the default runner; `asyncio.gather` runs them concurrently.
 - File access (`pathlib.Path.read_text` / `write_text`) goes through the environment's `read_text` / `write_text`, so the code sees the same files as `fs.*`.
+- The `republic` module is available, as with the default runner: its models call back into Bub, which runs them with its own credentials and settings. See [The `republic` module](#the-republic-module).
 - The code cannot start processes, open sockets, read the host's environment variables or import third-party packages.
 - Starting a run takes microseconds instead of a Python process start.
 
@@ -15,9 +16,29 @@ Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
 
 ## Python subset
 
-Monty runs a subset of Python. Code that model-written glue usually needs works: functions, closures, comprehensions, f-strings, `try`/`except`, simple classes and `@dataclass`, `async`/`await` with `asyncio.gather`, and much of `json`, `re`, `datetime`, `collections`, `itertools`, `math`, `pathlib`. It rejects class inheritance, `match`, generators (`yield`), `del`, method decorators (`@property`) and every third-party package. When code fails on unsupported syntax, the error tells the model it runs in Monty so it can rewrite the code. See Monty's [limitations](https://pydantic.dev/docs/monty/limitations/).
+Monty runs a subset of Python. Code that model-written glue usually needs works: functions, closures, comprehensions, f-strings, `try`/`except`, simple classes and `@dataclass`, `async`/`await` with `asyncio.gather`, and much of `json`, `re`, `datetime`, `collections`, `itertools`, `math`, `pathlib`. It rejects class inheritance, `match`, generators (`yield`), `async with`, `async for`, `del`, method decorators (`@property`) and every third-party package. When code fails on unsupported syntax, the error tells the model it runs in Monty so it can rewrite the code. See Monty's [limitations](https://pydantic.dev/docs/monty/limitations/).
 
 Use it when code-mode code is glue between tools; keep the default runner when the model needs `pandas`, `numpy` or other packages.
+
+## The `republic` module
+
+Bub's default runner gives code-mode code a `republic` module for media and model calls; this plugin provides the same module in Monty. Its model calls reach Bub as `republic.<operation>` calls on `run_code`'s `call_tool`, with Republic values as `{"$republic": ...}` JSON objects, the same protocol as the default runner, so Bub serves them unchanged and the code never sees provider credentials.
+
+```python
+from republic import Image, get_model, user
+
+model = get_model()  # the model running this session; or get_model("provider:model")
+chart = Image("image/png", url="https://example.com/chart.png")
+reply = await model.chat([user("Describe this chart.", chart)])
+print(reply.text, reply.token_usage.total_tokens)
+```
+
+Available: `Image` / `Audio` / `Video`, `Message`, `system` / `user` / `assistant`, `get_model(spec=None).chat(...)`, `get_embedding_model(spec).embed(...)` / `embed_many(...)`, `get_decision_model(spec).decide(...)` with `republic.decisions.Noul` / `Choice` / `Score`. Media in `tools.*` arguments and results crosses as Republic values too.
+
+Differences from the default runner, which come from Monty:
+
+- `republic` is a preset global. Monty cannot import modules it does not ship, so before running the code the plugin rewrites `import republic` and `from republic[.decisions] import ...` into assignments from that global, keeping line numbers.
+- No streaming: `model.stream(...)` needs `async with` and `async for`, which Monty does not support. Use `await model.chat(...)` for the whole response, and use models without `async with`.
 
 ## Configuration
 
@@ -69,3 +90,4 @@ Lower-level pieces: `run_code_in_monty(pool, code, ...)` implements `Environment
 - `open()` is not supported; the code reads and writes files with `pathlib.Path`. `Path.exists`, `iterdir`, `mkdir` and other file operations are not available.
 - Monty is young; behavior may differ from CPython in places the limitations page lists.
 - Tool results cross into the sandbox as JSON-compatible data, as with the default runner.
+- `Path.read_bytes` is not available, so media from files needs `data=` from elsewhere, or `tools.attach_image(image="<path>")` to let Bub load it.

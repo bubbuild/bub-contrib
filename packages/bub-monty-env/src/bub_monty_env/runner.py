@@ -1,10 +1,10 @@
 """Implement ``Environment.run_code`` with Monty, a sandboxed Python subset interpreter.
 
 Monty runs the code in a worker process and suspends it at every call that leaves the
-sandbox: ``tools.<name>(...)`` and file access. Bub answers each suspension on the host
-and resumes the code, so tool calls go through Bub's tool executor and hooks, as with
-the subprocess runner, and file access goes through the environment's ``read_text`` and
-``write_text``. Concurrent calls (``asyncio.gather``) are served concurrently.
+sandbox: ``tools.<name>(...)``, ``republic`` models and file access. Bub answers each
+suspension on the host and resumes the code, so tool calls go through Bub's tool executor
+and hooks, as with the subprocess runner, and file access goes through the environment's
+``read_text`` and ``write_text``. Concurrent calls (``asyncio.gather``) are served concurrently.
 """
 
 from __future__ import annotations
@@ -28,6 +28,14 @@ from pydantic_monty import (
     ResourceLimits,
 )
 
+from .republic_module import (
+    from_json,
+    republic_module,
+    rewrite_republic_imports,
+    to_json,
+    to_sandbox,
+)
+
 if TYPE_CHECKING:
     from bub.environment import CallTool, Environment
     from pydantic_monty import OsHandler
@@ -37,7 +45,9 @@ type Filesystem = Literal["read-write", "read-only", "none"]
 SCRIPT_NAME = "run_code.py"
 UNSUPPORTED_HINT = (
     "run_code runs in Monty, a sandboxed subset of Python: no class inheritance, `match`,"
-    " generators, `del`, method decorators or third-party packages. Rewrite the code without them."
+    " generators, `async with`, `async for`, `del`, method decorators or third-party packages."
+    " Rewrite the code without them; use republic models without `async with`, and"
+    " `await model.chat(...)` instead of `model.stream(...)`."
 )
 
 
@@ -77,8 +87,10 @@ class _Tools(ClassInstance):
         return self._call(name, kwargs)
 
     async def _call(self, name: str, arguments: dict[str, Any]) -> Any:
-        # Results cross into the sandbox as plain data, as in the subprocess runner.
-        return to_jsonable_python(await self._call_tool(name, arguments))
+        # Results cross into the sandbox as plain data and republic values, as in the
+        # subprocess runner.
+        result = await self._call_tool(name, to_json(arguments))
+        return to_sandbox(from_json(to_jsonable_python(result)))
 
 
 class EnvironmentFiles:
@@ -149,11 +161,13 @@ async def run_code_in_monty(
 
     if cwd is not None and not posixpath.isabs(cwd):
         cwd = None
+    republic, republic_functions = republic_module(call_tool)
     async with pool.checkout(script_name=SCRIPT_NAME, limits=options.limits) as session:
         try:
             snapshot = await session.feed_start(
-                code,
-                inputs={"tools": _Tools(tools, call_tool)},
+                rewrite_republic_imports(code),
+                inputs={"tools": _Tools(tools, call_tool), "republic": republic},
+                external_lookup=republic_functions,
                 print_callback=on_print,
                 os=os,
                 cwd=cwd,

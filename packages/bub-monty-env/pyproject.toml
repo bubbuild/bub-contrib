@@ -1,0 +1,24 @@
+[project]
+name = "bub-monty-env"
+version = "0.1.0"
+description = "Run Bub's code-mode run_code in Monty, a sandboxed Python interpreter, on top of any Bub environment"
+readme = "README.md"
+authors = [
+    { name = "Frost Ming", email = "me@frostming.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    # provide_environment and Environment.run_code exist from Bub 0.5.
+    "bub>=0.5.0",
+    "loguru",
+    "pydantic",
+    "pydantic-monty>=1.1.0",
+    "pydantic-settings>=2.10.1",
+]
+
+[project.entry-points.bub]
+monty-env = "bub_monty_env.plugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"

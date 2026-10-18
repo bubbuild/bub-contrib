@@ -21,6 +21,7 @@ dependencies = [
     "bub-kimi",
     "bub-mcp",
     "bub-mcp-server",
+    "bub-monty-env",
     "bub-qq",
     "bub-sandbox-env",
     "bub-schedule",
@@ -57,6 +58,7 @@ bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }
 bub-mcp = { workspace = true }
 bub-mcp-server = { workspace = true }
+bub-monty-env = { workspace = true }
 bub-qq = { workspace = true }
 bub-sandbox-env = { workspace = true }
 bub-schedule = { workspace = true }

@@ -85,11 +85,8 @@ jobs:
           head: ${{ github.event.pull_request.head.sha || inputs.head || '' }}
           checked-revision: ${{ github.sha }}
           instruction: >-
-            Native checks: Tests=${{ needs.tests.result }} (uv run --frozen --group test pytest).
-            Documentation is Markdown in README.md and packages/*/README.md; there is no documentation build job.
-            Publication is separate through Publish Request and Release; tests do not establish PyPI publication.
-            Ignore the Landing review job when assessing native check completion.
-            Review affected user-visible behavior against repository guidance. Reuse these check results and relevant review history; investigate unresolved questions and publish useful findings or a brief clean verdict.
+            Native Tests=${{ needs.tests.result }} (uv run --frozen --group test pytest); ignore Landing feedback for acceptance.
+            Review changed behavior and Markdown against repository guidance, reusing check results and review threads.
       - name: Report unsuccessful feedback
         if: ${{ !cancelled() && steps.landing.outcome == 'failure' }}
         run: echo "::warning::Landing feedback failed. Inspect the task artifact; native checks determine acceptance."

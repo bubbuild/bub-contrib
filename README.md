@@ -92,4 +92,10 @@ If you are submitting a plugin, please be prepared to maintain it or help find a
 
 This repository is licensed under [LICENSE](./LICENSE).
 
-Maintainers can configure [Landing reviews and duty automation](.github/landing.md).
+## Landing automation
+
+Landing reviews PRs, handles `/landing` commands, triages native failures, and maintains dependencies.
+It uses the shared `LANDING_MODEL`, `LANDING_API_KEY`, `LANDING_API_BASE`, and `LANDING_COMPLETION_ARGS` configuration.
+Candidate CI: `gh workflow run ci.yml --ref BRANCH -f number=PR -f head=SHA`; Tests remains authoritative.
+Dependabot alerts need an external `repository_dispatch` relay (`dependabot_alert`, integer `client_payload.alert_number`); no receiver is installed.
+The Action reads current alert state: open routes to bump, closed to reconciliation triage. Duty uses `github.token` with `vulnerability-alerts: read`.

@@ -91,3 +91,5 @@ If you are submitting a plugin, please be prepared to maintain it or help find a
 ## License
 
 This repository is licensed under [LICENSE](./LICENSE).
+
+Maintainers can configure [Landing reviews and duty automation](.github/landing.md).

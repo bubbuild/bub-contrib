@@ -27,10 +27,12 @@ publishing identity; `LANDING_ADMISSION_TOKEN` can supply permission lookup acce
 and `LANDING_GIT_EMAIL` to that identity for commits. Separately supplied tokens
 must be scoped by their owner; workflow permissions only limit `github.token`.
 
-Scheduled/manual dependency work reads Dependabot alerts. Alert access needs a
-separately provisioned token with Dependabot alerts read permission; there is no
-`vulnerability-alerts` Actions permission. If configured for Dependabot-triggered
-runs, provide the necessary model/publication secrets as Dependabot secrets too.
+Scheduled/manual dependency work reads Dependabot alerts using `github.token`
+with the duty workflow's `vulnerability-alerts: read` permission; no additional
+token is required. See [GitHub's permissions reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions).
+If overriding `LANDING_GITHUB_TOKEN`, that credential must also permit reading
+Dependabot alerts. If configured for Dependabot-triggered runs, provide the
+necessary model/publication secrets as Dependabot secrets too.
 
 ## Review and delegate
 

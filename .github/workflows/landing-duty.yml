@@ -114,11 +114,13 @@ jobs:
             renovate[bot]
             ${{ env.LANDING_PUBLISHING_ACTOR }}
             ${{ vars.LANDING_DEPENDENCY_UPDATE_ACTORS }}
+          # The Action resolves relayed alert state: open -> bump, closed -> triage.
           command: bump
           checked-revision: ''
           delivery-key: ${{ github.event_name != 'workflow_run' && format('duty:{0}', github.run_id) || '' }}
           instruction: >-
             Maintain this repository's dependencies, scoped to the supplied candidate or alert when present.
+            For a closed alert routed to triage, reconcile existing tracking issues using current API evidence; do not start dependency edits.
             Use fresh isolated candidate checkouts and run uv run --frozen --group test pytest after edits.
             Do not bump package release versions or publish to PyPI; maintainers use the existing publish-request process.
             Use uv for Python runtime and development dependencies; follow project version policy and preserve pinning style.

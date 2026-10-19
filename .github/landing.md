@@ -79,8 +79,17 @@ check. GitHub supports explicit dispatch with `GITHUB_TOKEN`; ordinary token pus
 do not trigger push workflows, and token-created PR runs may require approval.
 See [GitHub's trigger contract](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
-A `repository_dispatch` with type `dependabot_alert` needs an external authenticated
-receiver forwarding `client_payload.alert_number`. This change installs no receiver.
+Dependabot alerts arrive only through an external `repository_dispatch` relay;
+`dependabot_alert` is not a native Actions trigger. The receiver must verify the
+original webhook signature and forward a positive integer
+`client_payload.alert_number` using dispatch type `dependabot_alert`. This change
+installs no receiver, so it does not enable real-time alert delivery.
+
+Landing fetches the alert's current API state rather than trusting a relayed state.
+Open alerts route to bump; closed alerts intentionally route to triage to reconcile
+existing tracking issues, even though the workflow step specifies `command: bump`.
+For closed alerts, record useful changed conditions or verified resolution without
+starting dependency edits; unchanged conditions can complete quietly.
 
 ## Native failure and publication evidence
 

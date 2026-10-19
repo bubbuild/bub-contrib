@@ -28,6 +28,11 @@ class E2EFramework:
     def get_tape_store(self):
         return None
 
+    def get_tools(self):
+        from bub.builtin import tools
+
+        return tools.TOOLS
+
     def __init__(self) -> None:
         self.workspace = Path(os.environ["BUB_ACP_E2E_WORKSPACE"]).resolve()
         self._channel_router: Any = None

@@ -31,19 +31,12 @@ from .inbound.interaction import extract_claw_cfg_update
 from .admins import AdminRegistry
 from .approval import PendingApproval
 from .approval import begin_approval_click
-from .approval import ApprovalOutcome
 from .approval import attach_approval_outcomes
-from .approval import comma_command_to_call
-from .approval import record_outcome
 from .approval import complete_approval_click
-from .approval import consume_token
 from .approval import parse_approval_button
-from .approval import request_approval
 from .approval import send_notice
 from .guard import Requester
-from .guard import evaluate
 from .guard import is_admin
-from .netguard import web_fetch_for_call
 from .inbound.interaction import parse_interaction_event
 from .outbound.c2c import QQC2CSendService
 from .outbound.group import QQGroupSendService
@@ -76,7 +69,6 @@ _MSG_TOGGLE_EVENTS: dict[str, tuple[str, str, bool]] = {
 
 
 ERROR_NOTICE = "处理这条消息时出错了，请稍后再试。"
-_COMMAND_OUTPUT_LIMIT = 2000
 
 
 class QQChannel(Channel):
@@ -280,10 +272,6 @@ class QQChannel(Channel):
             message.content, requester, channel_message
         ):
             return
-        if channel_message.kind == "command" and not await self._admit_command(
-            channel_message
-        ):
-            return
         await self._on_receive(attach_approval_outcomes(channel_message))
 
     async def _handle_group_message(self, payload: dict[str, Any]) -> None:
@@ -311,10 +299,6 @@ class QQChannel(Channel):
             channel_message,
         ):
             return
-        if channel_message.kind == "command" and not await self._admit_command(
-            channel_message
-        ):
-            return
         await self._on_receive(attach_approval_outcomes(channel_message))
 
     @property
@@ -324,67 +308,8 @@ class QQChannel(Channel):
     def _is_admin(self, requester: Requester) -> bool:
         return is_admin(self._config, requester)
 
-    async def _admit_command(self, message: ChannelMessage) -> bool:
-        """Run a comma command past the Guard; True when Bub may execute it.
-
-        Bub executes comma commands without tool hooks, so this is the only
-        place their Guard check can happen.
-        """
-
-        qq_context = message.context.get(QQ_CONTEXT_KEY)
-        if not isinstance(qq_context, dict):
-            return False
-        requester = Requester.from_state(qq_context)
-        try:
-            call = comma_command_to_call(message.content)
-        except ValueError:
-            await send_notice(message.session_id, message.chat_id, "命令为空。")
-            return False
-        decision = evaluate(
-            call,
-            requester,
-            config=self._config,
-            workspace=self._workspace,
-            protected=(resolve_state_path(self._config),),
-        )
-        if decision.action == "approval":
-            if consume_token(message.session_id, requester, call):
-                return True
-            reply = await request_approval(
-                call,
-                requester,
-                config=self._config,
-                session_id=message.session_id,
-                requester_name=str(qq_context.get("sender_name") or "").strip(),
-                command_line=message.content,
-            )
-            if reply.startswith("Not run"):
-                await send_notice(message.session_id, message.chat_id, reply)
-            return False
-        if decision.allowed and decision.resource == "fetch":
-            # Bub would run its own web.fetch (redirects to any address);
-            # answer the command with the guarded fetch instead.
-            ok, text = await web_fetch_for_call(call.arguments)
-            if len(text) > _COMMAND_OUTPUT_LIMIT:
-                text = text[:_COMMAND_OUTPUT_LIMIT] + "…"
-            await send_notice(message.session_id, message.chat_id, text)
-            return False
-        if decision.allowed:
-            return True
-        logger.warning(
-            "qq.command.denied session_id={} requester={} tool={} reason={}",
-            message.session_id,
-            requester.identity,
-            call.tool,
-            decision.reason,
-        )
-        await send_notice(
-            message.session_id, message.chat_id, f"命令未执行：{decision.reason}"
-        )
-        return False
-
     async def dispatch_approved_command(self, pending: PendingApproval) -> None:
-        """Re-submit an approved comma command; the Guard consumes its token."""
+        """Re-submit an approved comma command; the Guard consumes its token when it runs."""
 
         qq_context = {
             "scope": pending.requester.scope,
@@ -406,13 +331,7 @@ class QQChannel(Channel):
             is_active=True,
             context={QQ_CONTEXT_KEY: qq_context},
         )
-        if await self._admit_command(message):
-            await self._on_receive(message)
-        else:
-            record_outcome(
-                pending.session_id,
-                ApprovalOutcome(id=pending.id, command=pending.preview, status="refused"),
-            )
+        await self._on_receive(message)
 
     async def _handle_interaction(self, payload: dict[str, Any]) -> None:
         event = parse_interaction_event(payload)

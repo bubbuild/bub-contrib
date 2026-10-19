@@ -26,6 +26,7 @@ from acp.schema import (
     TextContentBlock,
     WaitForTerminalExitResponse,
 )
+from bub.builtin import tools as builtin_tools
 from bub.model_selection import ModelOptions
 from bub.framework import BubFramework
 from bub import configure
@@ -41,7 +42,7 @@ from bub.core.tape import (
     TapeEntry,
     session_tape_name,
 )
-from bub.core.tools import REGISTRY, ToolContext
+from bub.core.tools import ToolContext
 from bub.turn import TurnResult
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
@@ -61,6 +62,9 @@ def isolated_acp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(configure._config_data, "acp-server", {})
 
 
+BUILTIN_TOOLS = {tool.name: tool for tool in builtin_tools.TOOLS}
+
+
 class HTTPFramework:
     def get_agent_hooks(self):
         return SimpleNamespace(subscribe=lambda events: events)
@@ -71,8 +75,12 @@ class HTTPFramework:
     def get_tape_sidecars(self):
         return ()
 
+    def get_tools(self):
+        return tuple(self.tools.values())
+
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
+        self.tools = dict(BUILTIN_TOOLS)
         self.router: Any = None
         self.inbox = ACPSteeringInbox()
 
@@ -113,7 +121,7 @@ class HTTPFramework:
             tools = (
                 inbound._runtime_agent.tools
                 if hasattr(inbound, "_runtime_agent")
-                else REGISTRY
+                else self.tools
             )
             output = await tools["bash"].run(
                 command=inbound.content,
@@ -281,9 +289,7 @@ async def test_http_connections_keep_tools_and_streams_isolated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool
 ) -> None:
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
-    original_bash = REGISTRY["bash"]
+    original_bash = BUILTIN_TOOLS["bash"]
     first, second = HTTPClient("first"), HTTPClient("second")
     second.release_command.set()
     async with http_server(tmp_path, tls=tls) as url:
@@ -364,7 +370,7 @@ async def test_http_connections_keep_tools_and_streams_isolated(
                 first.release_command.set()
                 await one.close()
                 await two.close()
-    assert REGISTRY["bash"] is original_bash
+    assert BUILTIN_TOOLS["bash"] is original_bash
     assert len(json.loads((tmp_path / "home" / "acp-sessions.json").read_text())) == 2
 
 
@@ -375,8 +381,6 @@ async def test_http_load_persisted_session_on_fresh_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool, history_size: int
 ) -> None:
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     # Persist metadata before starting the HTTP server; its fresh agent must
     # restore the session without a session/new request on this connection.
     session = await BubACPAgent(HTTPFramework(tmp_path)).new_session(cwd=str(tmp_path))
@@ -441,8 +445,6 @@ async def test_http_load_failure_can_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     framework = HTTPFramework(tmp_path)
 
     def fail_store():
@@ -493,8 +495,6 @@ async def test_websocket_load_and_tool_callbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool
 ) -> None:
     from acp.ws import client as ws_client
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     framework = HTTPFramework(tmp_path)
     store = AsyncTapeStoreAdapter(InMemoryTapeStore())
@@ -583,8 +583,6 @@ async def test_websocket_load_and_tool_callbacks(
 @pytest.fixture
 def http_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Capture the SDK factory to test Bub's state without network scheduling."""
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     factories = []
 
@@ -674,7 +672,7 @@ async def test_http_shutdown_cancels_background_steering(
     agent.on_connect(client)
     await agent.initialize(1, ClientCapabilities(terminal=True))
     session = await agent.new_session(cwd=str(tmp_path))
-    original_bash = REGISTRY["bash"]
+    original_bash = BUILTIN_TOOLS["bash"]
     tasks = []
     try:
         async with asyncio.timeout(2):
@@ -687,7 +685,7 @@ async def test_http_shutdown_cancels_background_steering(
             await app({"type": "lifespan"}, None, None)
             assert all(task.cancelled() for task in tasks)
             assert not agent._background_tasks
-            assert REGISTRY["bash"] is original_bash
+            assert BUILTIN_TOOLS["bash"] is original_bash
     finally:
         for task in tasks:
             task.cancel()
@@ -931,8 +929,6 @@ def test_http_settings_reject_invalid_values(values) -> None:
 async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool
 ) -> None:
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     local_calls = []
 
@@ -940,8 +936,7 @@ async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
         local_calls.append(kwargs)
         return "local output"
 
-    original_bash = replace(REGISTRY["bash"], handler=local_bash)
-    monkeypatch.setitem(REGISTRY, "bash", original_bash)
+    original_bash = replace(BUILTIN_TOOLS["bash"], handler=local_bash)
 
     class OtherChannel(Channel):
         name = "other"
@@ -960,6 +955,7 @@ async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
 
     other_text = []
     framework = HTTPFramework(tmp_path)
+    framework.tools["bash"] = original_bash
     channel = ACPHTTPChannel(framework)
     framework.get_channels = lambda handler: {
         channel.name: channel,
@@ -1075,7 +1071,7 @@ async def test_gateway_serves_http_without_cross_channel_tool_or_stream_leaks(
                     if update.session_update == "agent_message_chunk"
                 ] == ["remote output"]
                 assert framework.router is manager
-                assert REGISTRY["bash"] is original_bash
+                assert framework.tools["bash"] is original_bash
                 await connection.close()
                 connection = None
     finally:

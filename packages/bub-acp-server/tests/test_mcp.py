@@ -19,7 +19,6 @@ from acp.schema import (
 )
 from bub.builtin.agent import BubAgent
 from bub.framework import BubFramework
-from bub.core.tools import REGISTRY
 from bub_mcp import plugin as mcp_plugin
 
 from bub_acp_server.agent import BubACPAgent
@@ -172,7 +171,7 @@ async def test_capabilities_and_session_tool_isolation(framework, clients, tmp_p
     agent = make_agent(framework)
     caps = (await agent.initialize(1)).agent_capabilities.mcp_capabilities
     assert caps.http is True and caps.sse is True
-    original = REGISTRY.copy()
+    original = framework.get_tools()
     ordinary = BubAgent(framework)
     first = await agent.new_session(cwd=str(tmp_path), mcp_servers=[stdio("first")])
     second = await agent.new_session(cwd=str(tmp_path), mcp_servers=[stdio("second")])
@@ -184,7 +183,7 @@ async def test_capabilities_and_session_tool_isolation(framework, clients, tmp_p
         assert len(clients[1].calls) == 1
         assert "mcp.shared_echo" not in await runtime_tools(agent, empty.session_id)
         assert "mcp.shared_echo" not in ordinary.tools
-        assert REGISTRY == original
+        assert framework.get_tools() == original
         await agent.close_session(first.session_id)
         assert clients[0].closed and not clients[1].closed
         await call_echo(agent, second.session_id)

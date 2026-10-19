@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 from collections.abc import Mapping
 from copy import deepcopy
@@ -482,6 +483,11 @@ class MCPPlugin:
         return {"mcp": self._manager}
 
     @hookimpl
+    def provide_tools(self) -> list[Tool]:
+        # Remote MCP tools are bound to the agent as servers connect.
+        return [_mcp_list_tool()]
+
+    @hookimpl
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
         del message_handler
         return [self._manager]
@@ -527,7 +533,12 @@ def _render_server_list(result: MCPServerList) -> str:
     return "\n".join(lines)
 
 
-@tool(name="mcp", context=True, renderer=_render_server_list)
+@functools.cache
+def _mcp_list_tool() -> Tool:
+    # Built on first use, so modules importing this one create no tools.
+    return tool(name="mcp", context=True, renderer=_render_server_list)(mcp_list)
+
+
 def mcp_list(*, context: ToolContext) -> MCPServerList:
     """List configured MCP servers."""
     manager = context.state.get("mcp")

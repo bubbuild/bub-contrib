@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 import bub
 from bub import hookimpl, tool
 from bub import inquirer as bub_inquirer
-from bub.core.tools import REGISTRY
 
 from bub_web_search import jina, ollama, searxng
 from bub_web_search.config import (
@@ -165,28 +164,32 @@ def _onboard_searxng(current: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def register_tools(
+@hookimpl
+def provide_tools() -> list[Tool]:
+    return list(build_tools().values())
+
+
+def build_tools(
     settings_factory: Callable[[], WebSearchSettings] = lambda: bub.ensure_config(
         WebSearchSettings
     ),
-) -> Tool | None:
-    """Register one platform per capability; no match means no tool."""
-    REGISTRY.pop(SEARCH_TOOL_NAME, None)
-    REGISTRY.pop(READ_TOOL_NAME, None)
-
+) -> dict[str, Tool]:
+    """Build one platform's tool per capability, by name; no match means no tool."""
     settings = settings_factory()
-    search_tool: Tool | None = None
-    if registrar := SEARCH_REGISTRARS.get(settings.resolved_provider):
-        search_tool = registrar(settings)
-    # Readers have no selector field: each registrar guards on its own
+    built: dict[str, Tool] = {}
+    if builder := SEARCH_BUILDERS.get(settings.resolved_provider):
+        if search_tool := builder(settings):
+            built[search_tool.name] = search_tool
+    # Readers have no selector field: each builder guards on its own
     # platform configuration, and the first configured one wins.
-    for reader_registrar in READER_REGISTRARS.values():
-        if reader_registrar(settings):
+    for reader_builder in READER_BUILDERS.values():
+        if read_tool := reader_builder(settings):
+            built[read_tool.name] = read_tool
             break
-    return search_tool
+    return built
 
 
-def _register_ollama_tool(settings: WebSearchSettings) -> Tool | None:
+def _build_ollama_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.ollama_api_key:
         return None
 
@@ -202,7 +205,7 @@ def _register_ollama_tool(settings: WebSearchSettings) -> Tool | None:
     return web_search_ollama
 
 
-def _register_jina_search_tool(settings: WebSearchSettings) -> Tool | None:
+def _build_jina_search_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.jina_api_key:
         return None
 
@@ -214,7 +217,7 @@ def _register_jina_search_tool(settings: WebSearchSettings) -> Tool | None:
     return web_search_jina
 
 
-def _register_jina_read_tool(settings: WebSearchSettings) -> Tool | None:
+def _build_jina_read_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.jina_api_key:
         return None
 
@@ -226,7 +229,7 @@ def _register_jina_read_tool(settings: WebSearchSettings) -> Tool | None:
     return web_read_jina
 
 
-def _register_searxng_tool(settings: WebSearchSettings) -> Tool | None:
+def _build_searxng_tool(settings: WebSearchSettings) -> Tool | None:
     if settings.resolved_searxng_base_url is None:
         return None
 
@@ -244,18 +247,16 @@ def _register_searxng_tool(settings: WebSearchSettings) -> Tool | None:
     return searxng_search
 
 
-# To add a platform, implement a registrar above and list it here. The
+# To add a platform, implement a builder above and list it here. The
 # capability tables below are the single source of truth for both tool
-# registration and onboarding choices.
-SEARCH_REGISTRARS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = {
-    "ollama": _register_ollama_tool,
-    "searxng": _register_searxng_tool,
-    "jina": _register_jina_search_tool,
+# building and onboarding choices.
+SEARCH_BUILDERS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = {
+    "ollama": _build_ollama_tool,
+    "searxng": _build_searxng_tool,
+    "jina": _build_jina_search_tool,
 }
-READER_REGISTRARS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = {
-    "jina": _register_jina_read_tool,
+READER_BUILDERS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = {
+    "jina": _build_jina_read_tool,
 }
-PROVIDERS = [name for name in SEARCH_REGISTRARS if name]
+PROVIDERS = [name for name in SEARCH_BUILDERS if name]
 
-
-register_tools()

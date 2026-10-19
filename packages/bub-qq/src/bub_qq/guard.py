@@ -1,10 +1,10 @@
 """Guard: the single checkpoint every QQ-initiated action passes through.
 
-Model tool calls (``before_tool_call``), comma commands (intercepted by the
-channel before Bub sees them, because Bub runs commands without hooks) and
-approved executions all call :func:`evaluate`. It decides from two things
-only: who is asking (:class:`Requester`, trusted when listed as an admin)
-and which resource the call touches (:func:`classify`).
+Model tool calls and comma commands (both through ``before_tool_call``;
+Bub runs a command's tool with the tool hooks) and approved executions all
+call :func:`evaluate`. It decides from two things only: who is asking
+(:class:`Requester`, trusted when listed as an admin) and which resource
+the call touches (:func:`classify`).
 
 Trust never comes from QQ group roles: the deployer is not necessarily the
 group owner, so owners and admins of a group are ordinary members unless

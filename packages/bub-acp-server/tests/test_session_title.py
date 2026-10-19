@@ -43,6 +43,11 @@ class FakeFramework:
     def get_tape_sidecars(self):
         return ()
 
+    def get_tools(self):
+        from bub.builtin import tools
+
+        return tools.TOOLS
+
     def __init__(self) -> None:
         self.workspace = Path.cwd()
         self.messages: list[Any] = []

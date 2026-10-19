@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import bub
 import pytest
 from bub import configure
 from bub.channels.message import ChannelMessage
+from bub.core.tools import ToolContext
+from bub.errors import BubError
 from bub.hooks.interception import ToolCall
 
 from bub_qq import approval
@@ -31,6 +35,8 @@ from bub_qq.security import QQ_STATE_KEY
 ADMIN = Requester(scope="group", sender_id="admin-m", group_openid="group-1")
 MEMBER = Requester(scope="group", sender_id="member-m", group_openid="group-1")
 SESSION = "qq:group:group-1"
+# The agent running the turn; an approved call runs as a command with its tools.
+AGENT = SimpleNamespace(tools={})
 
 
 class FakeChannel:
@@ -74,7 +80,13 @@ def _state(requester: Requester, workspace: Path, role: str = "member") -> dict:
         },
         "session_id": SESSION,
         "_runtime_workspace": str(workspace),
+        "_runtime_agent": AGENT,
     }
+
+
+@pytest.fixture(autouse=True)
+def _agent(agent_tools, monkeypatch):
+    monkeypatch.setattr(AGENT, "tools", agent_tools)
 
 
 @pytest.fixture(autouse=True)
@@ -240,7 +252,7 @@ def test_model_call_is_approved_as_its_command_line(config, tmp_path) -> None:
     # The card shows the command itself, and the token matches the call
     # Bub's command path makes from that line.
     assert pending.preview == "ls -la && echo `whoami`"
-    assert comma_command_to_call(pending.command_line).arguments == pending.arguments
+    assert comma_command_to_call(pending.command_line, AGENT.tools).arguments == pending.arguments
 
 
 def test_model_call_command_line_keeps_scalar_arguments(config) -> None:
@@ -391,28 +403,47 @@ def _click(approval_id: str, operator: str, decision: str = "allow") -> dict:
     }
 
 
+async def _bub_runs(channel, message: ChannelMessage):
+    """Run a forwarded comma command's Guard check the way Bub's command path does."""
+
+    state = {
+        **plugin.load_state(message, message.session_id),
+        "session_id": message.session_id,
+        "_runtime_workspace": str(channel._workspace),
+        "_runtime_agent": AGENT,
+    }
+    call = comma_command_to_call(message.content, AGENT.tools)
+    call = replace(call, context=ToolContext(tape=None, state=state, command=True))
+    return await plugin.before_tool_call(call, state), state
+
+
 def test_group_shell_command_waits_for_admin_tap(channel_env) -> None:
     channel, received, sent = channel_env
 
     async def _run() -> None:
         await channel._handle_transport_payload(_group_command(",ls -la"))
-        assert received == []
+        assert [(m.content, m.kind) for m in received] == [(",ls -la", "command")]
+        decision, _ = await _bub_runs(channel, received[0])
+        assert decision.action == "replace" and "审批" in decision.result
         assert len(sent) == 1 and "ls -la" in sent[0].content
         pending = _only_pending()
 
         # A group owner who is not a configured admin cannot approve.
         await channel._handle_transport_payload(_click(pending.id, "owner-m"))
         assert channel._openapi.acks[-1]["code"] == approval.ACK_NO_PERMISSION
-        assert received == []
+        assert len(received) == 1
 
         await channel._handle_transport_payload(_click(pending.id, "admin-m"))
         assert channel._openapi.acks[-1]["code"] == approval.ACK_OK
-        assert [m.content for m in received] == [",ls -la"]
-        assert received[0].kind == "command"
+        assert [(m.content, m.kind) for m in received[1:]] == [(",bash command='ls -la'", "command")]
+        decision, _ = await _bub_runs(channel, received[1])
+        assert decision is None
 
         # Replaying the approved command needs a fresh approval.
         await channel.dispatch_approved_command(pending)
-        assert len(received) == 1
+        decision, _ = await _bub_runs(channel, received[2])
+        assert decision.action == "deny"
+        assert not approval._pending
 
     asyncio.run(_run())
 
@@ -431,11 +462,13 @@ def test_protected_and_plain_commands(channel_env) -> None:
 
     async def _run() -> None:
         await channel._handle_transport_payload(_group_command(",fs.read .env", message_id="a"))
-        assert received == []
-        assert "命令未执行" in sent[-1].content
+        decision, _ = await _bub_runs(channel, received[-1])
+        assert decision.action == "deny" and "命令未执行" in decision.message
 
         await channel._handle_transport_payload(_group_command(",qq.version", message_id="b"))
-        assert [m.content for m in received] == [",qq.version"]
+        decision, _ = await _bub_runs(channel, received[-1])
+        assert decision is None
+        assert sent == []
 
     asyncio.run(_run())
 
@@ -457,7 +490,8 @@ def test_c2c_admin_shell_command_asks_in_private_chat(channel_env) -> None:
             }
         )
     )
-    assert received == []
+    decision, _ = asyncio.run(_bub_runs(channel, received[0]))
+    assert decision.action == "replace"
     assert len(sent) == 1 and sent[0].chat_id == "c2c:u-admin"
     assert _only_pending().requester == Requester(scope="c2c", sender_id="u-admin")
 
@@ -469,9 +503,9 @@ def test_admin_web_fetch_command_uses_the_guarded_fetcher(channel_env) -> None:
             _group_command(",web.fetch http://169.254.169.254/latest/meta-data", message_id="f")
         )
     )
-    # Not handed to Bub (whose web.fetch follows redirects anywhere).
-    assert received == []
-    assert "web.fetch refused" in sent[-1].content
+    # Bub's own web.fetch follows redirects anywhere; the guarded fetcher answers.
+    decision, _ = asyncio.run(_bub_runs(channel, received[0]))
+    assert decision.action == "deny" and "web.fetch refused" in decision.message
 
 
 def _model_bash_in_group(channel, command: str) -> approval.PendingApproval:
@@ -485,6 +519,7 @@ def _model_bash_in_group(channel, command: str) -> approval.PendingApproval:
         },
         "session_id": "qq:group:group-1",
         "_runtime_workspace": str(channel._workspace),
+        "_runtime_agent": AGENT,
     }
     asyncio.run(
         plugin.before_tool_call(
@@ -504,9 +539,12 @@ def test_approved_model_call_runs_as_a_session_command(channel_env) -> None:
     assert [(m.content, m.kind, m.session_id) for m in received] == [
         (",bash command='df -h'", "command", "qq:group:group-1")
     ]
+    decision, _ = asyncio.run(_bub_runs(channel, received[0]))
+    assert decision is None
     # Replaying it needs a fresh approval.
     asyncio.run(channel.dispatch_approved_command(pending))
-    assert len(received) == 1
+    decision, _ = asyncio.run(_bub_runs(channel, received[1]))
+    assert decision.action == "deny"
 
 
 def test_approved_model_call_rechecks_the_guard(channel_env, monkeypatch) -> None:
@@ -517,8 +555,8 @@ def test_approved_model_call_rechecks_the_guard(channel_env, monkeypatch) -> Non
 
     asyncio.run(channel._handle_transport_payload(_click(pending.id, "admin-m")))
 
-    assert received == []
-    assert any("命令未执行" in m.content for m in sent)
+    decision, _ = asyncio.run(_bub_runs(channel, received[-1]))
+    assert decision.action == "deny" and "命令未执行" in decision.message
 
 
 # --- what the model is told -------------------------------------------------
@@ -608,6 +646,9 @@ def test_denied_and_refused_approvals_are_reported(channel_env, monkeypatch) -> 
     refused = _model_bash_in_group(channel, "df -h")
     monkeypatch.setattr(channel._config, "group_shell", "deny")
     asyncio.run(channel._handle_transport_payload(_click(refused.id, "admin-m")))
+    command = received[-1]
+    _, state = asyncio.run(_bub_runs(channel, command))
+    plugin.save_state(command.session_id, state, command, "")
 
     asyncio.run(channel._handle_transport_payload(_group_command("然后呢", message_id="n1")))
     assert [(r["id"], r["status"]) for r in _results(received[-1])] == [
@@ -883,3 +924,29 @@ def test_other_channels_are_left_alone(config, tmp_path) -> None:
                  _unattributed("cli:default", tmp_path)) is None
     assert _hook(ToolCall(run_id="r", tool="bash", arguments={"command": "id"}),
                  _unattributed("qqx:group:g", tmp_path)) is None
+
+
+# --- Bub's own command path ----------------------------------------------------
+
+
+def _run_command(agent, prompt: str, state: dict) -> list:
+    async def _run() -> list:
+        events = await agent.run_stream(session_id=SESSION, prompt=prompt, state=state)
+        return [event async for event in events]
+
+    return asyncio.run(_run())
+
+
+def test_bub_runs_comma_commands_past_the_guard(config, tmp_path) -> None:
+    from bub.framework import BubFramework
+
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    framework.plugin_manager.register(plugin, name="qq")
+    agent = framework.plugin_manager.get_plugin("builtin")._get_agent()
+    (tmp_path / ".env").write_text("SECRET=1", encoding="utf-8")
+    state = {**_state(ADMIN, tmp_path), "_runtime_agent": agent}
+
+    with pytest.raises(BubError, match="命令未执行") as raised:
+        _run_command(agent, ",fs.read .env", state)
+    assert "SECRET=1" not in str(raised.value)

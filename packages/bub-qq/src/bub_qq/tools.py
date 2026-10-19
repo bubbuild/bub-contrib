@@ -251,3 +251,6 @@ def qq_version() -> str:
         return f"bub-qq {package_version('bub-qq')}"
     except PackageNotFoundError:
         return "bub-qq (version unknown: package metadata not found)"
+
+
+TOOLS = [qq_send, qq_fetch_attachment, qq_version]

@@ -23,7 +23,7 @@ Plugin entry point: `qq` → `bub_qq.plugin`. Supports **single-chat (C2C)** and
 
 ## Prerequisites
 
-1. [Install Bub](https://bub.build/docs/getting-started/install/) 0.5.1 or later (recommended: `uv tool install bub`). On an older Bub the plugin does not load and the log says why. Newer minor releases and development builds load with a `qq.bub.untested` / `qq.bub.prerelease` warning: tools a newer Bub adds stay admin-only until bub-qq knows them
+1. [Install Bub](https://bub.build/docs/getting-started/install/) 0.6.0 or later (recommended: `uv tool install bub`). On an older Bub the plugin does not load and the log says why. Newer minor releases and development builds load with a `qq.bub.untested` / `qq.bub.prerelease` warning: tools a newer Bub adds stay admin-only until bub-qq knows them
 2. Run `bub onboard` and ensure model access works (`bub chat` or `bub run`)
 3. Create a QQ bot on the [QQ Open Platform](https://bot.q.qq.com/wiki/develop/api-v2/) and obtain `APPID` / `SECRET`
 
@@ -217,7 +217,7 @@ Notes for `tool` mode:
 
 ## Security
 
-Every action a chat can trigger passes one checkpoint, the **Guard**: model tool calls (`before_tool_call`), comma commands (checked by the channel before Bub runs them, because Bub executes commands without hooks), and approved executions. It decides from who is asking and which resource the call touches. Anyone who can message the bot can steer the model, so model tool calls are treated as coming from the sender.
+Every action a chat can trigger passes one checkpoint, the **Guard**: model tool calls and comma commands (both in `before_tool_call`, since Bub runs a command's tool with the tool hooks), and approved executions. It decides from who is asking and which resource the call touches. Anyone who can message the bot can steer the model, so model tool calls are treated as coming from the sender.
 
 **Who is trusted.** Only admins: identities in `admin_users` plus those registered with `,qq.claim`. When Bub merges several messages into one turn (it debounces bursts), the turn counts as an admin's only if every sender in it is an admin, so a member's request cannot ride on an admin's message sent right after it. A turn that reaches a QQ session without a QQ sender (a scheduled job, another plugin) is checked as an unknown member, never as an admin, even in a private chat (log: `qq.security.unattributed_turn`). QQ group owner/admin roles grant nothing, because whoever deploys the bot is not necessarily the group owner. The same person has a different openid in C2C and in each group, so identities are scoped (`c2c:<user_openid>`, `group:<group_openid>:<member_openid>`).
 

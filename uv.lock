@@ -374,8 +374,8 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.6.0a3"
-source = { git = "https://github.com/bubbuild/bub.git?branch=dev#4c630d65a0be5376eeec0a57df51acb7d95db1ff" }
+version = "0.6.0a4.dev1+g225a39898"
+source = { git = "https://github.com/bubbuild/bub.git?branch=dev#225a398982a7e6def62cad091819e38fab7215b1" }
 dependencies = [
     { name = "loguru" },
     { name = "pydantic" },

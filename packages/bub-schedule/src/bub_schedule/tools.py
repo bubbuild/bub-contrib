@@ -182,3 +182,6 @@ async def schedule_trigger(job_id: str, context: ToolContext) -> ScheduledJob:
         return _scheduled_job(job)
     except JobLookupError as exc:
         raise RuntimeError(f"job not found: {job_id}") from exc
+
+
+TOOLS = [schedule_add, schedule_remove, schedule_list, schedule_trigger]

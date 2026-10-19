@@ -1,5 +1,3 @@
-from bub.core.tools import REGISTRY
-
 from bub_web_search import jina, searxng, tools
 from bub_web_search.config import WebSearchSettings
 
@@ -166,35 +164,32 @@ def test_onboard_config_collects_reader_with_other_provider(monkeypatch) -> None
     }
 
 
-def teardown_function() -> None:
-    REGISTRY.pop(tools.SEARCH_TOOL_NAME, None)
-    REGISTRY.pop(tools.READ_TOOL_NAME, None)
-
-
-def test_register_tools_skips_unconfigured_provider() -> None:
-    tool_instance = tools.register_tools(lambda: WebSearchSettings())
+def test_build_tools_skips_unconfigured_provider() -> None:
+    built = tools.build_tools(lambda: WebSearchSettings())
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is None
-    assert tools.SEARCH_TOOL_NAME not in REGISTRY
+    assert tools.SEARCH_TOOL_NAME not in built
 
 
-def test_register_tools_skips_provider_with_missing_configuration() -> None:
-    tool_instance = tools.register_tools(lambda: WebSearchSettings(provider="searxng"))
+def test_build_tools_skips_provider_with_missing_configuration() -> None:
+    built = tools.build_tools(lambda: WebSearchSettings(provider="searxng"))
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is None
-    assert tools.SEARCH_TOOL_NAME not in REGISTRY
+    assert tools.SEARCH_TOOL_NAME not in built
 
 
-def test_register_tools_enables_ollama_tool() -> None:
-    tool_instance = tools.register_tools(
+def test_build_tools_enables_ollama_tool() -> None:
+    built = tools.build_tools(
         lambda: WebSearchSettings(
             provider="ollama",
             ollama_api_key="secret",
         )
     )
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is not None
-    assert REGISTRY[tools.SEARCH_TOOL_NAME] is tool_instance
     assert (
         tool_instance.description
         == "Search the web with Ollama and return concise results."
@@ -204,16 +199,16 @@ def test_register_tools_enables_ollama_tool() -> None:
     assert tool_instance.output_schema["title"] == "OllamaSearchResult"
 
 
-def test_register_tools_enables_searxng_tool() -> None:
-    tool_instance = tools.register_tools(
+def test_build_tools_enables_searxng_tool() -> None:
+    built = tools.build_tools(
         lambda: WebSearchSettings(
             provider="searxng",
             searxng_base_url="https://search.example.com",
         )
     )
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is not None
-    assert REGISTRY[tools.SEARCH_TOOL_NAME] is tool_instance
     assert tool_instance.description == (
         "Search a configured SearXNG instance and return concise web results."
     )
@@ -246,9 +241,10 @@ async def test_searxng_tool_returns_structured_result_and_renders(
         }
 
     monkeypatch.setattr(searxng, "search", fake_search)
-    tool_instance = tools.register_tools(
+    built = tools.build_tools(
         lambda: WebSearchSettings(searxng_base_url="https://search.example.com")
     )
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
     assert tool_instance is not None
 
     result = await tool_instance.run(query="bub", max_results=3)
@@ -265,8 +261,8 @@ async def test_jina_read_tool_returns_structured_result_and_renders(
         return f"content of {endpoint}"
 
     monkeypatch.setattr(jina, "_request", fake_request)
-    tools.register_tools(lambda: WebSearchSettings(jina_api_key="secret"))
-    read_tool = REGISTRY[tools.READ_TOOL_NAME]
+    built = tools.build_tools(lambda: WebSearchSettings(jina_api_key="secret"))
+    read_tool = built[tools.READ_TOOL_NAME]
     assert read_tool.output_schema is not None
 
     result = await read_tool.run(url=" https://example.com ")
@@ -279,74 +275,86 @@ async def test_jina_read_tool_returns_structured_result_and_renders(
     assert read_tool.render({"url": "https://example.com", "content": ""}) == "none"
 
 
-def test_register_tools_enables_jina_tools() -> None:
-    tool_instance = tools.register_tools(
+def test_build_tools_enables_jina_tools() -> None:
+    built = tools.build_tools(
         lambda: WebSearchSettings(
             provider="jina",
             jina_api_key="secret",
         )
     )
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is not None
-    assert REGISTRY[tools.SEARCH_TOOL_NAME] is tool_instance
     assert (
         tool_instance.description
         == "Search the web with Jina Search and return SERP results."
     )
     assert tool_instance.output_schema is not None
-    assert tools.READ_TOOL_NAME in REGISTRY
+    assert tools.READ_TOOL_NAME in built
 
 
-def test_register_tools_registers_read_tool_alongside_other_provider() -> None:
-    tool_instance = tools.register_tools(
+def test_build_tools_builds_read_tool_alongside_other_provider() -> None:
+    built = tools.build_tools(
         lambda: WebSearchSettings(
             provider="searxng",
             searxng_base_url="https://search.example.com",
             jina_api_key="secret",
         )
     )
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is not None
     assert "categories" in tool_instance.parameters["properties"]
-    assert tools.READ_TOOL_NAME in REGISTRY
+    assert tools.READ_TOOL_NAME in built
 
 
-def test_register_tools_skips_read_tool_without_jina_key() -> None:
-    tools.register_tools(
+def test_build_tools_skips_read_tool_without_jina_key() -> None:
+    built = tools.build_tools(
         lambda: WebSearchSettings(
             provider="ollama",
             ollama_api_key="secret",
         )
     )
 
-    assert tools.READ_TOOL_NAME not in REGISTRY
+    assert tools.READ_TOOL_NAME not in built
 
 
-def test_register_tools_infers_jina_provider() -> None:
-    tool_instance = tools.register_tools(
+def test_build_tools_infers_jina_provider() -> None:
+    built = tools.build_tools(
         lambda: WebSearchSettings(jina_api_key="secret")
     )
+    tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is not None
-    assert REGISTRY[tools.SEARCH_TOOL_NAME] is tool_instance
-    assert tools.READ_TOOL_NAME in REGISTRY
+    assert tools.READ_TOOL_NAME in built
 
 
-def test_register_tools_infers_provider_from_configuration() -> None:
-    ollama_tool = tools.register_tools(
+def test_build_tools_infers_provider_from_configuration() -> None:
+    ollama_tool = tools.build_tools(
         lambda: WebSearchSettings(
             ollama_api_key="secret",
         )
-    )
+    ).get(tools.SEARCH_TOOL_NAME)
 
-    searxng_tool = tools.register_tools(
+    searxng_tool = tools.build_tools(
         lambda: WebSearchSettings(
             searxng_base_url="https://search.example.com",
         )
-    )
+    ).get(tools.SEARCH_TOOL_NAME)
 
     assert ollama_tool is not None
     assert "categories" not in ollama_tool.parameters["properties"]
     assert searxng_tool is not None
     assert "categories" in searxng_tool.parameters["properties"]
-    assert REGISTRY[tools.SEARCH_TOOL_NAME] is searxng_tool
+
+
+def test_provide_tools_builds_from_the_configured_settings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools.bub,
+        "ensure_config",
+        lambda cls: WebSearchSettings(provider="jina", jina_api_key="secret"),
+    )
+
+    provided = {tool.name for tool in tools.provide_tools()}
+
+    assert provided == {tools.SEARCH_TOOL_NAME, tools.READ_TOOL_NAME}

@@ -13,3 +13,17 @@ def _default_command_prefix(monkeypatch):
     # override it.
     for module in (security, approval, admins):
         monkeypatch.setattr(module, "command_prefix", lambda: ",")
+
+
+@pytest.fixture(scope="session")
+def agent_tools() -> dict:
+    """The tools Bub's agent gets from the builtin hooks and this plugin."""
+
+    from bub.framework import BubFramework
+
+    from bub_qq import plugin
+
+    framework = BubFramework()
+    framework.load_builtin_hooks()
+    framework.plugin_manager.register(plugin, name="qq")
+    return {tool.name: tool for tool in framework.get_tools()}

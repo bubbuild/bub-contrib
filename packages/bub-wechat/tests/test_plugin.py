@@ -27,3 +27,7 @@ def test_wechat_tool_returns_structured_result(monkeypatch) -> None:
     assert plugin.wechat_send.render(result) == "Message sent to wechat."
     assert plugin.wechat_send.output_schema is not None
     assert channel.sent == [("user-1", OutgoingMessage(text="hello"))]
+
+
+def test_plugin_provides_the_wechat_tool() -> None:
+    assert plugin.WechatPlugin.provide_tools(None) == [plugin.wechat_send]

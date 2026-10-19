@@ -4,7 +4,7 @@ import typer
 from bub import BubFramework, hookimpl, tool
 from bub.builtin.auth import app as auth_app
 from bub.channels import Channel
-from bub.core.tools import ToolContext
+from bub.core.tools import Tool, ToolContext
 from bub.channels.contracts import MessageHandler
 
 from bub_wechat.channel import OutgoingMessage, WeChatChannel, get_token_path
@@ -47,6 +47,10 @@ async def wechat_send(
 class WechatPlugin:
     def __init__(self, framework: BubFramework) -> None:
         self.framework = framework
+
+    @hookimpl
+    def provide_tools(self) -> list[Tool]:
+        return [wechat_send]
 
     @hookimpl
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:

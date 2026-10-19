@@ -11,11 +11,15 @@ from acp.schema import (
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
-from bub.core.tools import REGISTRY, ToolContext
+from bub.builtin import tools as builtin_tools
+from bub.core.tools import ToolContext
 from bub.streaming import StreamEvent
 
 from bub_acp_server.agent import ACPStreamRouter
 from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
+
+
+BUILTIN_TOOLS = {tool.name: tool for tool in builtin_tools.TOOLS}
 
 
 class FakeClient:
@@ -100,13 +104,11 @@ class FakeTape:
 
 @pytest.mark.asyncio
 async def test_replaces_file_tools_with_acp_client_calls(tmp_path: Path) -> None:
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     client = FakeClient()
     context = _context(tmp_path)
-    originals = {name: REGISTRY[name] for name in ("fs.read", "fs.write")}
+    originals = {name: BUILTIN_TOOLS[name] for name in ("fs.read", "fs.write")}
 
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
     assert client_tools["fs.read"] is not originals["fs.read"]
     assert client_tools["fs.write"] is not originals["fs.write"]
     assert client_tools["fs.read"].parameters == originals["fs.read"].parameters
@@ -118,8 +120,8 @@ async def test_replaces_file_tools_with_acp_client_calls(tmp_path: Path) -> None
         path="result.txt", content="done", context=context
     )
 
-    assert REGISTRY["fs.read"] is originals["fs.read"]
-    assert REGISTRY["fs.write"] is originals["fs.write"]
+    assert BUILTIN_TOOLS["fs.read"] is originals["fs.read"]
+    assert BUILTIN_TOOLS["fs.write"] is originals["fs.write"]
     assert read_result == "line two"
     assert write_result == f"wrote: {tmp_path / 'result.txt'}"
     assert client.read_requests == [
@@ -146,9 +148,9 @@ async def test_replaces_file_edit_with_acp_read_and_write_calls(
     client = FakeClient()
     client.read_content = "before\nold value\nafter\n"
     context = _context(tmp_path)
-    original = REGISTRY["fs.edit"]
+    original = BUILTIN_TOOLS["fs.edit"]
 
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
     assert client_tools["fs.edit"] is not original
     assert client_tools["fs.edit"].parameters == original.parameters
     result = await client_tools["fs.edit"].run(
@@ -159,7 +161,7 @@ async def test_replaces_file_edit_with_acp_read_and_write_calls(
         context=context,
     )
 
-    assert REGISTRY["fs.edit"] is original
+    assert BUILTIN_TOOLS["fs.edit"] is original
     assert result == f"edited: {tmp_path / 'notes.txt'}"
     assert client.read_requests == [
         {
@@ -184,7 +186,7 @@ async def test_edit_preserves_missing_trailing_newline(tmp_path: Path) -> None:
     client.read_content = "before\nold value\nafter"
     context = _context(tmp_path)
 
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
     await client_tools["fs.edit"].run(
         path="notes.txt",
         old="old",
@@ -206,19 +208,17 @@ async def test_edit_preserves_missing_trailing_newline(tmp_path: Path) -> None:
 async def test_replaces_bash_with_acp_terminal_calls(
     tmp_path: Path,
 ) -> None:
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     client = FakeClient()
     context = _context(tmp_path)
     observed_terminals: list[tuple[str, str, str]] = []
-    original = REGISTRY["bash"]
+    original = BUILTIN_TOOLS["bash"]
     runtime = _runtime(client)
 
     async def observe_terminal(session_id: str, command: str, terminal_id: str) -> None:
         observed_terminals.append((session_id, command, terminal_id))
 
     runtime.set_terminal_observer(observe_terminal)
-    client_tools = REGISTRY | build_client_tools(runtime)
+    client_tools = BUILTIN_TOOLS | build_client_tools(runtime)
     assert client_tools["bash"] is not original
     parameters = client_tools["bash"].parameters
     assert set(parameters["properties"]) == {
@@ -231,7 +231,7 @@ async def test_replaces_bash_with_acp_terminal_calls(
     assert parameters["required"] == ["command"]
     result = await client_tools["bash"].run(command="pwd", context=context)
 
-    assert REGISTRY["bash"] is original
+    assert BUILTIN_TOOLS["bash"] is original
     assert result == "hello"
     assert observed_terminals == [("session-1", "pwd", "terminal-1")]
     assert client.create_requests == [
@@ -310,7 +310,7 @@ async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
     client = FakeClient()
     context = _context(tmp_path)
 
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
     started = await client_tools["bash"].run(
         command="sleep 10", background=True, context=context
     )
@@ -332,8 +332,6 @@ async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
 async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
     tmp_path: Path,
 ) -> None:
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     client = FakeClient()
     tape = FakeTape()
     context = ToolContext(
@@ -343,9 +341,9 @@ async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
             "_runtime_workspace": str(tmp_path),
         },
     )
-    original = REGISTRY["tape.handoff"]
+    original = BUILTIN_TOOLS["tape.handoff"]
 
-    client_tools = REGISTRY | build_client_tools(_runtime(client))
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
     assert client_tools["tape.handoff"] is original
     result = await client_tools["tape.handoff"].run(
         name="phase-1",
@@ -353,7 +351,7 @@ async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
         context=context,
     )
 
-    assert REGISTRY["tape.handoff"] is original
+    assert BUILTIN_TOOLS["tape.handoff"] is original
     assert result == {"anchor": "phase-1"}
     assert client_tools["tape.handoff"].render(result) == "anchor added: phase-1"
     assert tape.handoffs == [("phase-1", {"summary": "Implementation complete"})]
@@ -376,7 +374,7 @@ async def test_initialize_selects_client_tools_by_capability(
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     framework = BubFramework(config_file=tmp_path / "config.yml")
     framework.load_builtin_hooks()
-    originals = REGISTRY.copy()
+    originals = {tool.name: tool for tool in framework.get_tools()}
     server = BubACPAgent(framework)
     server.on_connect(cast(Any, FakeClient()))
     await server.initialize(
@@ -400,7 +398,7 @@ async def test_initialize_selects_client_tools_by_capability(
         assert (selected[name] is not originals[name]) == client_backed, name
         # Client-backed overrides stay model-facing in code mode like the builtins.
         assert selected[name].exposure == originals[name].exposure, name
-    assert REGISTRY == originals
+    assert {tool.name: tool for tool in framework.get_tools()} == originals
 
 
 @pytest.mark.parametrize(
@@ -416,12 +414,10 @@ def test_missing_capabilities_adds_no_client_tools(capabilities) -> None:
 async def test_missing_capabilities_keeps_local_filesystem_working(
     tmp_path: Path,
 ) -> None:
-    from bub.builtin import tools as builtin_tools  # noqa: F401
-
     client = FakeClient()
     runtime = ACPClientToolRuntime()
     runtime.connect(cast(Any, client))
-    selected = REGISTRY | build_client_tools(runtime)
+    selected = BUILTIN_TOOLS | build_client_tools(runtime)
     context = _context(tmp_path)
     target = tmp_path / "notes.txt"
     await selected["fs.write"].run(
@@ -457,7 +453,7 @@ async def test_real_agents_keep_acp_tools_connection_local(
     # Force the default BubAgent to snapshot tools before either ACP connection exists.
     default = framework.plugin_manager.get_plugin("builtin")._get_agent()
     original_tools = default.tools.copy()
-    original_registry = REGISTRY.copy()
+    framework_tools = {tool.name: tool for tool in framework.get_tools()}
     first_client, second_client = FakeClient(), FakeClient()
     first_client.read_content = "first connection"
     second_client.read_content = "second connection"
@@ -479,12 +475,14 @@ async def test_real_agents_keep_acp_tools_connection_local(
         assert state["_runtime_agent"] is server._runtime_agents[session_id]
         assert (
             server._runtime_agents[session_id].tools["fs.read"]
-            is not original_registry["fs.read"]
+            is not framework_tools["fs.read"]
         )
-        assert REGISTRY == original_registry
+        assert {
+            tool.name: tool for tool in framework.get_tools()
+        } == framework_tools
         assert default.tools == original_tools
         # Even an BubAgent created during an ACP connection gets only default tools.
-        assert BubAgent(framework).tools["fs.read"] is original_registry["fs.read"]
+        assert BubAgent(framework).tools["fs.read"] is framework_tools["fs.read"]
 
     assert len(first_client.read_requests) == 2
     assert len(second_client.read_requests) == 1

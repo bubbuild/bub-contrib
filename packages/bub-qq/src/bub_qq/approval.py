@@ -5,11 +5,12 @@ showing the full call and remembers it → an admin taps a button →
 :func:`begin_approval_click` checks the operator is an admin → on "allow"
 :func:`complete_approval_click` issues a one-time token and hands the call
 back to Bub as a comma command in the original session, so it runs in that
-session's execution environment and lands on its tape. A model tool call is
-first rewritten as the equivalent command line (:func:`call_to_command_line`).
-Running re-enters the Guard, which accepts the token only for the exact
-session, requester, tool and arguments that were shown on the card. There
-is no always-allow: every shell command is confirmed on its own.
+session's execution environment and lands on its tape. The call is first
+rewritten as the equivalent command line (:func:`call_to_command_line`).
+Bub runs commands through ``before_tool_call``, so running re-enters the
+Guard, which accepts the token only for the exact session, requester, tool
+and arguments that were shown on the card. There is no always-allow: every
+shell command is confirmed on its own.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import re
 import shlex
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -38,6 +39,8 @@ from .security import strip_command
 from .session import BoundedDict
 
 if TYPE_CHECKING:
+    from bub.core.tools import Tool
+
     from .config import QQConfig
 
 APPROVAL_TTL_SECONDS = 240.0
@@ -184,45 +187,28 @@ def consume_token(session_id: str, requester: Requester, call: ToolCall) -> bool
     return expires_at is not None and _clock() <= expires_at
 
 
-def comma_command_to_call(line: str) -> ToolCall:
-    """Map a comma command to exactly the call Bub's ``_run_command`` makes.
+def comma_command_to_call(line: str, tools: Mapping[str, Tool]) -> ToolCall:
+    """Map a comma command to exactly the call Bub's ``Agent.run_command`` makes.
 
-    Bub looks the first word up in ``REGISTRY`` as typed (no aliasing) and
-    runs anything else as ``bash`` with the whole line. Positional words
-    are bound to the tool's parameters in order, so the Guard sees e.g.
-    ``,fs.read .env`` as ``fs.read(path=".env")``.
+    ``tools`` are the tools of the agent that runs the command. Bub looks the
+    first word up in them as typed (no aliasing) and runs anything else as
+    ``bash`` with the whole line. Positional words are bound to the tool's
+    parameters in order, so the Guard sees e.g. ``,fs.read .env`` as
+    ``fs.read(path=".env")``.
     """
 
-    from bub.builtin import tools as _builtin_tools  # noqa: F401
-    from bub.core.tools import REGISTRY
-
-    from . import tools as _qq_tools  # noqa: F401
+    from bub.core.commands import parse_command, parse_command_args
 
     body = strip_command(line)
     if body is None:
         body = line.strip()
     if not body:
         raise ValueError("empty command")
-    try:
-        words = shlex.split(body)
-    except ValueError:
-        # Bub cannot parse it either; treat it as the shell line it would be.
-        return ToolCall(run_id="command", tool="bash", arguments={"command": body})
-    name = words[0]
-    tool = REGISTRY.get(name)
+    name, tokens = parse_command(body)
+    tool = tools.get(name)
     if tool is None:
         return ToolCall(run_id="command", tool="bash", arguments={"command": body})
-    params = list((tool.parameters or {}).get("properties", {}))
-    arguments: dict[str, Any] = {}
-    positional = 0
-    for token in words[1:]:
-        if "=" in token:
-            key, value = token.split("=", 1)
-            arguments[key] = value
-        else:
-            key = params[positional] if positional < len(params) else f"_{positional}"
-            arguments[key] = token
-            positional += 1
+    arguments = parse_command_args(tokens).bind(list((tool.parameters or {}).get("properties", {})))
     return ToolCall(run_id="command", tool=name, arguments=arguments)
 
 
@@ -247,16 +233,13 @@ def call_to_command_line(tool: str, arguments: dict[str, Any]) -> str | None:
     return command_prefix() + " ".join(words)
 
 
-def preview_call(tool: str, arguments: dict[str, Any], command_line: str = "") -> str:
+def preview_call(tool: str, arguments: dict[str, Any]) -> str:
     """The call as an admin should read it on the card: the command first.
 
     Other scalar arguments follow on a comment line, so a shell command never
     hides inside JSON. Anything else is shown as JSON.
     """
 
-    if command_line:
-        stripped = strip_command(command_line)
-        return command_line.strip() if stripped is None else stripped
     command = arguments.get("command")
     others = {key: value for key, value in arguments.items() if key != "command" and value is not None}
     if isinstance(command, str) and all(isinstance(v, str | int | float | bool) for v in others.values()):
@@ -350,18 +333,18 @@ async def request_approval(
     *,
     config: QQConfig,
     session_id: str,
+    tools: Mapping[str, Tool],
     requester_name: str = "",
-    command_line: str = "",
 ) -> str:
     """Post an approval card; return the text the caller reports back.
 
-    ``command_line`` is the comma command an admin typed. Without it the
-    call came from the model and is rewritten as a command line here, so an
-    approval always runs through Bub's command path.
+    The call is rewritten as a command line, so an approval always runs
+    through Bub's command path; ``tools`` are the tools of the agent that
+    will run it.
     """
 
     arguments = dict(call.arguments or {})
-    preview = preview_call(call.tool, arguments, command_line)
+    preview = preview_call(call.tool, arguments)
     if len(preview) > PREVIEW_LIMIT:
         logger.warning(
             "qq.approval.too_long tool={} session_id={} length={}",
@@ -373,13 +356,12 @@ async def request_approval(
             f"Not run: the command is longer than {PREVIEW_LIMIT} characters and"
             " cannot be shown in full for approval. Split it into shorter steps."
         )
-    if not command_line:
-        command_line = call_to_command_line(call.tool, arguments) or ""
-        if not command_line:
-            return "Not run: this call has list or dict arguments and cannot be approved."
-        # The token must match the call Bub's command path will make.
-        call = comma_command_to_call(command_line)
-        arguments = dict(call.arguments)
+    command_line = call_to_command_line(call.tool, arguments)
+    if command_line is None:
+        return "Not run: this call has list or dict arguments and cannot be approved."
+    # The token must match the call Bub's command path will make.
+    call = comma_command_to_call(command_line, tools)
+    arguments = dict(call.arguments)
     chat_id = (
         f"group:{requester.group_openid}"
         if requester.scope == "group"

@@ -1,6 +1,7 @@
 import json
 import sys
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import bub
@@ -8,6 +9,7 @@ from bub import hookimpl
 from bub import inquirer as bub_inquirer
 from bub.channels import Channel
 from bub.channels.contracts import MessageHandler
+from bub.core.tools import Tool
 from bub.envelope import field_of
 from bub.hooks.interception import LLMCallDecision
 from bub.hooks.interception import LLMCallRequest
@@ -24,13 +26,14 @@ from .bub_version import check_bub_version
 # fails to load the plugin with the reason.
 check_bub_version(bub.__version__)
 
-from . import tools as _tools  # noqa: F401  (registers the qq.send tool)
+from . import tools as qq_tools
 from .config import QQConfig
 from .security import QQ_CONTEXT_KEY
 from .security import QQ_STATE_KEY
 from .security import SlidingWindowRateLimiter
 from .session import BoundedDict
 from .approval import ApprovalOutcome
+from .approval import consume_token
 from .approval import record_outcome
 from .approval import request_approval
 from .approval import send_notice
@@ -116,6 +119,11 @@ def _channel_enabled(current_config: dict[str, Any]) -> bool:
     if not value or value.lower() == "all":
         return True
     return CHANNEL_NAME in {item.strip() for item in value.split(",") if item.strip()}
+
+
+@hookimpl
+def provide_tools() -> list[Tool]:
+    return list(qq_tools.TOOLS)
 
 
 @hookimpl
@@ -321,7 +329,18 @@ async def _check_tool_call(
         workspace=workspace,
         protected=(resolve_state_path(config),),
     )
+    command = _is_command(call)
     if decision.action == "approval":
+        if command and consume_token(session_id, requester, call):
+            return None
+        if command and qq_state.get("approval_id"):
+            # An approved command whose token no longer matches: refuse it
+            # rather than asking again.
+            qq_state["approval_status"] = "refused"
+            return ToolCallDecision.deny("命令未执行：审批已失效。")
+        tools = _agent_tools(state)
+        if tools is None:
+            return ToolCallDecision.deny("This call needs admin approval, which is unavailable here.")
         # Once an admin allows it, the call runs as a comma command in this
         # session; the model gets the pending notice now.
         message = await request_approval(
@@ -329,6 +348,7 @@ async def _check_tool_call(
             requester,
             config=config,
             session_id=session_id,
+            tools=tools,
             requester_name=str(qq_state.get("sender_name") or "").strip(),
         )
         return ToolCallDecision.replace(message)
@@ -336,6 +356,17 @@ async def _check_tool_call(
         return await _guarded_web_fetch(call)
     if decision.allowed:
         return None
+    if command:
+        if qq_state.get("approval_id"):
+            qq_state["approval_status"] = "refused"
+        logger.warning(
+            "qq.command.denied session_id={} requester={} tool={} reason={}",
+            session_id,
+            requester.identity,
+            call.tool,
+            decision.reason,
+        )
+        return ToolCallDecision.deny(f"命令未执行：{decision.reason}")
     logger.warning(
         "qq.security.tool_denied tool={} resource={} session_id={} requester={} reason={}",
         call.tool,
@@ -345,6 +376,20 @@ async def _check_tool_call(
         decision.reason,
     )
     return ToolCallDecision.deny(_model_facing_denial(decision))
+
+
+def _is_command(call: ToolCall) -> bool:
+    """Whether Bub runs ``call`` for a comma command rather than for the model."""
+
+    return call.context is not None and call.context.command
+
+
+def _agent_tools(state: TurnState) -> Mapping[str, Tool] | None:
+    """The tools of the agent running this turn, which an approved command runs with."""
+
+    agent = state.get("_runtime_agent") if isinstance(state, dict) else None
+    tools = getattr(agent, "tools", None)
+    return tools if isinstance(tools, Mapping) else None
 
 
 _PERMISSION_GUIDANCE = (
@@ -412,15 +457,19 @@ def save_state(session_id: str, state: TurnState, message: Any, model_output: st
     # exit raises in Bub's bash) is the exception in flight, and the output
     # is in its message, while model_output is empty.
     error = sys.exc_info()[1]
-    record_outcome(
-        session_id,
-        ApprovalOutcome(
-            id=str(qq_state["approval_id"]),
-            command=str(qq_state.get("approval_preview") or ""),
+    approval_id = str(qq_state["approval_id"])
+    command = str(qq_state.get("approval_preview") or "")
+    if qq_state.get("approval_status") == "refused":
+        # The Guard refused the approved command when it ran.
+        outcome = ApprovalOutcome(id=approval_id, command=command, status="refused")
+    else:
+        outcome = ApprovalOutcome(
+            id=approval_id,
+            command=command,
             status="failed" if error is not None else "ran",
             output=str(error) if error is not None else (model_output or "(no output)"),
-        ),
-    )
+        )
+    record_outcome(session_id, outcome)
 
 
 @hookimpl

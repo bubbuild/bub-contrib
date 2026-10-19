@@ -60,7 +60,7 @@ Bub keeps using its own configuration, tools, skills, and tapes. The ACP client 
 
 Each ACP connection owns a Bub `Agent` for each session, with client filesystem, terminal, and elicitation tools. The agent
 is passed through the inbound message's `_runtime_agent` field so tape recovery, tool descriptions,
-and execution use the same instance. Client tools never modify the global `REGISTRY`, and other
+and execution use the same instance. Client tools never modify the framework's `provide_tools` tools, and other
 agents keep their own tools. This requires Bub's instance-tool API introduced in upstream PR #311.
 
 ACP session IDs remain the protocol-facing `chat_id`. Bub namespaces its internal session ID with the ACP channel before selecting a tape, so an equal session ID from another channel cannot reuse the ACP tape.

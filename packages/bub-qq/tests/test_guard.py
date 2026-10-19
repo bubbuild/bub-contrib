@@ -187,21 +187,29 @@ def test_registered_admins_are_trusted_and_listed() -> None:
         # Bub looks names up as typed: an alias runs as a shell line.
         (",fs_read notes.md", "bash", {"command": "fs_read notes.md"}),
         (",qq.version", "qq.version", {}),
-        (",echo 'unbalanced", "bash", {"command": "echo 'unbalanced"}),
     ],
 )
-def test_comma_command_maps_like_bub(line, tool, arguments) -> None:
-    call = comma_command_to_call(line)
+def test_comma_command_maps_like_bub(line, tool, arguments, agent_tools) -> None:
+    call = comma_command_to_call(line, agent_tools)
     assert call.tool == tool
     assert call.arguments == arguments
 
 
-def test_command_mapping_uses_bub_command_prefix(monkeypatch) -> None:
+def test_comma_command_only_knows_the_agents_tools() -> None:
+    assert comma_command_to_call(",qq.version", {}).arguments == {"command": "qq.version"}
+
+
+def test_unparseable_comma_command_is_rejected_like_bub(agent_tools) -> None:
+    with pytest.raises(ValueError):
+        comma_command_to_call(",echo 'unbalanced", agent_tools)
+
+
+def test_command_mapping_uses_bub_command_prefix(monkeypatch, agent_tools) -> None:
     monkeypatch.setattr(security, "command_prefix", lambda: "/")
-    assert comma_command_to_call("/fs.read notes.md").arguments == {"path": "notes.md"}
-    assert comma_command_to_call("/ls").arguments == {"command": "ls"}
+    assert comma_command_to_call("/fs.read notes.md", agent_tools).arguments == {"path": "notes.md"}
+    assert comma_command_to_call("/ls", agent_tools).arguments == {"command": "ls"}
 
 
-def test_comma_fs_read_of_protected_file_is_denied(ws) -> None:
-    call = comma_command_to_call(",fs.read .env")
+def test_comma_fs_read_of_protected_file_is_denied(ws, agent_tools) -> None:
+    call = comma_command_to_call(",fs.read .env", agent_tools)
     assert evaluate(call, ADMIN, config=_config(), workspace=ws).action == "deny"

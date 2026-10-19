@@ -45,6 +45,11 @@ class ControlledFramework:
     def get_tape_sidecars(self):
         return ()
 
+    def get_tools(self):
+        from bub.builtin import tools
+
+        return tools.TOOLS
+
     def __init__(self, inbox: ACPSteeringInbox) -> None:
         self.workspace = Path.cwd()
         self.inbox = inbox

@@ -85,8 +85,6 @@ def _write_runtime_files(
 async def _exercise_channels(
     framework: Any, channels: dict[str, Any], mcp_enabled: bool
 ) -> dict[str, Any]:
-    from bub.core.tools import REGISTRY
-
     baseline = channels["mcp.lifecycle"]
     plugin_channel = channels.get("agent-plugins.mcp")
     assert (plugin_channel is not None) is mcp_enabled
@@ -101,19 +99,20 @@ async def _exercise_channels(
 
         state = await framework.build_state({}, "probe:tools")
         agent = state["_runtime_agent"]
+        provided = {tool.name for tool in framework.get_tools()}
         baseline_tool = agent.tools["mcp.baseline_ping"]
-        assert "mcp.baseline_ping" not in REGISTRY
+        assert "mcp.baseline_ping" not in provided
         baseline_result = await baseline_tool.run(value="baseline")
         assert baseline_result == "basic-mcp-ok:baseline"
 
         plugin_result = None
         if plugin_channel is not None:
             plugin_tool = agent.tools["mcp.basic-agent-plugin.basic_ping"]
-            assert "mcp.basic-agent-plugin.basic_ping" not in REGISTRY
+            assert "mcp.basic-agent-plugin.basic_ping" not in provided
             plugin_result = await plugin_tool.run(value="plugin")
             assert plugin_result == "basic-mcp-ok:plugin"
         else:
-            assert "mcp.basic-agent-plugin.basic_ping" not in REGISTRY
+            assert "mcp.basic-agent-plugin.basic_ping" not in provided
 
         return {
             "baseline_mcp": baseline_result,

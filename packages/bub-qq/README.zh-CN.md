@@ -23,7 +23,7 @@ English documentation: [README.md](./README.md)
 
 ## 前置条件
 
-1. [安装 Bub](https://bub.build/zh-cn/docs/getting-started/install/) 0.5.1 或更新版本（推荐：`uv tool install bub`）。在更旧的 Bub 上插件不会加载，日志会说明原因。更新的小版本和开发版可以加载，但会输出 `qq.bub.untested` / `qq.bub.prerelease` 告警：新版 Bub 增加的工具在 bub-qq 识别之前只对管理员开放
+1. [安装 Bub](https://bub.build/zh-cn/docs/getting-started/install/) 0.6.0 或更新版本（推荐：`uv tool install bub`）。在更旧的 Bub 上插件不会加载，日志会说明原因。更新的小版本和开发版可以加载，但会输出 `qq.bub.untested` / `qq.bub.prerelease` 告警：新版 Bub 增加的工具在 bub-qq 识别之前只对管理员开放
 2. 执行 `bub onboard`，确认模型可用（`bub chat` 或 `bub run`）
 3. 在 [QQ 开放平台 / 机器人文档](https://bot.q.qq.com/wiki/develop/api-v2/) 创建机器人，获取 `APPID`、`SECRET`
 
@@ -217,7 +217,7 @@ export BUB_QQ_RECEIVE_MODE=websocket
 
 ## 安全
 
-群聊能触发的每一个操作都经过同一个检查点 **Guard**：模型的工具调用（`before_tool_call`）、逗号命令（Bub 执行命令时不经过 hook，所以由渠道在交给 Bub 之前检查），以及审批通过后的执行。它只根据「谁在请求」和「调用要碰哪类资源」做决定。任何能给机器人发消息的人都能影响模型，所以模型发起的工具调用按发送者的身份对待。
+群聊能触发的每一个操作都经过同一个检查点 **Guard**：模型的工具调用和逗号命令（都在 `before_tool_call` 中检查，Bub 执行命令时同样经过工具 hook），以及审批通过后的执行。它只根据「谁在请求」和「调用要碰哪类资源」做决定。任何能给机器人发消息的人都能影响模型，所以模型发起的工具调用按发送者的身份对待。
 
 **谁可信。** 只有管理员：`admin_users` 里的身份，加上用 `,qq.claim` 登记的身份。Bub 会把短时间内连续到达的消息合并成一轮处理；这一轮只有在所有发送者都是管理员时才按管理员对待，避免普通成员的请求借紧随其后的管理员消息获得权限。不带 QQ 发送者信息进入 QQ 会话的对话（定时任务、其他插件触发）按身份未知的成员检查，在私聊中也不会被当作管理员（日志：`qq.security.unattributed_turn`）。QQ 群主、群管理员的角色不带来任何权限，因为部署机器人的人不一定是群主。同一个人在私聊和每个群里的 openid 都不同，所以身份按场景区分（`c2c:<user_openid>`、`group:<group_openid>:<member_openid>`）。
 

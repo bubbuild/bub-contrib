@@ -7,18 +7,21 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import bub.builtin.tools  # noqa: F401 - importing the builtin tools fills the registry
 import pytest
 from acp.schema import ClientCapabilities, TextContentBlock
+from bub.builtin import tools as builtin_tools
 from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
-from bub.core.tools import REGISTRY, ToolContext
+from bub.core.tools import ToolContext
 
 from bub_acp_server.agent import BubACPAgent
 from bub_acp_server.subagents import (
     LODY_SUBAGENT_EVENT_METHOD,
     client_supports_subagent_events,
 )
+
+
+BUILTIN_TOOLS = {tool.name: tool for tool in builtin_tools.TOOLS}
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +59,11 @@ class FakeFramework:
     def get_tape_sidecars(self):
         return ()
 
+    def get_tools(self):
+        from bub.builtin import tools
+
+        return tools.TOOLS
+
     def __init__(self) -> None:
         self.workspace = Path.cwd()
 
@@ -79,7 +87,7 @@ class StubAgent:
         self.events = events
         self.error = error
         self.calls: list[dict[str, Any]] = []
-        self.tools = {"subagent": REGISTRY["subagent"], "bash": REGISTRY["bash"]}
+        self.tools = {"subagent": BUILTIN_TOOLS["subagent"], "bash": BUILTIN_TOOLS["bash"]}
 
     async def run_stream(self, **kwargs: Any) -> AsyncStreamEvents:
         self.calls.append(kwargs)
@@ -385,7 +393,7 @@ async def test_subagent_tool_is_untouched_without_negotiation() -> None:
         client, child_events(), negotiate=False
     )
 
-    assert tool.handler is REGISTRY["subagent"].handler
+    assert tool.handler is BUILTIN_TOOLS["subagent"].handler
     assert client.notifications == []
     assert context.state["_runtime_agent"].calls == []
 
@@ -414,14 +422,14 @@ async def test_negotiated_session_replaces_only_this_session_tool() -> None:
         [TextContentBlock(type="text", text="hi")], agent._sessions[session.session_id]
     )
     installed = inbound._runtime_agent.tools["subagent"]
-    assert installed.name == REGISTRY["subagent"].name
-    assert installed.description == REGISTRY["subagent"].description
-    assert installed.parameters == REGISTRY["subagent"].parameters
-    assert installed.renderer is REGISTRY["subagent"].renderer
-    assert installed.exposure == REGISTRY["subagent"].exposure
-    assert installed.output_schema == REGISTRY["subagent"].output_schema
-    assert installed.handler is not REGISTRY["subagent"].handler
-    assert REGISTRY["subagent"].handler is not installed.handler
+    assert installed.name == BUILTIN_TOOLS["subagent"].name
+    assert installed.description == BUILTIN_TOOLS["subagent"].description
+    assert installed.parameters == BUILTIN_TOOLS["subagent"].parameters
+    assert installed.renderer is BUILTIN_TOOLS["subagent"].renderer
+    assert installed.exposure == BUILTIN_TOOLS["subagent"].exposure
+    assert installed.output_schema == BUILTIN_TOOLS["subagent"].output_schema
+    assert installed.handler is not BUILTIN_TOOLS["subagent"].handler
+    assert BUILTIN_TOOLS["subagent"].handler is not installed.handler
 
     plain = BubACPAgent(FakeFramework())
     plain.on_connect(FakeClient())
@@ -432,5 +440,5 @@ async def test_negotiated_session_replaces_only_this_session_tool() -> None:
     )
     assert (
         other_inbound._runtime_agent.tools["subagent"].handler
-        is REGISTRY["subagent"].handler
+        is BUILTIN_TOOLS["subagent"].handler
     )

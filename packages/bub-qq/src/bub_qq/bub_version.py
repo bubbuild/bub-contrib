@@ -1,10 +1,10 @@
 """Which Bub this plugin runs on.
 
 bub-qq follows Bub's latest releases, but relies on interfaces that only
-exist from 0.5.1 on (``exposure`` on ``@tool``, ``provide_environment``,
-the tool names its Guard classifies). The check runs when the plugin
-module loads, so an older Bub reports a clear reason instead of failing
-on an unknown keyword argument.
+exist from 0.6.0 on (the ``provide_tools`` hook, comma commands running
+through ``before_tool_call``, the tool names its Guard classifies). The
+check runs when the plugin module loads, so an older Bub reports a clear
+reason instead of failing on an unknown keyword argument.
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ import re
 
 from loguru import logger
 
-MIN_BUB_VERSION = (0, 5, 1)
+MIN_BUB_VERSION = (0, 6, 0)
 # The newest minor series bub-qq was tested against; newer ones load with a
 # warning, since its Guard may not know their new tools yet.
-TESTED_BUB_SERIES = (0, 5)
+TESTED_BUB_SERIES = (0, 6)
 
 
 def check_bub_version(version: str) -> None:

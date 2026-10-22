@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "bub[app]>=0.5.1",
+    "bub[app]>=0.6.0a1",
     "loguru",
     "pydantic",
     "aiohttp>=3.13.3",

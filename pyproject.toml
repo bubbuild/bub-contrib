@@ -42,7 +42,7 @@ dependencies = [
 members = ["packages/*"]
 
 [tool.uv.sources]
-bub = { git = "https://github.com/bubbuild/bub.git", branch = "dev" }
+bub = { git = "https://github.com/bubbuild/bub.git", branch = "main" }
 bub-acp-server = { workspace = true }
 bub-agent-plugins = { workspace = true }
 bub-codex = { workspace = true }

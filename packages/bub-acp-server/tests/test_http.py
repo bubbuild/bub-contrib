@@ -34,6 +34,7 @@ from bub.channels import Channel, Interface
 from bub.channels.manager import ChannelManager
 from bub.channels.message import ChannelMessage
 from bub.streaming import StreamEvent
+from bub.core.events import EventBus
 from bub.core.tape import (
     AsyncTapeStoreAdapter,
     InMemoryTapeStore,
@@ -83,6 +84,8 @@ class HTTPFramework:
         self.tools = dict(BUILTIN_TOOLS)
         self.router: Any = None
         self.inbox = ACPSteeringInbox()
+        # ChannelManager publishes WorkChanged on bub main through this bus.
+        self.events = EventBus()
 
     def bind_channel_router(self, router: Any) -> None:
         self.router = router
@@ -495,6 +498,7 @@ async def test_websocket_load_and_tool_callbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tls: bool
 ) -> None:
     from acp.ws import client as ws_client
+
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
     framework = HTTPFramework(tmp_path)
     store = AsyncTapeStoreAdapter(InMemoryTapeStore())

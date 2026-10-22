@@ -93,6 +93,22 @@ def test_bub_dev_builds_load_with_a_warning(version, logs) -> None:
     assert any("qq.bub.prerelease" in line and version in line for line in logs)
 
 
+@pytest.mark.parametrize(
+    "version",
+    ["0.5.2.dev21+ga93f5b80c", "0.5.1.dev3+gabcdef0"],
+)
+def test_locked_main_dev_builds_load_when_provide_tools_exists(version, logs) -> None:
+    # hatch-vcs on bub main can report 0.5.x.dev while the tree has 0.6 hooks.
+    check_bub_version(version)
+    assert any("qq.bub.prerelease" in line and version in line for line in logs)
+
+
+def test_below_minimum_dev_build_without_provide_tools_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr("bub_qq.bub_version._has_provide_tools_hook", lambda: False)
+    with pytest.raises(RuntimeError, match=r"needs Bub >= 0\.6\.0"):
+        check_bub_version("0.5.2.dev21+ga93f5b80c")
+
+
 @pytest.mark.parametrize("version", ["0.7.0", "1.0.0"])
 def test_newer_bub_series_load_with_a_warning(version, logs) -> None:
     # Follows Bub's latest releases: newer series are not refused.

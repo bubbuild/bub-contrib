@@ -18,6 +18,7 @@ from acp.schema import (
     TextContentBlock,
 )
 from bub.builtin.agent import BubAgent
+from bub.builtin.model import BubModel
 from bub.framework import BubFramework
 from bub_mcp import plugin as mcp_plugin
 
@@ -71,6 +72,12 @@ class MCPClient:
 @pytest_asyncio.fixture
 async def framework(tmp_path, monkeypatch):
     monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+
+    async def no_provider_models(self, provider):
+        return []
+
+    # Session config options list provider models; keep these tests off the network.
+    monkeypatch.setattr(BubModel, "list_models", no_provider_models)
     framework = BubFramework(config_file=tmp_path / "config.yml")
     framework.workspace = tmp_path
     framework.load_builtin_hooks()

@@ -720,6 +720,9 @@ class BubACPAgent:
         # each one answer its own request with stopReason "cancelled".
         current = asyncio.current_task()
         for run in list(self._prompt_runs.get(session_id, ())):
+            # A repeated cancel must not add a cancellation the run cannot absorb.
+            if run.cancel_requested:
+                continue
             run.cancel_requested = True
             if run.task is not None and run.task is not current and not run.task.done():
                 run.task.cancel()

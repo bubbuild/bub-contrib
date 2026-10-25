@@ -586,6 +586,24 @@ async def test_cancel_stops_active_prompt_with_cancelled_stop_reason(
 
 
 @pytest.mark.asyncio
+async def test_repeated_cancel_still_answers_prompt(tmp_path: Path) -> None:
+    framework = ControlledFramework(ACPSteeringInbox())
+    agent = BubACPAgent(cast(Any, framework), steering_inbox=framework.inbox)
+    agent.on_connect(cast(Any, FakeClient()))
+    session = await agent.new_session(cwd=str(tmp_path))
+    prompt_task = asyncio.create_task(
+        agent.prompt(text_prompt("long work"), session.session_id)
+    )
+    async with asyncio.timeout(1):
+        assert await framework.entered.get() == 0
+        await agent.cancel(session.session_id)
+        await agent.cancel(session.session_id)
+        response = await prompt_task
+
+    assert response.stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_cancel_stops_prompt_waiting_for_turn_lock(tmp_path: Path) -> None:
     framework = ControlledFramework(ACPSteeringInbox())
     agent = BubACPAgent(cast(Any, framework), steering_inbox=framework.inbox)

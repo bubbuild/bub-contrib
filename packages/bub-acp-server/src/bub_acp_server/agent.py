@@ -168,6 +168,7 @@ class ACPPromptRun:
     started: asyncio.Event = field(default_factory=asyncio.Event)
     completed: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[PromptResponse] | None = None
+    cancel_requested: bool = False
 
 
 @dataclass(slots=True)
@@ -715,6 +716,13 @@ class BubACPAgent:
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         del kwargs
+        # session/cancel is a notification: stop every pending prompt and let
+        # each one answer its own request with stopReason "cancelled".
+        current = asyncio.current_task()
+        for run in list(self._prompt_runs.get(session_id, ())):
+            run.cancel_requested = True
+            if run.task is not None and run.task is not current and not run.task.done():
+                run.task.cancel()
         await self.framework.quit_via_channel_router(session_id)
 
     async def set_config_option(
@@ -873,47 +881,67 @@ class BubACPAgent:
         run: ACPPromptRun,
     ) -> PromptResponse:
         try:
-            client = self._require_client()
-            if self.settings.send_user_message_updates:
-                await self._send_user_message_updates(prompt, session.session_id)
-            async with self._prompt_lock:
-                if run.task is not None and (
-                    session.session_id in self._closing_sessions
-                    or session.session_id not in self._sessions
-                ):
-                    raise RequestError.invalid_request(
-                        {"sessionId": session.session_id}
-                    )
-                inbound = self._build_inbound(prompt, session)
-                run.started.set()
-                router = self._require_stream_router()
-                token = active_stream_router.set(router)
-                try:
-                    # Gateway owns its router; its ACP channel routes this turn's stream.
-                    if self._bind_router:
-                        self.framework.bind_channel_router(router)
-                    result = await self.framework.process_inbound(
-                        inbound, stream_output=True
-                    )
-                finally:
-                    active_stream_router.reset(token)
-                    stream_state = router.pop_stream_state(session.session_id)
-                if result.model_output and not (
-                    stream_state is not None and stream_state.sent_text
-                ):
-                    await client.session_update(
-                        session.session_id,
-                        AgentMessageChunk(
-                            content=TextContentBlock(text=result.model_output)
-                        ),
-                    )
-            return PromptResponse(
-                stop_reason="end_turn",
-                usage=stream_state.prompt_usage() if stream_state else None,
-            )
+            response = await self._run_prompt(prompt, session, run)
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            # Only session/cancel turns into a response; close and shutdown still cancel.
+            if not run.cancel_requested or task is None or task.uncancel() > 0:
+                raise
+            return PromptResponse(stop_reason="cancelled")
+        else:
+            if not run.cancel_requested:
+                return response
+            # The turn swallowed the cancellation; clear it before the response is sent.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                task.uncancel()
+            return PromptResponse(stop_reason="cancelled", usage=response.usage)
         finally:
             self._complete_prompt_run(run)
             self._schedule_session_title(prompt, session)
+
+    async def _run_prompt(
+        self,
+        prompt: list[ACPPromptBlock],
+        session: ACPSession,
+        run: ACPPromptRun,
+    ) -> PromptResponse:
+        client = self._require_client()
+        if self.settings.send_user_message_updates:
+            await self._send_user_message_updates(prompt, session.session_id)
+        async with self._prompt_lock:
+            if run.task is not None and (
+                session.session_id in self._closing_sessions
+                or session.session_id not in self._sessions
+            ):
+                raise RequestError.invalid_request({"sessionId": session.session_id})
+            inbound = self._build_inbound(prompt, session)
+            run.started.set()
+            router = self._require_stream_router()
+            token = active_stream_router.set(router)
+            try:
+                # Gateway owns its router; its ACP channel routes this turn's stream.
+                if self._bind_router:
+                    self.framework.bind_channel_router(router)
+                result = await self.framework.process_inbound(
+                    inbound, stream_output=True
+                )
+            finally:
+                active_stream_router.reset(token)
+                stream_state = router.pop_stream_state(session.session_id)
+            if result.model_output and not (
+                stream_state is not None and stream_state.sent_text
+            ):
+                await client.session_update(
+                    session.session_id,
+                    AgentMessageChunk(
+                        content=TextContentBlock(text=result.model_output)
+                    ),
+                )
+        return PromptResponse(
+            stop_reason="end_turn",
+            usage=stream_state.prompt_usage() if stream_state else None,
+        )
 
     def _build_inbound(
         self, prompt: list[ACPPromptBlock], session: ACPSession

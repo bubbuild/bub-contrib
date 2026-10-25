@@ -551,3 +551,92 @@ async def test_plugin_steering_inbox_precedes_builtin_provider(
 
     assert state["_runtime_workspace"] == str(tmp_path)
     assert state["reasoning_effort"] == "high"
+
+
+def text_prompt(text: str) -> list[Any]:
+    return cast(Any, [{"type": "text", "text": text}])
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_active_prompt_with_cancelled_stop_reason(
+    tmp_path: Path,
+) -> None:
+    framework = ControlledFramework(ACPSteeringInbox())
+    agent = BubACPAgent(cast(Any, framework), steering_inbox=framework.inbox)
+    agent.on_connect(cast(Any, FakeClient()))
+    session = await agent.new_session(cwd=str(tmp_path))
+    prompt_task = asyncio.create_task(
+        agent.prompt(text_prompt("long work"), session.session_id)
+    )
+    async with asyncio.timeout(1):
+        assert await framework.entered.get() == 0
+        await agent.cancel(session.session_id)
+        response = await prompt_task
+
+    assert response.stop_reason == "cancelled"
+    assert agent._prompt_runs == {}
+
+    next_task = asyncio.create_task(
+        agent.prompt(text_prompt("next"), session.session_id)
+    )
+    async with asyncio.timeout(1):
+        assert await framework.entered.get() == 1
+        framework.releases[1].set()
+        assert (await next_task).stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_prompt_waiting_for_turn_lock(tmp_path: Path) -> None:
+    framework = ControlledFramework(ACPSteeringInbox())
+    agent = BubACPAgent(cast(Any, framework), steering_inbox=framework.inbox)
+    agent.on_connect(cast(Any, FakeClient()))
+    session = await agent.new_session(cwd=str(tmp_path))
+    await agent._prompt_lock.acquire()
+    try:
+        prompt_task = asyncio.create_task(
+            agent.prompt(text_prompt("queued"), session.session_id)
+        )
+        async with asyncio.timeout(1):
+            while agent._current_prompt_run(session.session_id) is None:
+                await asyncio.sleep(0)
+            await agent.cancel(session.session_id)
+            response = await prompt_task
+    finally:
+        agent._prompt_lock.release()
+
+    assert response.stop_reason == "cancelled"
+    assert framework.messages == []
+
+
+class SwallowingFramework(ControlledFramework):
+    async def process_inbound(
+        self, inbound: Any, stream_output: bool = False
+    ) -> TurnResult:
+        try:
+            return await super().process_inbound(inbound, stream_output)
+        except asyncio.CancelledError:
+            return TurnResult(
+                session_id=inbound.session_id,
+                prompt=inbound.content,
+                model_output="",
+            )
+
+
+@pytest.mark.asyncio
+async def test_cancel_reports_cancelled_when_turn_swallows_cancellation(
+    tmp_path: Path,
+) -> None:
+    framework = SwallowingFramework(ACPSteeringInbox())
+    agent = BubACPAgent(cast(Any, framework), steering_inbox=framework.inbox)
+    agent.on_connect(cast(Any, FakeClient()))
+    session = await agent.new_session(cwd=str(tmp_path))
+    prompt_task = asyncio.create_task(
+        agent.prompt(text_prompt("long work"), session.session_id)
+    )
+    async with asyncio.timeout(1):
+        await framework.entered.get()
+        await agent.cancel(session.session_id)
+        response = await prompt_task
+
+    assert response.stop_reason == "cancelled"
+    assert not prompt_task.cancelling()

@@ -14,6 +14,7 @@ Expose Bub as an Agent Client Protocol agent.
 - Session-scoped model and reasoning-effort selection through ACP config options
 - Session MCP servers over stdio, Streamable HTTP, and SSE via `bub-mcp`
 - ACP context-compaction notifications when `tape.handoff` runs
+- `session/cancel` stops active and queued prompts, which return `stopReason: "cancelled"`; clients without the steering extension can steer by cancelling and re-prompting
 - Mid-turn steering through the `_lody/session/steer` ACP extension
 - Streamed subagent execution events through `_lody/subagents/event`
 - Automatic session titles pushed as `session_info_update`

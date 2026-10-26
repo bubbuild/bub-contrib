@@ -119,7 +119,9 @@ def build_group_channel_message(
         "was_mentioned": was_mentioned,
         "date": message.timestamp,
         "attachments": attachment_payloads(message.attachments),
-        "quoted_messages": msg_element_payloads(message.msg_elements),
+        "quoted_messages": msg_element_payloads(
+            message.msg_elements, first_index=len(message.attachments)
+        ),
         "message_type": message.message_type,
         "ark_data": message.ark_data,
     }

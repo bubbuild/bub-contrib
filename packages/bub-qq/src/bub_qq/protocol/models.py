@@ -40,13 +40,16 @@ class QQMsgElement:
 
     Populated when ``message_type`` is 101/102/103; nested elements carry
     merged-forward chat records. Nesting is capped to keep pathological
-    payloads bounded.
+    payloads bounded. A quote carries the quoted message's attachments with
+    freshly signed URLs, so a quoted image can be downloaded again even
+    when the original message's URL has expired.
     """
 
     content: str
     message_type: int | None
     sender_name: str | None
     elements: tuple[QQMsgElement, ...]
+    attachments: tuple[QQAttachment, ...] = ()
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], *, depth: int = 0) -> QQMsgElement:
@@ -61,6 +64,7 @@ class QQMsgElement:
                 for item in nested_raw
                 if isinstance(item, dict)
             )
+        attachments_raw = payload.get("attachments")
         return cls(
             content=str(payload.get("content") or ""),
             message_type=_optional_int(payload.get("message_type")),
@@ -68,7 +72,26 @@ class QQMsgElement:
                 author.get("username") or author.get("nickname")
             ),
             elements=nested,
+            attachments=tuple(
+                QQAttachment.from_payload(item)
+                for item in (attachments_raw if isinstance(attachments_raw, list) else ())
+                if isinstance(item, dict)
+            ),
         )
+
+
+def quoted_attachments(elements: tuple[QQMsgElement, ...]) -> tuple[QQAttachment, ...]:
+    """Attachments of referenced messages, depth first.
+
+    This order numbers them after the message's own attachments, for the
+    ``index`` that qq.view_image and qq.fetch_attachment take.
+    """
+
+    found: list[QQAttachment] = []
+    for element in elements:
+        found.extend(element.attachments)
+        found.extend(quoted_attachments(element.elements))
+    return tuple(found)
 
 
 def _msg_elements_from(data: dict[str, Any]) -> tuple[QQMsgElement, ...]:
@@ -125,6 +148,12 @@ class QQGroupMessage:
     msg_elements: tuple[QQMsgElement, ...] = ()
     ark_data: dict[str, Any] | None = None
     """Structured card payload when ``message_type`` is 3."""
+
+    @property
+    def inbound_attachments(self) -> tuple[QQAttachment, ...]:
+        """Own attachments, then those of quoted messages, in index order."""
+
+        return self.attachments + quoted_attachments(self.msg_elements)
 
     @classmethod
     def from_event(cls, payload: dict[str, Any]) -> QQGroupMessage:
@@ -188,6 +217,12 @@ class QQC2CMessage:
     msg_elements: tuple[QQMsgElement, ...] = ()
     ark_data: dict[str, Any] | None = None
     """Structured card payload when ``message_type`` is 3."""
+
+    @property
+    def inbound_attachments(self) -> tuple[QQAttachment, ...]:
+        """Own attachments, then those of quoted messages, in index order."""
+
+        return self.attachments + quoted_attachments(self.msg_elements)
 
     @classmethod
     def from_event(cls, payload: dict[str, Any]) -> QQC2CMessage:

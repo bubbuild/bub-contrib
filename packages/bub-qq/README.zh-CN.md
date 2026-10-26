@@ -161,6 +161,9 @@ QQ 侧将 webhook 与 WebSocket 视为 **互斥**。成功配置有效的 HTTPS 
 | `group_shell` | `BUB_QQ_GROUP_SHELL` | `approval` | 管理员的 shell（`bash`）：`approval`（每条命令都要管理员点击确认，没有「始终允许」）或 `deny`。非管理员永远没有 shell。群聊和私聊都适用 |
 | `shell_sandbox` | `BUB_QQ_SHELL_SANDBOX` | `none` | 声明 Bub 是否运行在外部沙箱中（`none` / `external`）。插件本身不隔离命令；开启 shell 且为 `none` 时启动会打印警告 |
 | `c2c_access` | `BUB_QQ_C2C_ACCESS` | `admin_users` | 私聊里谁能使用工具：`admin_users`，或 `allow_users`（要求 `allow_users` 非空，否则启动失败）。回复始终可用 |
+| `inbound_images` | `BUB_QQ_INBOUND_IMAGES` | `direct` | 哪些收到的图片会附在消息里，让多模态模型直接看到：`direct`（私聊，以及 @ 机器人的群消息）、`all` 或 `off`。其余图片只保留元数据，模型可用 `qq.view_image` 查看 |
+| `inbound_images_per_message` | `BUB_QQ_INBOUND_IMAGES_PER_MESSAGE` | `4` | 每条消息最多附加的图片数 |
+| `inbound_image_max_bytes` | `BUB_QQ_INBOUND_IMAGE_MAX_BYTES` | `10485760` | 附加或用 `qq.view_image` 查看的单张图片大小上限 |
 | `download_allow_hosts` | `BUB_QQ_DOWNLOAD_ALLOW_HOSTS` | 空 | 逗号分隔的主机名；`media_url`、`web.fetch` 和附件下载访问它们时即使解析到内网地址也放行（如内网图床） |
 | `group_tool_policy` | `BUB_QQ_GROUP_TOOL_POLICY` | `restricted` | 群聊中 shell 和文件以外其他工具的策略：`open` / `restricted`（禁用 `subagent` 和 `denied_tools`）/ `locked`（除回复外禁用全部工具，管理员也一样） |
 | `c2c_tool_policy` | `BUB_QQ_C2C_TOOL_POLICY` | `open` | 同上，作用于 `c2c_access` 允许的私聊用户 |
@@ -230,15 +233,15 @@ export BUB_QQ_RECEIVE_MODE=websocket
 | 写文件（`fs.write` / `fs.edit`） | 拒绝 | 工作区内 |
 | 受保护文件（`.env*`、`.git/`、状态文件） | 拒绝 | 拒绝 |
 | 发送文件（`qq.send media_path`） | 仅 `outbox/`、`inbox/` | 同左 |
-| 下载（`media_url`、`web.fetch`、附件） | 仅公网地址，每一跳重定向都检查 | 同左 |
+| 下载（`media_url`、`web.fetch`、附件） | 仅公网地址，每一跳重定向都检查；附件另外放行 QQ 媒体域名（`qq.com.cn`、`qpic.cn`、`qq.com`），其网址由 QQ 提供 | 同左 |
 | code mode（`run_code` / `code_mode`） | 拒绝 | 拒绝 |
-| 只读工具（`tape.info` / `tape.search` / `tape.anchors` / `tape.handoff`、`skill`、`tool.describe`、`spill.read`、`help`、`qq.fetch_attachment`） | `group_tool_policy` / `c2c_tool_policy` | 同左 |
+| 只读工具（`tape.info` / `tape.search` / `tape.anchors` / `tape.handoff`、`skill`、`tool.describe`、`spill.read`、`help`、`qq.fetch_attachment`、`qq.view_image`） | `group_tool_policy` / `c2c_tool_policy` | 同左 |
 | 改动会话的工具（`tape.reset`、`subagent`、`model`、`reasoning_effort`、`quit`） | 拒绝 | `group_tool_policy` / `c2c_tool_policy` |
 | 未列出的工具（其他插件、MCP、Bub 新增的工具） | 拒绝，除非匹配 `allowed_tools` | `group_tool_policy` / `c2c_tool_policy` |
 
 私聊中默认只有管理员能用工具（`c2c_access`），回复始终可用。
 
-**审批。** 管理员的 shell 命令会发出一张卡片，完整显示命令（太长无法完整显示的命令直接拒绝，不会截断），附两个按钮，只有该群已登记的管理员能点。点「允许」后签发一次性凭证，绑定会话、请求人、工具和完整参数，240 秒内有效；命令随后带着凭证重新经过 Guard。卡片直接显示命令本身（其他参数写在 `#` 开头的一行里），并对 `rm -rf`、`find -delete`、`dd of=`、`curl | sh` 等高危模式加上警告；警告只是提示，是否批准仍由管理员决定。没有「始终允许」。无论是模型发起的调用还是管理员的逗号命令，批准后都作为逗号命令（模型调用会先改写成等价的 `,bash command=…`）交回 Bub，在原会话的执行环境里运行，结果发到聊天里并写入会话 tape。Bub 不会把命令输出放进模型上下文，因此每个审批的结局（`ran` 及输出、`denied`、`expired`、`refused`、`failed`）会在该会话下一条消息中以 `approval_results` 附加一次（最近 3 条，输出截断到 500 字符）。
+**审批。** 管理员的 shell 命令会发出一张卡片，完整显示命令（太长无法完整显示的命令直接拒绝，不会截断），附两个按钮，只有该群已登记的管理员能点。点「允许」后签发一次性凭证，绑定会话、请求人、工具和完整参数，240 秒内有效；命令随后带着凭证重新经过 Guard。卡片直接显示命令本身（其他参数写在 `#` 开头的一行里），并对 `rm -rf`、`find -delete`、`dd of=`、`curl | sh` 等高危模式加上警告，并对下载网络内容的命令（带网址的 `curl`/`wget`/`aria2c`，不经过插件的地址检查）加上注意提示；两者都只是提示，是否批准仍由管理员决定。没有「始终允许」。无论是模型发起的调用还是管理员的逗号命令，批准后都作为逗号命令（模型调用会先改写成等价的 `,bash command=…`）交回 Bub，在原会话的执行环境里运行，结果发到聊天里并写入会话 tape。Bub 不会把命令输出放进模型上下文，因此每个审批的结局（`ran` 及输出、`denied`、`expired`、`refused`、`failed`）会在该会话下一条消息中以 `approval_results` 附加一次（最近 3 条，输出截断到 500 字符）。
 
 **插件不对 shell 做隔离。** bub-qq 不限制审批通过的命令能做什么。请把 Bub 运行在容器等沙箱里并设置 `shell_sandbox=external`，或者设置 `group_shell=deny`。
 
@@ -290,6 +293,8 @@ webhook 模式需要将公网 HTTPS 地址指向内嵌服务（上表 host/port/
 
 `bub chat` 不能替代 QQ 通道收发；QQ 场景请使用 `bub gateway`。
 
+想看 QQ 发来的原始事件（比如确认引用或转发的聊天记录里带了什么），把 Bub 的 `verbose` 设为 `1`（或设置环境变量 `BUB_VERBOSE=1`）：每个事件都会以 `qq.transport.payload` 的 DEBUG 日志打印在 gateway 的 stderr 上。Bub 不写日志文件，需要保存时用 `bub gateway 2>&1 | tee gateway.log`。这些日志包含消息原文、openid 和带临时下载凭证的附件网址；排查完请把 `verbose` 改回去，日志也不要原样外发。
+
 ## 会话与消息映射
 
 | 概念 | 格式 / 行为 |
@@ -319,11 +324,11 @@ C2C 保持仅被动回复：官方文档写明 C2C 主动推送已于 2025-04-21
 - `sender_name` / `sender_role` / `group_openid` / `chat_type` / `was_mentioned`（群聊）
 - `date`
 - `attachments`（如有）
-- `quoted_messages`（如有：来自 `msg_elements` 的引用消息 / 合并转发聊天记录，含 `message`、可选 `sender_name` 与嵌套 `messages`）
+- `quoted_messages`（如有：来自 `msg_elements` 的引用消息 / 合并转发聊天记录，含 `message`、可选 `sender_name`、`attachments` 与嵌套 `messages`；引用里的附件带 `index`，编号接在消息自身附件之后）
 - `message_type`（0=文本，3=结构化卡片，101/102/103=引用或聊天记录）
 - `ark_data`（`message_type=3` 时的卡片数据）
 
-附件不会在收到消息时自动下载。模型需要时调用 `qq.fetch_attachment(message_id, index)`，文件保存到 `inbox/<message_id>/`（只能下载同一会话中消息的附件）。
+发给机器人的消息里的图片（PNG、JPEG、GIF、WebP）会附在消息中，多模态模型可以直接看到；这些图片在 `attachments` 中标记为 `"attached": true`，在 Bub 组装 prompt 时才下载（仅限 QQ 媒体域名或公网地址，有大小上限）。其余图片只保留元数据，模型可用 `qq.view_image(message_id, index)` 查看，该工具直接返回图片本身。其他文件不会在收到时下载，`qq.fetch_attachment(message_id, index)` 会把文件保存到 `inbox/<message_id>/`。两个工具都只能访问同一会话中的消息。引用消息里的附件通过引用它的那条消息访问，序号就是 `quoted_messages` 中的 `index`，自动附图规则与消息自身的图片相同；QQ 会为引用里的附件重新签发下载网址，所以引用一张旧图，即使原网址已过期或 gateway 重启过，机器人也能重新下载。地址被拒绝时，返回给模型的提示为 `Private network address check failed, access refused.`，并附一句说明，要求模型不要换其他方式（bash、curl、脚本）下载。附件下载信任 QQ 媒体域名，所以在 Surge、Clash 等 fake-IP 代理下也能正常使用。附加的图片会留在会话历史中直到 handoff，所以繁忙的群里请保持 `inbound_images: direct`。
 
 `direct` 模式下普通回复应直接返回最终文本，由 Bub outbound 路由调用 `QQChannel.send`；`tool` 模式下通过 `qq.send` 工具回复。两种模式下 `msg_seq` 都由插件内部管理——不要自行构造协议字段。
 
@@ -339,7 +344,7 @@ C2C 保持仅被动回复：官方文档写明 C2C 主动推送已于 2025-04-21
 - WebSocket 接收路径（重连 / resume，可选分片）
 - C2C / 群聊入站适配、`msg_id` 去重、60 分钟被动文本或 markdown 回复
 - `qq.send` 富媒体：下载 `media_url`（仅公网地址）或使用 `media_path`（仅 `outbox/`、`inbox/`），再分片上传并以 `msg_type = 7` 发送（单聊/群聊隔离；仅被动窗口）
-- 用 `qq.fetch_attachment` 按需下载附件
+- 为多模态模型提供收到的图片（直接发给机器人的消息自动附加，其余用 `qq.view_image` 查看），以及用 `qq.fetch_attachment` 按需下载文件
 - 插件自有消息按钮（固定模板）；`INTERACTION_CREATE` type 11/12 先 PUT 再入站
 - 群聊文本收发；消息范围由 QQ 客户端群管理员控制
 - 同一 `session_id + msg_id + msg_seq` 的内存发送幂等

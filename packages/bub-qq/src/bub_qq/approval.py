@@ -264,8 +264,19 @@ _RISKY_COMMANDS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# Not destructive, but worth a look: these reach the network without the
+# plugin's address check (a refused qq.view_image / media_url retried by hand).
+_NOTABLE_COMMANDS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:curl|wget|aria2c)\b[^\n]*\bhttps?://"), "下载网络内容，不经过插件的内网地址检查"),
+)
+
+
 def risky_command_reasons(preview: str) -> list[str]:
     return [reason for pattern, reason in _RISKY_COMMANDS if pattern.search(preview)]
+
+
+def notable_command_reasons(preview: str) -> list[str]:
+    return [reason for pattern, reason in _NOTABLE_COMMANDS if pattern.search(preview)]
 
 
 def _fenced(text: str, language: str = "") -> str:
@@ -419,6 +430,9 @@ async def _send_approval_message(pending: PendingApproval, config: QQConfig) -> 
         if reasons
         else ""
     )
+    notes = notable_command_reasons(pending.preview)
+    if notes:
+        warning += f"ℹ️ 注意：{'、'.join(notes)}，请确认网址可信后再批准。\n\n"
     body = (
         "## 命令执行审批\n\n"
         f"{warning}"

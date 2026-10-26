@@ -14,6 +14,7 @@ type GroupWake = Literal["all", "mention"]
 type GroupShell = Literal["deny", "approval"]
 type ShellSandbox = Literal["none", "external"]
 type C2CAccess = Literal["admin_users", "allow_users"]
+type InboundImages = Literal["direct", "all", "off"]
 
 
 @bub.config(name="qq")
@@ -162,12 +163,31 @@ class QQConfig(bub.Settings):
             " Replies via qq.send always work."
         ),
     )
+    inbound_images: InboundImages = Field(
+        default="direct",
+        description=(
+            "Which inbound images are attached to the message for the model to"
+            " see: 'direct' (private chats and group messages that @ the bot),"
+            " 'all', or 'off'. Others stay metadata; the model opens them with"
+            " qq.view_image."
+        ),
+    )
+    inbound_images_per_message: int = Field(
+        default=4, ge=0, description="Most images attached to one inbound message."
+    )
+    inbound_image_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        description="Largest image attached or opened with qq.view_image, in bytes.",
+    )
     download_allow_hosts: str = Field(
         default="",
         description=(
-            "Comma-separated hostnames qq.send media_url may fetch even when"
-            " they resolve to a private address (e.g. an intranet image"
-            " host). Every other host must be a public internet address."
+            "Comma-separated hostnames that qq.send media_url, web.fetch and"
+            " attachment downloads may reach even when they resolve to a private"
+            " address (e.g. an intranet image host). Every other host must be a"
+            " public internet address; attachments may also come from QQ's media"
+            " domains."
         ),
     )
     exec_approval: bool | None = Field(

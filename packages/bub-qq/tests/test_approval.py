@@ -863,6 +863,32 @@ def test_risky_command_hints(command, risky) -> None:
     assert bool(approval.risky_command_reasons(command)) is risky
 
 
+@pytest.mark.parametrize(
+    ("command", "notable"),
+    [
+        ('curl -sL -o inbox/a.png "https://multimedia.nt.qq.com.cn/download?x=1"', True),
+        ("wget http://10.0.0.5/secret", True),
+        ("cd inbox && aria2c https://example.com/a.zip", True),
+        ("curl --version", False),
+        ("grep -rn https:// src", False),
+    ],
+)
+def test_download_command_notes(command, notable) -> None:
+    assert bool(approval.notable_command_reasons(command)) is notable
+
+
+def test_card_notes_a_download_without_calling_it_destructive(config, tmp_path) -> None:
+    channel = FakeChannel()
+    set_active_channel(channel)
+    _hook(
+        ToolCall(run_id="r", tool="bash", arguments={"command": "curl -sLO https://example.com/a.png"}),
+        _state(ADMIN, tmp_path),
+    )
+    card = channel.messages[0].content
+    assert "ℹ️ 注意：下载网络内容，不经过插件的内网地址检查" in card
+    assert "高危命令" not in card
+
+
 def test_failed_command_is_reported_as_failed_with_its_output(config, tmp_path) -> None:
     state = {QQ_STATE_KEY: {"scope": "group", "sender_id": "admin-m", "group_openid": "group-1",
                             "approval_id": "abc", "approval_preview": "rm -rf /*"}}

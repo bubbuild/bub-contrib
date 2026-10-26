@@ -25,6 +25,7 @@ from loguru import logger
 
 from ..inbound.persist import download_to_path
 from ..netguard import BlockedAddressError
+from ..netguard import download_error_text
 from ..netguard import download_allow_hosts
 from ..netguard import guarded_session
 from ..netguard import check_public_url
@@ -134,7 +135,7 @@ async def materialize_media_file(
             status_code=0,
             trace_id=None,
             error_code=None,
-            error_message=f"failed to download media_url ({spec.url}): {exc}",
+            error_message=f"failed to download media_url ({spec.url}): {download_error_text(exc)}",
         ) from exc
     return MediaSpec(
         file_type=spec.file_type,
@@ -178,8 +179,8 @@ def media_spec_from_args(
         return None, "Not sent: media_url must be an http(s) URL."
     try:
         check_public_url(url, allow_hosts=download_allow_hosts())
-    except BlockedAddressError:
-        return None, "Not sent: media_url must point to a public internet address."
+    except BlockedAddressError as exc:
+        return None, f"Not sent: {download_error_text(exc)}"
     resolved_type = _optional_file_type(file_type)
     if resolved_type is None:
         resolved_type = infer_file_type(url)

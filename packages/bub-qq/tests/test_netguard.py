@@ -10,6 +10,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from bub_qq.inbound.persist import download_to_path
+from bub_qq.netguard import BLOCKED_GUIDANCE
+from bub_qq.netguard import BLOCKED_MESSAGE
+from bub_qq.netguard import QQ_MEDIA_DOMAINS
 from bub_qq.netguard import BlockedAddressError
 from bub_qq.netguard import PublicOnlyResolver
 from bub_qq.netguard import check_public_url
@@ -74,10 +77,36 @@ def test_public_only_resolver_filters_private_answers() -> None:
         assert [r["host"] for r in results] == ["93.184.215.14"]
 
         private = PublicOnlyResolver(_FakeResolver(["127.0.0.1", "169.254.169.254"]))
-        with pytest.raises(BlockedAddressError):
+        with pytest.raises(BlockedAddressError, match=BLOCKED_MESSAGE):
             await private.resolve("rebind.example", 80)
 
     asyncio.run(_run())
+
+
+def test_qq_media_domains_are_trusted_behind_fake_ip_proxies() -> None:
+    # Surge and Clash resolve every name into 198.18.0.0/15 (not public).
+    async def _run() -> None:
+        trusting = PublicOnlyResolver(
+            _FakeResolver(["198.18.184.114"]), trusted_domains=QQ_MEDIA_DOMAINS
+        )
+        for host in ("multimedia.nt.qq.com.cn", "gchat.qpic.cn", "qq.com", "QQ.COM."):
+            assert [r["host"] for r in await trusting.resolve(host, 443)] == ["198.18.184.114"]
+        # Only those domains and their subdomains, not look-alikes.
+        for host in ("evilqq.com", "qq.com.evil.example", "example.com"):
+            with pytest.raises(BlockedAddressError, match=BLOCKED_MESSAGE):
+                await trusting.resolve(host, 443)
+        # Other downloads (media_url, web.fetch) do not trust them.
+        with pytest.raises(BlockedAddressError):
+            await PublicOnlyResolver(_FakeResolver(["198.18.184.114"])).resolve("gchat.qpic.cn", 443)
+
+    asyncio.run(_run())
+
+
+def test_trusted_domains_do_not_exempt_ip_literals() -> None:
+    # A redirect from a QQ host to a private IP is still refused.
+    with pytest.raises(BlockedAddressError, match=BLOCKED_MESSAGE):
+        check_public_url("http://10.0.0.5/x", trusted_domains=QQ_MEDIA_DOMAINS)
+    check_public_url("https://multimedia.nt.qq.com.cn/download", trusted_domains=QQ_MEDIA_DOMAINS)
 
 
 def _redirect_app() -> web.Application:
@@ -164,7 +193,7 @@ def test_download_media_url_refuses_loopback(tmp_path: Path, url: str) -> None:
 def test_media_spec_rejects_private_literal_early() -> None:
     spec, error = media_spec_from_args("http://169.254.169.254/latest/meta-data")
     assert spec is None
-    assert error == "Not sent: media_url must point to a public internet address."
+    assert error == f"Not sent: {BLOCKED_MESSAGE} {BLOCKED_GUIDANCE}"
 
 
 def _fetch_decision(url: str, monkeypatch, allow_hosts: str = ""):
@@ -196,7 +225,7 @@ def _fetch_decision(url: str, monkeypatch, allow_hosts: str = ""):
 def test_web_fetch_to_loopback_is_refused_by_default(monkeypatch) -> None:
     blocked = _fetch_decision("http://127.0.0.1:9/file", monkeypatch)
     assert blocked is not None and blocked.action == "deny"
-    assert "refused" in blocked.message
+    assert blocked.message == f"web.fetch refused: {BLOCKED_MESSAGE} {BLOCKED_GUIDANCE}"
 
 
 def test_web_fetch_follows_redirects_through_the_guard(monkeypatch, tmp_path) -> None:

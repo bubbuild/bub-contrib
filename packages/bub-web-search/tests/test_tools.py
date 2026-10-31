@@ -358,3 +358,62 @@ def test_provide_tools_builds_from_the_configured_settings(monkeypatch) -> None:
     provided = {tool.name for tool in tools.provide_tools()}
 
     assert provided == {tools.SEARCH_TOOL_NAME, tools.READ_TOOL_NAME}
+
+
+def test_onboard_config_collects_deepseek_settings(monkeypatch) -> None:
+    confirm_calls: list[str] = []
+
+    def ask_confirm(message: str, **kwargs) -> bool:
+        confirm_calls.append(message)
+        return True
+
+    monkeypatch.setattr(tools.bub_inquirer, "ask_confirm", ask_confirm)
+    monkeypatch.setattr(
+        tools.bub_inquirer, "ask_select", lambda *args, **kwargs: "deepseek"
+    )
+    monkeypatch.setattr(
+        tools.bub_inquirer, "ask_secret", lambda *args, **kwargs: "deepseek-secret"
+    )
+    monkeypatch.setattr(
+        tools.bub_inquirer,
+        "ask_text",
+        lambda *args, **kwargs: "https://api.deepseek.example",
+    )
+
+    assert tools.onboard_config({}) == {
+        "web-search": {
+            "provider": "deepseek",
+            "deepseek_api_key": "deepseek-secret",
+            "deepseek_api_base": "https://api.deepseek.example",
+        }
+    }
+    # DeepSeek Fetch backs web.read, so the Jina reader prompt is skipped.
+    assert confirm_calls == ["Configure web search"]
+
+
+def test_build_tools_enables_deepseek_tools() -> None:
+    built = tools.build_tools(lambda: WebSearchSettings(deepseek_api_key="secret"))
+    search_tool = built[tools.SEARCH_TOOL_NAME]
+    read_tool = built[tools.READ_TOOL_NAME]
+
+    assert search_tool.description.startswith(
+        "Search the web with DeepSeek Search and return ranked results."
+    )
+    assert "max_results" in search_tool.parameters["properties"]
+    assert search_tool.output_schema is not None
+    assert search_tool.output_schema["title"] == "DeepSeekSearchResult"
+    assert read_tool.output_schema is not None
+    assert read_tool.output_schema["title"] == "DeepSeekReadResult"
+
+
+def test_build_tools_prefers_jina_reader_over_deepseek() -> None:
+    built = tools.build_tools(
+        lambda: WebSearchSettings(
+            provider="deepseek", deepseek_api_key="secret", jina_api_key="secret"
+        )
+    )
+
+    assert built[tools.SEARCH_TOOL_NAME].output_schema["title"] == (
+        "DeepSeekSearchResult"
+    )
+    assert built[tools.READ_TOOL_NAME].output_schema["title"] == "JinaReadResult"

@@ -16,6 +16,7 @@ to enable exactly one search provider:
 - `ollama`
 - `searxng`
 - `jina`
+- `deepseek`
 
 If the provider is unset it is inferred from which provider-specific
 configuration is present. If nothing resolves, `web.search` is not registered.
@@ -23,9 +24,9 @@ configuration is present. If nothing resolves, `web.search` is not registered.
 ## Reader providers
 
 There is no explicit reader selector: `web.read` is enabled by configuring a
-reader-capable platform. Currently that means a `jina_api_key` (Jina Reader);
-without one, `web.read` is not registered. A selector field will only be
-introduced once more than one reader platform exists.
+reader-capable platform: a `jina_api_key` (Jina Reader) or a
+`deepseek_api_key` (DeepSeek Fetch). When both are present, Jina Reader wins.
+Without either, `web.read` is not registered.
 
 ## Installation
 
@@ -87,6 +88,29 @@ web-search:
   searxng_base_url: https://searx.example.com
   jina_api_key: jina_...
 ```
+
+## DeepSeek
+
+Uses DeepSeek's [Search & Fetch API](https://api-docs.deepseek.com/guides/search/)
+with the same API key as the DeepSeek chat models.
+
+Required:
+
+- `BUB_SEARCH_PROVIDER=deepseek` for search; `BUB_SEARCH_DEEPSEEK_API_KEY`
+  alone already enables the `web.read` reader (unless a Jina key is also set)
+- `BUB_SEARCH_DEEPSEEK_API_KEY`
+
+Optional:
+
+- `BUB_SEARCH_DEEPSEEK_API_BASE`
+  - Default: `https://api.deepseek.com`
+- `BUB_SEARCH_DEEPSEEK_TIMEOUT_SECONDS`
+  - Default: `30`
+
+The `web.search` tool accepts `query` (at most 128 characters, supports
+operators such as `site:`, `-site:`, `"phrase"`, `lang:`, `after:`, `before:`)
+and `max_results` (clamped to 1–50). The `web.read` tool accepts `url` and
+returns the page content as markdown.
 
 ## SearXNG
 

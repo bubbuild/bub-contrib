@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "bub[app]",
+    "bub[app]>=0.6.0",
     "loguru",
     "httpx>=0.28.1",
     "lark-oapi>=1.4.20",

@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "bub[app]",
+    "bub[app]>=0.6.0",
     "fastmcp>=3.2.0,<4",
     "loguru",
     "pydantic-settings>=2.10.1",

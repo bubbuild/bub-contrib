@@ -31,3 +31,12 @@ def test_wechat_tool_returns_structured_result(monkeypatch) -> None:
 
 def test_plugin_provides_the_wechat_tool() -> None:
     assert plugin.WechatPlugin.provide_tools(None) == [plugin.wechat_send]
+
+
+def test_wechat_sessions_get_the_direct_reply_prompt() -> None:
+    wechat = plugin.WechatPlugin(None)
+
+    prompt = wechat.system_prompt("", {"session_id": "wechat:user-1"})
+
+    assert prompt == plugin.REPLY_PROMPT
+    assert wechat.system_prompt("", {"session_id": "telegram:1"}) is None

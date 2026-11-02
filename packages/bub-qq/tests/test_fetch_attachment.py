@@ -165,6 +165,8 @@ def test_fetch_is_guarded_against_private_addresses(tmp_path, server_url, monkey
             timestamp=None,
             attachments=(_attachment(server_url),),
         )
-        assert "not a public internet address" in _fetch(_context(tmp_path))
+        result = _fetch(_context(tmp_path))
+        assert result.startswith("Not downloaded: Private network address check failed, access refused. ")
+        assert "do not fetch the URL another way" in result
     finally:
         set_active_channel(None)

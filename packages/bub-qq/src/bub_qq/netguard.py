@@ -10,6 +10,12 @@ Two layers are needed because aiohttp skips the resolver for IP literals:
 :class:`PublicOnlyResolver` drops non-public addresses at DNS resolution
 time, so the connection goes to the address that was checked (no DNS
 rebinding window).
+
+Attachment URLs are different: they arrive in QQ's event payload, so
+neither the model nor chat members choose them. Downloads of attachments
+trust QQ's media domains (:data:`QQ_MEDIA_DOMAINS`), which keeps them
+working behind fake-IP proxies (Surge, Clash) that resolve every name into
+198.18.0.0/15.
 """
 
 from __future__ import annotations
@@ -28,9 +34,37 @@ from aiohttp.resolver import DefaultResolver
 
 MAX_FETCH_BYTES = 5 * 1024 * 1024
 
+# Domains (and their subdomains) of QQ's media CDN, e.g.
+# multimedia.nt.qq.com.cn and gchat.qpic.cn.
+QQ_MEDIA_DOMAINS = frozenset({"qq.com.cn", "qpic.cn", "qq.com"})
+
+BLOCKED_MESSAGE = "Private network address check failed, access refused."
+
+# Appended for the model: without it, a refused download tends to be retried
+# through bash/curl, which only an admin approval stops.
+BLOCKED_GUIDANCE = (
+    "This is a security rule, not a temporary error: do not fetch the URL"
+    " another way (bash, curl, wget or a script). Tell the user it was refused."
+)
+
 
 class BlockedAddressError(ValueError):
     """Raised when a download target is not a public internet address."""
+
+
+def download_error_text(exc: BaseException) -> str:
+    """``exc`` as text for the model; a refused address carries :data:`BLOCKED_GUIDANCE`."""
+
+    if isinstance(exc, BlockedAddressError):
+        return f"{exc} {BLOCKED_GUIDANCE}"
+    return str(exc)
+
+
+def _is_exempt(host: str, allow_hosts: frozenset[str], trusted_domains: frozenset[str]) -> bool:
+    host = host.lower().rstrip(".")
+    if host in allow_hosts:
+        return True
+    return any(host == domain or host.endswith(f".{domain}") for domain in trusted_domains)
 
 
 def is_public_address(host: str) -> bool:
@@ -42,10 +76,16 @@ def is_public_address(host: str) -> bool:
     return address.is_global
 
 
-def check_public_url(url: str, *, allow_hosts: frozenset[str] = frozenset()) -> None:
+def check_public_url(
+    url: str,
+    *,
+    allow_hosts: frozenset[str] = frozenset(),
+    trusted_domains: frozenset[str] = frozenset(),
+) -> None:
     """Raise :class:`BlockedAddressError` unless ``url`` may be fetched.
 
-    ``allow_hosts`` (``download_allow_hosts``) exempts listed hostnames.
+    ``allow_hosts`` (``download_allow_hosts``) exempts listed hostnames;
+    ``trusted_domains`` exempts those domains and their subdomains.
     """
 
     parsed = urlparse(url)
@@ -54,14 +94,14 @@ def check_public_url(url: str, *, allow_hosts: frozenset[str] = frozenset()) -> 
     host = parsed.hostname
     if not host:
         raise BlockedAddressError("URL has no host")
-    if host.lower() in allow_hosts:
+    if _is_exempt(host, allow_hosts, trusted_domains):
         return
     try:
         public = is_public_address(host)
     except ValueError:
         return  # a hostname; PublicOnlyResolver checks what it resolves to
     if not public:
-        raise BlockedAddressError(f"{host} is not a public internet address")
+        raise BlockedAddressError(BLOCKED_MESSAGE)
 
 
 class PublicOnlyResolver(AbstractResolver):
@@ -72,21 +112,21 @@ class PublicOnlyResolver(AbstractResolver):
         inner: AbstractResolver | None = None,
         *,
         allow_hosts: frozenset[str] = frozenset(),
+        trusted_domains: frozenset[str] = frozenset(),
     ) -> None:
         self._inner = inner if inner is not None else DefaultResolver()
         self._allow_hosts = allow_hosts
+        self._trusted_domains = trusted_domains
 
     async def resolve(
         self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
     ) -> list[ResolveResult]:
         results = await self._inner.resolve(host, port, family)
-        if host.lower() in self._allow_hosts:
+        if _is_exempt(host, self._allow_hosts, self._trusted_domains):
             return results
         allowed = [result for result in results if is_public_address(result["host"])]
         if not allowed:
-            raise BlockedAddressError(
-                f"{host} does not resolve to a public internet address"
-            )
+            raise BlockedAddressError(BLOCKED_MESSAGE)
         return allowed
 
     async def close(self) -> None:
@@ -94,11 +134,17 @@ class PublicOnlyResolver(AbstractResolver):
 
 
 def guarded_session(
-    *, timeout: float, allow_hosts: frozenset[str] = frozenset(), **kwargs: Any
+    *,
+    timeout: float,
+    allow_hosts: frozenset[str] = frozenset(),
+    trusted_domains: frozenset[str] = frozenset(),
+    **kwargs: Any,
 ) -> aiohttp.ClientSession:
     """A client session whose connections only reach public addresses."""
 
-    connector = aiohttp.TCPConnector(resolver=PublicOnlyResolver(allow_hosts=allow_hosts))
+    connector = aiohttp.TCPConnector(
+        resolver=PublicOnlyResolver(allow_hosts=allow_hosts, trusted_domains=trusted_domains)
+    )
     return aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=timeout), connector=connector, **kwargs
     )
@@ -179,7 +225,7 @@ async def web_fetch_for_call(arguments: dict[str, Any] | None) -> tuple[bool, st
             allow_hosts=download_allow_hosts(),
         )
     except BlockedAddressError as exc:
-        return False, f"web.fetch refused: {exc}"
+        return False, f"web.fetch refused: {download_error_text(exc)}"
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
         return False, f"web.fetch failed: {exc}"
     return True, text

@@ -66,6 +66,7 @@ _SAFE_TOOLS = frozenset(
         "tape.search",
         "tool.describe",
         "qq.fetch_attachment",
+        "qq.view_image",
         "qq.version",
     }
 )

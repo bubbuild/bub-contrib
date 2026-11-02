@@ -9,6 +9,10 @@ from urllib.parse import urljoin
 
 import aiohttp
 
+from ..netguard import QQ_MEDIA_DOMAINS
+from ..netguard import check_public_url
+from ..netguard import download_allow_hosts
+from ..netguard import guarded_session
 from ..workspace import MAX_INBOUND_DOWNLOAD_BYTES
 
 MAX_REDIRECTS = 5
@@ -49,6 +53,30 @@ async def download_to_path(
             await _write_body(response, dest, max_bytes)
             return
     raise ValueError(f"more than {max_redirects} redirects")
+
+
+async def download_attachment(
+    url: str, dest: Path, *, max_bytes: int = MAX_INBOUND_DOWNLOAD_BYTES
+) -> None:
+    """Download an inbound attachment's URL into ``dest``.
+
+    The URL comes from QQ's event payload, so QQ's media domains are trusted;
+    any other host, including a redirect hop, must be a public address.
+    """
+
+    allow_hosts = download_allow_hosts()
+    async with guarded_session(
+        timeout=60, allow_hosts=allow_hosts, trusted_domains=QQ_MEDIA_DOMAINS
+    ) as session:
+        await download_to_path(
+            session,
+            url,
+            dest,
+            max_bytes=max_bytes,
+            url_guard=lambda hop: check_public_url(
+                hop, allow_hosts=allow_hosts, trusted_domains=QQ_MEDIA_DOMAINS
+            ),
+        )
 
 
 async def _write_body(

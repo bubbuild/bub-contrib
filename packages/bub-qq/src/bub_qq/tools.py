@@ -17,24 +17,26 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Literal, NotRequired, TypedDict, final
+from typing import Any, Literal, NotRequired, TypedDict, final
 
 import aiohttp
 import bub
+import republic
 from bub.channels.message import ChannelMessage
-from bub.core.tools import ToolContext, tool
+from bub.core.tools import ToolContext, content_result, tool
 
 from .config import QQConfig
 from .outbound.media import MediaSpec
+from .protocol.models import QQAttachment
 from .outbound.media import build_outbound_context
 from .outbound.media import infer_file_type
 from .outbound.media import media_spec_from_args
 from .outbound.media import parse_at_user_ids
 from .outbound.media import resolve_media_path
-from .inbound.persist import download_to_path
-from .netguard import check_public_url
-from .netguard import download_allow_hosts
-from .netguard import guarded_session
+from .inbound.images import image_mime_type
+from .inbound.images import load_image
+from .inbound.persist import download_attachment
+from .netguard import download_error_text
 from .runtime import get_active_channel
 from .security import QQ_STATE_KEY, REPLY_TOOL_NAME
 from .workspace import MAX_INBOUND_DOWNLOAD_BYTES
@@ -200,25 +202,15 @@ async def qq_fetch_attachment(
 
     Attachments are not downloaded automatically. Call this only when you
     need the file's contents (pass the message_id and the attachment's
-    position, 0-based, from the inbound payload), then read it with
-    fs.read or forward it with qq.send media_path.
+    index: its 0-based position in "attachments", or the "index" of one
+    inside "quoted_messages"), then read it with fs.read or forward it
+    with qq.send media_path.
     """
 
-    qq_state = context.state.get(QQ_STATE_KEY)
-    if not isinstance(qq_state, dict):
-        return "Not downloaded: only available inside QQ channel sessions."
-    channel = get_active_channel()
-    if channel is None:
-        return "Not downloaded: the QQ channel is not running in this process."
-    session_id = str(qq_state.get("session_id") or "")
-    record = channel.session_state.attachments_by_message_id.get(message_id)
-    # Only messages from this conversation: no reaching into other chats.
-    if record is None or record[0] != session_id:
-        return "Not downloaded: no attachments known for that message_id in this chat."
-    attachments = record[1]
-    if not 0 <= index < len(attachments):
-        return f"Not downloaded: index must be between 0 and {len(attachments) - 1}."
-    attachment = attachments[index]
+    found = _chat_attachment(context, message_id, index)
+    if isinstance(found, str):
+        return f"Not downloaded: {found}"
+    attachment = found
     if not attachment.url:
         return "Not downloaded: that attachment has no download URL."
     if attachment.size is not None and attachment.size > MAX_INBOUND_DOWNLOAD_BYTES:
@@ -229,18 +221,64 @@ async def qq_fetch_attachment(
     )
     if dest.is_file():
         return f"Already downloaded: {dest}"
-    allow_hosts = download_allow_hosts()
     try:
-        async with guarded_session(timeout=60, allow_hosts=allow_hosts) as session:
-            await download_to_path(
-                session,
-                attachment.url,
-                dest,
-                url_guard=lambda hop: check_public_url(hop, allow_hosts=allow_hosts),
-            )
+        await download_attachment(attachment.url, dest)
     except (OSError, aiohttp.ClientError, TimeoutError, ValueError) as exc:
-        return f"Not downloaded: {exc}"
+        return f"Not downloaded: {download_error_text(exc)}"
     return f"Downloaded to {dest} ({dest.stat().st_size} bytes)."
+
+
+def _chat_attachment(context: ToolContext, message_id: str, index: int) -> QQAttachment | str:
+    """An attachment of a message in this chat, or why there is none."""
+
+    qq_state = context.state.get(QQ_STATE_KEY)
+    if not isinstance(qq_state, dict):
+        return "only available inside QQ channel sessions."
+    channel = get_active_channel()
+    if channel is None:
+        return "the QQ channel is not running in this process."
+    session_id = str(qq_state.get("session_id") or "")
+    record = channel.session_state.attachments_by_message_id.get(message_id)
+    # Only messages from this conversation: no reaching into other chats.
+    if record is None or record[0] != session_id:
+        return "no attachments known for that message_id in this chat."
+    attachments = record[1]
+    if not 0 <= index < len(attachments):
+        return f"index must be between 0 and {len(attachments) - 1}."
+    return attachments[index]
+
+
+@tool(name="qq.view_image", context=True)
+async def qq_view_image(message_id: str, index: int = 0, *, context: ToolContext) -> dict[str, Any]:
+    """Look at an image attachment of a message in this chat.
+
+    Images in messages addressed to you are already attached to them
+    (their attachment entry has "attached": true). Use this for other
+    images: pass the message_id and the attachment's index, its 0-based
+    position in "attachments" or the "index" of one inside
+    "quoted_messages" (a quoted image is viewed through the quoting
+    message). Never write scripts or use OCR to read images.
+    """
+
+    found = _chat_attachment(context, message_id, index)
+    if isinstance(found, str):
+        return content_result([f"Not shown: {found}"])
+    mime_type = image_mime_type(found)
+    if mime_type is None:
+        return content_result(["Not shown: that attachment is not a PNG, JPEG, GIF or WebP image."])
+    config = bub.ensure_config(QQConfig)
+    try:
+        data = await load_image(
+            found,
+            workspace=workspace_from_state(context.state),
+            message_id=message_id,
+            index=index,
+            max_bytes=config.inbound_image_max_bytes,
+        )
+    except (OSError, aiohttp.ClientError, TimeoutError, ValueError) as exc:
+        return content_result([f"Not shown: {download_error_text(exc)}"])
+    name = found.filename or f"attachment {index}"
+    return content_result([f"Image {name} from message {message_id}:", republic.image(data, media_type=mime_type)])
 
 
 @tool(name="qq.version", exposure="command")
@@ -253,4 +291,4 @@ def qq_version() -> str:
         return "bub-qq (version unknown: package metadata not found)"
 
 
-TOOLS = [qq_send, qq_fetch_attachment, qq_version]
+TOOLS = [qq_send, qq_fetch_attachment, qq_view_image, qq_version]

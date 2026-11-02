@@ -161,6 +161,9 @@ Gateway start fails if `appid` / `secret` are empty, or if `receive_mode` is not
 | `group_shell` | `BUB_QQ_GROUP_SHELL` | `approval` | Shell (`bash`) for admins: `approval` (an admin taps to confirm every command; no always-allow) or `deny`. Non-admins never get a shell. Applies in groups and C2C |
 | `shell_sandbox` | `BUB_QQ_SHELL_SANDBOX` | `none` | Declare whether Bub runs inside an external sandbox (`none` / `external`). The plugin does not isolate commands; `none` with shell enabled logs a warning at startup |
 | `c2c_access` | `BUB_QQ_C2C_ACCESS` | `admin_users` | Who may use tools in C2C: `admin_users`, or `allow_users` (requires a non-empty `allow_users`; startup fails otherwise). Replies always work |
+| `inbound_images` | `BUB_QQ_INBOUND_IMAGES` | `direct` | Which inbound images are attached to the message so a multimodal model sees them: `direct` (private chats and group messages that @ the bot), `all`, or `off`. Others stay metadata the model can open with `qq.view_image` |
+| `inbound_images_per_message` | `BUB_QQ_INBOUND_IMAGES_PER_MESSAGE` | `4` | Most images attached to one message |
+| `inbound_image_max_bytes` | `BUB_QQ_INBOUND_IMAGE_MAX_BYTES` | `10485760` | Largest image attached or opened with `qq.view_image` |
 | `download_allow_hosts` | `BUB_QQ_DOWNLOAD_ALLOW_HOSTS` | empty | Comma-separated hostnames that `media_url`, `web.fetch` and attachment downloads may reach even on private addresses (e.g. an intranet image host) |
 | `group_tool_policy` | `BUB_QQ_GROUP_TOOL_POLICY` | `restricted` | Policy for tools other than shell and files in groups: `open` / `restricted` (denies `subagent` and `denied_tools`) / `locked` (denies every tool except replies, admins included) |
 | `c2c_tool_policy` | `BUB_QQ_C2C_TOOL_POLICY` | `open` | Same, for C2C users allowed by `c2c_access` |
@@ -230,15 +233,15 @@ Every action a chat can trigger passes one checkpoint, the **Guard**: model tool
 | write files (`fs.write` / `fs.edit`) | denied | inside the workspace |
 | protected files (`.env*`, `.git/`, the state file) | denied | denied |
 | send a file (`qq.send media_path`) | only `outbox/` and `inbox/` | same |
-| downloads (`media_url`, `web.fetch`, attachments) | public internet only, every redirect checked | same |
+| downloads (`media_url`, `web.fetch`, attachments) | public internet only, every redirect checked; attachments may also come from QQ's media domains (`qq.com.cn`, `qpic.cn`, `qq.com`), whose URLs QQ supplies | same |
 | code mode (`run_code` / `code_mode`) | denied | denied |
-| read-only tools (`tape.info` / `tape.search` / `tape.anchors` / `tape.handoff`, `skill`, `tool.describe`, `spill.read`, `help`, `qq.fetch_attachment`) | `group_tool_policy` / `c2c_tool_policy` | same |
+| read-only tools (`tape.info` / `tape.search` / `tape.anchors` / `tape.handoff`, `skill`, `tool.describe`, `spill.read`, `help`, `qq.fetch_attachment`, `qq.view_image`) | `group_tool_policy` / `c2c_tool_policy` | same |
 | session-changing tools (`tape.reset`, `subagent`, `model`, `reasoning_effort`, `quit`) | denied | `group_tool_policy` / `c2c_tool_policy` |
 | unlisted tools (other plugins, MCP, tools new in Bub) | denied unless matched by `allowed_tools` | `group_tool_policy` / `c2c_tool_policy` |
 
 In C2C, tools are admin-only by default (`c2c_access`); replies always work.
 
-**Approval.** An admin's shell command posts a card with the full command (commands too long to show in full are refused, never truncated) and two buttons, clickable only by that group's registered admins. A tap on allow issues a one-time token bound to the session, requester, tool and exact arguments, valid for 240 seconds; the command then re-enters the Guard to use it. The card shows the command itself (other arguments on a `#` line) and flags destructive patterns such as `rm -rf`, `find -delete`, `dd of=` or `curl | sh` with a warning; the warning is a hint, approval stays the admin's call. There is no always-allow. Once approved, model-issued calls and admins' comma commands alike are handed back to Bub as a comma command (a model call is first rewritten as the equivalent `,bash command=…`), so they run in the original session's execution environment, post their output to the chat and land on the session tape. Bub keeps command output out of the model's context, so how each approval ended (`ran` with its output, `denied`, `expired`, `refused`, `failed`) is added once to the session's next message as `approval_results` (the last 3, output cut at 500 characters).
+**Approval.** An admin's shell command posts a card with the full command (commands too long to show in full are refused, never truncated) and two buttons, clickable only by that group's registered admins. A tap on allow issues a one-time token bound to the session, requester, tool and exact arguments, valid for 240 seconds; the command then re-enters the Guard to use it. The card shows the command itself (other arguments on a `#` line) and flags destructive patterns such as `rm -rf`, `find -delete`, `dd of=` or `curl | sh` with a warning, and notes downloads (`curl`/`wget`/`aria2c` with a URL), which skip the plugin's address check; both are hints, approval stays the admin's call. There is no always-allow. Once approved, model-issued calls and admins' comma commands alike are handed back to Bub as a comma command (a model call is first rewritten as the equivalent `,bash command=…`), so they run in the original session's execution environment, post their output to the chat and land on the session tape. Bub keeps command output out of the model's context, so how each approval ended (`ran` with its output, `denied`, `expired`, `refused`, `failed`) is added once to the session's next message as `approval_results` (the last 3, output cut at 500 characters).
 
 **Shell is not sandboxed by the plugin.** Nothing in bub-qq confines what an approved command does. Run Bub in a container or similar and set `shell_sandbox=external`, or set `group_shell=deny`.
 
@@ -290,6 +293,8 @@ For webhook mode, expose a public HTTPS URL that reaches the embedded server (ho
 
 CLI chat (`bub chat`) does not replace the QQ channel; use gateway for QQ IO.
 
+To see each event exactly as QQ sent it (e.g. to check what a quote or a forwarded chat record contains), set Bub's `verbose: 1` (or `BUB_VERBOSE=1`): every event is then logged as a `qq.transport.payload` DEBUG line on the gateway's stderr. Bub writes no log file, so keep one with `bub gateway 2>&1 | tee gateway.log`. These lines hold message text, openids and attachment URLs with temporary download keys; turn `verbose` back off when done and do not share the log as is.
+
 ## Session and message mapping
 
 | Concept | Format / behavior |
@@ -319,11 +324,11 @@ Inbound non-command messages are encoded as a JSON string, including fields like
 - `sender_name` / `sender_role` / `group_openid` / `chat_type` / `was_mentioned` (group)
 - `date`
 - `attachments` (when present)
-- `quoted_messages` (when present: quoted message / merged-forward chat record content from `msg_elements`, with `message`, optional `sender_name`, and nested `messages`)
+- `quoted_messages` (when present: quoted message / merged-forward chat record content from `msg_elements`, with `message`, optional `sender_name`, `attachments` and nested `messages`; quoted attachments carry an `index` numbered after the message's own)
 - `message_type` (0=text, 3=ARK card, 101/102/103=quote or chat record)
 - `ark_data` (card payload when `message_type` is 3)
 
-Attachments are not downloaded on arrival. When the model needs one it calls `qq.fetch_attachment(message_id, index)`, which saves it under `inbox/<message_id>/` (only for messages from the same chat).
+Images (PNG, JPEG, GIF, WebP) in messages addressed to the bot are attached to the message, so a multimodal model sees them; their entry in `attachments` is marked `"attached": true`, and they are downloaded (from QQ's media domains or public addresses, size-capped) when Bub builds the prompt. Other images stay metadata: the model opens one with `qq.view_image(message_id, index)`, which returns the image itself. Other files are not downloaded on arrival; `qq.fetch_attachment(message_id, index)` saves one under `inbox/<message_id>/`. Both tools only reach messages from the same chat. A quoted message's attachments are reached through the quoting message, by their `index` in `quoted_messages`, and are attached like the message's own images; QQ signs their URLs afresh, so quoting an old image lets the bot fetch it again after the original URL expired or the gateway restarted. A refused address is reported to the model as `Private network address check failed, access refused.`, followed by a sentence telling the model not to fetch the URL another way (bash, curl, scripts). Attachment downloads trust QQ's media domains, so they also work behind fake-IP proxies such as Surge or Clash. Attached images stay in the session's history until a handoff, so keep `inbound_images: direct` in busy groups.
 
 In `direct` mode, normal replies should return final text and let Bub outbound routing call `QQChannel.send`; in `tool` mode, replies go through the `qq.send` tool. In both cases `msg_seq` is managed inside the plugin — never invent protocol fields.
 
@@ -339,7 +344,7 @@ In `direct` mode, normal replies should return final text and let Bub outbound r
 - WebSocket receive path with reconnect / resume and optional sharding
 - C2C / group inbound adaptation, `msg_id` dedupe, 60-minute passive text or markdown replies
 - `qq.send` rich media: download `media_url` (public addresses only) or use `media_path` (`outbox/` / `inbox/` only), multipart upload, then `msg_type = 7` (C2C/group isolated; passive window only)
-- On-demand attachment download with `qq.fetch_attachment`
+- Inbound images for multimodal models (attached to direct messages, `qq.view_image` for others) and on-demand file download with `qq.fetch_attachment`
 - Plugin-owned message buttons (fixed templates); `INTERACTION_CREATE` type 11/12 is PUT-acked then adapted inbound
 - Group text receive/reply; message scope is controlled in the QQ client by a group admin
 - In-memory send idempotency for the same `session_id + msg_id + msg_seq`

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ from .inbound.c2c import QQC2CInboundService
 from .inbound.group import GROUP_EVENTS
 from .inbound.group import QQGroupInboundService
 from .inbound.group import group_was_mentioned
+from .inbound.images import image_media
+from .protocol.models import QQAttachment
 from .inbound.group import strip_mention_text
 from .inbound.interaction import ACK_INTERACTION_TYPES
 from .inbound.interaction import DEFAULT_REQUIRE_MENTION
@@ -212,6 +215,14 @@ class QQChannel(Channel):
     async def _handle_transport_payload(self, payload: dict[str, Any]) -> None:
         op = payload.get("op")
         event_type = payload.get("t")
+        # The event exactly as QQ sent it (verbose: 1), for protocol debugging.
+        # It holds message text, openids and attachment URLs with download keys.
+        logger.opt(lazy=True).debug(
+            "qq.transport.payload op={} t={} payload={}",
+            lambda: op,
+            lambda: event_type,
+            lambda: json.dumps(payload, ensure_ascii=False, default=str),
+        )
         if op != 0:
             logger.info("qq.transport.ignored op={} t={}", op, event_type)
             return
@@ -272,6 +283,9 @@ class QQChannel(Channel):
             message.content, requester, channel_message
         ):
             return
+        channel_message = self._attach_images(
+            message.inbound_attachments, channel_message, direct=True
+        )
         await self._on_receive(attach_approval_outcomes(channel_message))
 
     async def _handle_group_message(self, payload: dict[str, Any]) -> None:
@@ -299,7 +313,59 @@ class QQChannel(Channel):
             channel_message,
         ):
             return
+        channel_message = self._attach_images(
+            message.inbound_attachments, channel_message, direct=group_was_mentioned(message)
+        )
         await self._on_receive(attach_approval_outcomes(channel_message))
+
+    def _attach_images(
+        self,
+        attachments: tuple[QQAttachment, ...],
+        channel_message: ChannelMessage,
+        *,
+        direct: bool,
+    ) -> ChannelMessage:
+        """Attach a message's images for the model to see, per inbound_images.
+
+        ``attachments`` are the message's own and its quoted messages', in
+        index order. ``direct`` marks messages addressed to the bot (private
+        chats, @ in a group). Attached images are flagged in the payload so
+        the model knows they are in the message; the others it can open with
+        qq.view_image.
+        """
+
+        mode = self._config.inbound_images
+        if (
+            not attachments
+            or channel_message.kind == "command"
+            or mode == "off"
+            or (mode == "direct" and not direct)
+        ):
+            return channel_message
+        try:
+            payload = json.loads(channel_message.content)
+        except ValueError:
+            return channel_message
+        if not isinstance(payload, dict):
+            return channel_message
+        media, indices = image_media(
+            attachments,
+            workspace=self._workspace,
+            message_id=str(payload.get("message_id") or ""),
+            max_count=self._config.inbound_images_per_message,
+            max_bytes=self._config.inbound_image_max_bytes,
+        )
+        if not media:
+            return channel_message
+        listed = _listed_attachments(payload)
+        for index in indices:
+            if index in listed:
+                listed[index]["attached"] = True
+        return replace(
+            channel_message,
+            content=json.dumps(payload, ensure_ascii=False),
+            media=[*channel_message.media, *media],
+        )
 
     @property
     def session_state(self) -> QQSessionState:
@@ -540,3 +606,29 @@ def _is_group_target(channel_name: str, message: ChannelMessage) -> bool:
     return chat_id.startswith("group:") or session_id.startswith(
         f"{channel_name}:group:"
     )
+
+
+def _listed_attachments(payload: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    """The payload's attachment entries by index.
+
+    Own attachments are numbered by position, quoted ones by their ``index``.
+    """
+
+    entries: dict[int, dict[str, Any]] = {}
+    listed = payload.get("attachments")
+    if isinstance(listed, list):
+        entries.update(
+            (position, entry) for position, entry in enumerate(listed) if isinstance(entry, dict)
+        )
+
+    def walk(quoted: object) -> None:
+        for item in quoted if isinstance(quoted, list) else ():
+            if not isinstance(item, dict):
+                continue
+            for entry in item.get("attachments") or ():
+                if isinstance(entry, dict) and isinstance(entry.get("index"), int):
+                    entries[entry["index"]] = entry
+            walk(item.get("messages"))
+
+    walk(payload.get("quoted_messages"))
+    return entries

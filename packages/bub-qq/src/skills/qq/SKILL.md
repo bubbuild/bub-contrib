@@ -40,7 +40,7 @@ Current QQ inbound JSON typically includes:
 - `message_id`: inbound id for passive reply
 - `sender_id`: C2C `user_openid`, or group `member_openid`
 - `sender_name`, `group_openid`, `chat_type`, `was_mentioned`, `date`
-- `attachments`: metadata only. Nothing is downloaded until you call `qq.fetch_attachment(message_id, index)` (index is the 0-based position in `attachments`); it returns the saved path under `inbox/`. Only fetch when the conversation needs the file.
+- `attachments`: images marked `"attached": true` are already in the message — look at them directly. To see another image (e.g. from an earlier message, or one in a group message not addressed to you), call `qq.view_image(message_id, index)` (index is the 0-based position in `attachments`, or the `index` of an attachment inside `quoted_messages`). Never write scripts or use OCR to read an image. For other files, `qq.fetch_attachment(message_id, index)` saves them under `inbox/` and returns the path; only fetch when the conversation needs the file.
 - `message_type` (0=text, 3=ARK card, 101/102/103=quote or chat record)
 - `ark_data` (structured card when `message_type` is 3)
 - `quoted_messages`

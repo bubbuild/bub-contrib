@@ -6,6 +6,7 @@ from bub.builtin.auth import app as auth_app
 from bub.channels import Channel
 from bub.core.tools import Tool, ToolContext
 from bub.channels.contracts import MessageHandler
+from bub.turn import TurnState
 
 from bub_wechat.channel import OutgoingMessage, WeChatChannel, get_token_path
 
@@ -21,6 +22,14 @@ def wechat():
 
 
 _channel: WeChatChannel | None = None
+
+REPLY_PROMPT = """\
+<wechat_response_instruct>
+This conversation is on the WeChat channel ($wechat), which overrides the generic channel guidance above:
+- Your plain final reply text IS delivered to the WeChat chat as-is. To reply, write the reply text and end the turn.
+- Do not call the wechat tool for ordinary text; it would send the same content twice. Use it only to attach an image, video or file.
+- Never end with a confirmation such as "sent to WeChat"; the final reply is itself a chat message the user sees.
+</wechat_response_instruct>"""
 
 
 @final
@@ -47,6 +56,13 @@ async def wechat_send(
 class WechatPlugin:
     def __init__(self, framework: BubFramework) -> None:
         self.framework = framework
+
+    @hookimpl
+    def system_prompt(self, prompt: str | list[dict], state: TurnState) -> str | None:
+        session_id = state.get("session_id") if isinstance(state, dict) else None
+        if isinstance(session_id, str) and session_id.startswith("wechat:"):
+            return REPLY_PROMPT
+        return None
 
     @hookimpl
     def provide_tools(self) -> list[Tool]:

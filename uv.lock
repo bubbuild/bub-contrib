@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -23,6 +23,7 @@ members = [
     "bub-extism",
     "bub-feishu",
     "bub-github-copilot",
+    "bub-herdr",
     "bub-kimi",
     "bub-mcp",
     "bub-mcp-server",
@@ -584,6 +585,7 @@ dependencies = [
     { name = "bub-extism" },
     { name = "bub-feishu" },
     { name = "bub-github-copilot" },
+    { name = "bub-herdr" },
     { name = "bub-kimi" },
     { name = "bub-mcp" },
     { name = "bub-mcp-server" },
@@ -630,6 +632,7 @@ requires-dist = [
     { name = "bub-extism", editable = "packages/bub-extism" },
     { name = "bub-feishu", editable = "packages/bub-feishu" },
     { name = "bub-github-copilot", editable = "packages/bub-github-copilot" },
+    { name = "bub-herdr", editable = "packages/bub-herdr" },
     { name = "bub-kimi", editable = "packages/bub-kimi" },
     { name = "bub-mcp", editable = "packages/bub-mcp" },
     { name = "bub-mcp-server", editable = "packages/bub-mcp-server" },
@@ -848,6 +851,17 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.13.1" },
     { name = "typer" },
 ]
+
+[[package]]
+name = "bub-herdr"
+version = "0.1.0"
+source = { editable = "packages/bub-herdr" }
+dependencies = [
+    { name = "bub", extra = ["app"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bub", extras = ["app"], git = "https://github.com/bubbuild/bub.git?branch=main" }]
 
 [[package]]
 name = "bub-kimi"
@@ -1173,6 +1187,7 @@ version = "0.1.0"
 source = { editable = "packages/bub-wechat" }
 dependencies = [
     { name = "bub", extra = ["app"] },
+    { name = "cryptography" },
     { name = "loguru" },
     { name = "typer" },
     { name = "weixin-bot-sdk" },
@@ -1181,6 +1196,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bub", extras = ["app"], git = "https://github.com/bubbuild/bub.git?branch=main" },
+    { name = "cryptography" },
     { name = "loguru" },
     { name = "typer" },
     { name = "weixin-bot-sdk", specifier = ">=0.2.0" },

@@ -15,10 +15,20 @@ from acp.schema import (
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
+import republic
 from pydantic import BaseModel, TypeAdapter
-from bub.core.tools import Tool, ToolContext
+from bub.core.tools import Tool, ToolContext, content_result
 
 type TerminalObserver = Callable[[str, str, str], Awaitable[None]]
+
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 class AskUserInput(BaseModel):
@@ -71,6 +81,23 @@ class ACPClientToolRuntime:
             limit=limit,
         )
         return response.content
+
+    async def read_image(self, path: str, context: ToolContext) -> dict[str, Any]:
+        resolved_path = _resolve_path(context, path)
+        media_type = IMAGE_MEDIA_TYPES[resolved_path.suffix.lower()]
+        size = resolved_path.stat().st_size
+        if size > MAX_IMAGE_BYTES:
+            raise RuntimeError(
+                f"image is too large to show: {resolved_path} "
+                f"({size} bytes, limit {MAX_IMAGE_BYTES})"
+            )
+        data = await asyncio.to_thread(resolved_path.read_bytes)
+        return content_result(
+            [
+                f"Image {resolved_path.name} ({media_type}, {len(data)} bytes):",
+                republic.image(data, media_type=media_type),
+            ]
+        )
 
     async def write_file(
         self,
@@ -277,8 +304,13 @@ def build_client_tools(runtime: ACPClientToolRuntime) -> dict[str, Tool]:
         limit: int | None = None,
         *,
         context: ToolContext,
-    ) -> str:
-        """Read a text file through the ACP client filesystem."""
+    ) -> str | dict[str, Any]:
+        """Read a text file through the ACP client filesystem.
+
+        PNG, JPEG, WebP and GIF files are returned as images instead of text.
+        """
+        if Path(path).suffix.lower() in IMAGE_MEDIA_TYPES:
+            return await runtime.read_image(path, context)
         return await runtime.read_file(path, offset, limit, context)
 
     @partial(Tool.from_callable, name="fs.write", context=True, exposure="direct")

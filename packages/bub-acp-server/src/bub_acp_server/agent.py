@@ -37,6 +37,7 @@ from acp.schema import (
     LoadSessionResponse,
     McpCapabilities,
     NewSessionResponse,
+    PromptCapabilities,
     PromptResponse,
     ResourceContentBlock,
     ResumeSessionResponse,
@@ -553,6 +554,7 @@ class BubACPAgent:
             agent_capabilities=AgentCapabilities(
                 load_session=True,
                 mcp_capabilities=McpCapabilities(http=True, sse=True),
+                prompt_capabilities=PromptCapabilities(image=True),
                 field_meta=(
                     {"lody": dict(_LODY_EXTENSION_CAPABILITIES)}
                     if self._lody_client

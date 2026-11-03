@@ -9,6 +9,7 @@ Expose Bub as an Agent Client Protocol agent.
 - Optional Streamable HTTP and WebSocket transports at `/acp`, served by Hypercorn with HTTP/2 support
 - Gateway channel: `acp-server`, with HTTP startup and shutdown managed by Bub
 - ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/delete`, `session/close`, and `session/prompt`
+- Image prompt content, advertised as `promptCapabilities.image: true`
 - Streaming ACP `session/update` events from Bub stream events
 - ACP client-backed replacements for Bub's `bash`, `fs.read`, `fs.write`, and `fs.edit` tools while the ACP server is running
 - Session-scoped model and reasoning-effort selection through ACP config options
@@ -181,7 +182,9 @@ finally:
 
 Client-backed tools are selected from the capabilities advertised during initialization:
 
-- `fs.readTextFile` enables client-backed `fs.read`.
+- `fs.readTextFile` enables client-backed `fs.read`. ACP has no binary file read, so
+  `.png`, `.jpg`, `.jpeg`, `.webp`, and `.gif` paths are read from the agent's local
+  filesystem instead and returned to the model as an image (up to 10 MiB).
 - `fs.writeTextFile` enables client-backed `fs.write`.
 - Both filesystem capabilities are required for client-backed `fs.edit`.
 - `terminal` enables client-backed `bash`, `bash.output`, and `bash.kill` together.

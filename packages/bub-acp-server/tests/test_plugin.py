@@ -283,6 +283,8 @@ async def test_initialize_advertises_session_capabilities(unstable: bool) -> Non
         response.agent_capabilities.session_capabilities.resume is not None
     ) is unstable
     assert response.agent_capabilities.load_session is True
+    assert response.agent_capabilities.prompt_capabilities is not None
+    assert response.agent_capabilities.prompt_capabilities.image is True
     # This connection did not identify itself as Lody, so no Lody-namespaced
     # capability is reported at all.
     assert response.agent_capabilities.field_meta is None

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import republic
 from acp.schema import (
     ClientCapabilities,
     CreateTerminalResponse,
@@ -12,10 +13,11 @@ from acp.schema import (
     WaitForTerminalExitResponse,
 )
 from bub.builtin import tools as builtin_tools
-from bub.core.tools import ToolContext
+from bub.core.tools import ToolContext, is_content_result, result_content
 from bub.streaming import StreamEvent
 
 from bub_acp_server.agent import ACPStreamRouter
+from bub_acp_server import client_tools as client_tools_module
 from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 
 
@@ -139,6 +141,34 @@ async def test_replaces_file_tools_with_acp_client_calls(tmp_path: Path) -> None
             "session_id": "session-1",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_fs_read_returns_images_as_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeClient()
+    context = _context(tmp_path)
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    (tmp_path / "shot.PNG").write_bytes(png)
+    fs_read = build_client_tools(_runtime(client))["fs.read"]
+
+    image_result = await fs_read.run(path="shot.PNG", context=context)
+    text_result = await fs_read.run(path="notes.txt", context=context)
+
+    assert is_content_result(image_result)
+    assert result_content(image_result) == [
+        f"Image shot.PNG (image/png, {len(png)} bytes):",
+        republic.image(png, media_type="image/png"),
+    ]
+    assert text_result == "line two"
+    assert [request["path"] for request in client.read_requests] == [
+        str(tmp_path / "notes.txt")
+    ]
+
+    monkeypatch.setattr(client_tools_module, "MAX_IMAGE_BYTES", len(png) - 1)
+    with pytest.raises(RuntimeError, match="image is too large to show"):
+        await fs_read.run(path="shot.PNG", context=context)
 
 
 @pytest.mark.asyncio

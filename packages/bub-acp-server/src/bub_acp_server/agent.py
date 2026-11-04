@@ -86,6 +86,7 @@ from bub_acp_server.subagents import (
     LODY_SUBAGENTS_CAPABILITY,
     LODY_SUBAGENTS_LIST_METHOD,
     LODY_SUBAGENTS_OUTPUT_METHOD,
+    MAX_FINISHED_SUBAGENT_RUNS,
     SubagentEventEmitter,
     SubagentRun,
     client_supports_subagent_events,
@@ -149,10 +150,14 @@ _LODY_STEERING_CAPABILITY = {
 
 _LODY_EXTENSION_CAPABILITIES: dict[str, object] = {
     "steering": _LODY_STEERING_CAPABILITY,
-    "subagentEvents": dict(LODY_SUBAGENT_EVENTS_CAPABILITY),
     "sessionTitle": {"version": 1},
 }
 if BUB_SUBAGENT_TASKS:
+    # Without Bub's subagent tasks there is nothing to observe, so advertising
+    # either capability would only make the client wait for events that never come.
+    _LODY_EXTENSION_CAPABILITIES["subagentEvents"] = dict(
+        LODY_SUBAGENT_EVENTS_CAPABILITY
+    )
     _LODY_EXTENSION_CAPABILITIES["subagents"] = dict(LODY_SUBAGENTS_CAPABILITY)
 
 _SUBAGENT_REQUEST_METHODS = {
@@ -1133,6 +1138,7 @@ class BubACPAgent:
         if run.terminated:
             return
         run.terminated = True
+        self._prune_finished_subagent_runs(run.session_id)
         task = run.task
         if run.emitter is not None:
             # Progress counters are display observations, never usage accounting input.
@@ -1153,6 +1159,23 @@ class BubACPAgent:
                 reason_message=reason[1] if reason else None,
             )
         await self._publish_subagent_lifecycle(run)
+
+    def _prune_finished_subagent_runs(self, session_id: str) -> None:
+        """Keep only the newest finished runs of a session.
+
+        Finished runs answer ``list`` and ``output``, but each one holds the Bub task
+        (and with it the child's request state), so an open session must not keep
+        every run it ever started.
+        """
+
+        finished = [
+            run_id
+            for run_id, run in self._subagent_runs.items()
+            if run.session_id == session_id and run.terminated
+        ]
+        for run_id in finished[: max(len(finished) - MAX_FINISHED_SUBAGENT_RUNS, 0)]:
+            run = self._subagent_runs.pop(run_id)
+            self._subagent_task_runs.pop(run.task.task_id, None)
 
     async def _publish_subagent_lifecycle(self, run: SubagentRun) -> None:
         """Tag the tool call that started the task with its `_meta.lody.task` lifecycle."""

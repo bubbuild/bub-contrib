@@ -42,6 +42,10 @@ LODY_SUBAGENT_EVENT_METHOD = "lody/subagents/event"
 BUB_SUBAGENT_TASKS = importlib.util.find_spec("bub.builtin.subagents") is not None
 LODY_SUBAGENT_EVENTS_CAPABILITY: dict[str, int] = {"version": 1}
 
+#: Finished runs kept per ACP session for ``_lody/subagents/list|output``; older
+#: ones are forgotten. Running tasks are always kept.
+MAX_FINISHED_SUBAGENT_RUNS = 20
+
 #: Stream kinds this adapter republishes from a child run. Bub's agent loop has no
 #: plan updates, so ``plan`` is not advertised.
 STREAMED_OUTPUT_KINDS = ("text", "thought", "tool")

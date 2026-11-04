@@ -570,6 +570,33 @@ async def test_subagent_output_request_returns_the_tail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_only_the_newest_finished_runs_are_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bub_acp_server.agent.MAX_FINISHED_SUBAGENT_RUNS", 2)
+    client = FakeClient()
+    agent, session, runtime = await connect(client)
+    for index in range(3):
+        await run_child(
+            prompt=f"task {index}",
+            context=tool_context(runtime, StubAgent(child_events()), session),
+        )
+    run_ids = list(dict.fromkeys(payload["runId"] for payload in payloads(client)))
+
+    listed = await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id}
+    )
+
+    assert [task["taskId"] for task in listed["tasks"]] == run_ids[1:]
+    assert len(agent._subagent_task_runs) == 2
+    with pytest.raises(RequestError):
+        await agent.ext_method(
+            "lody/subagents/output",
+            {"sessionId": session.session_id, "taskId": run_ids[0]},
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "params",
     [

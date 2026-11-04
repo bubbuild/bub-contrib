@@ -17,7 +17,7 @@ from acp.schema import (
     ToolCallProgress,
 )
 from bub.builtin import tools as builtin_tools
-from bub.builtin.subagents import run_subagent, subagent_manager
+from bub.builtin.subagents import run_subagent, subagent_manager, subagent_wait
 from bub.core.tools import ToolContext
 from bub.errors import BubError, ErrorKind
 from bub.model_selection import ModelOptions
@@ -196,6 +196,16 @@ def tool_context(runtime: Any, child: StubAgent, session: Any) -> ToolContext:
     )
 
 
+async def run_child(context: ToolContext, **arguments: Any) -> dict[str, Any]:
+    """Start a subagent, which runs in the background, and wait for its result."""
+
+    started = await run_subagent.run(context=context, **arguments)
+    [result] = await subagent_wait.run(
+        task_ids=[started["task_id"]], timeout_seconds=30, context=context
+    )
+    return result
+
+
 def payloads(client: FakeClient) -> Iterator[dict[str, Any]]:
     return (
         params
@@ -305,7 +315,7 @@ async def test_subagent_run_publishes_snapshot_output_and_progress() -> None:
     _, session, runtime = await connect(client)
     child = StubAgent(child_events())
 
-    result = await run_subagent.run(
+    result = await run_child(
         prompt="delegate this", context=tool_context(runtime, child, session)
     )
 
@@ -372,7 +382,7 @@ async def test_subagent_failed_tool_call_is_reported_as_failed() -> None:
         for event in child_events()
     ]
 
-    await run_subagent.run(
+    await run_child(
         prompt="delegate", context=tool_context(runtime, StubAgent(events), session)
     )
 
@@ -387,15 +397,15 @@ async def test_subagent_failed_tool_call_is_reported_as_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subagent_failure_reports_terminal_snapshot_and_raises() -> None:
+async def test_subagent_failure_reports_a_failed_terminal_snapshot() -> None:
     client = FakeClient()
     _, session, runtime = await connect(client)
     child = StubAgent([], error=RuntimeError("child exploded"))
 
-    with pytest.raises(RuntimeError, match="child exploded"):
-        await run_subagent.run(
-            prompt="delegate", context=tool_context(runtime, child, session)
-        )
+    result = await run_child(tool_context(runtime, child, session), prompt="delegate")
+
+    assert result["status"] == "failed"
+    assert result["errors"] == ["child exploded"]
 
     events = list(payloads(client))
     for payload in events:
@@ -417,7 +427,7 @@ async def test_subagent_stream_errors_are_collected_without_failing_the_run() ->
         StreamEvent("text", {"delta": "partial"}),
     ]
 
-    result = await run_subagent.run(
+    result = await run_child(
         prompt="delegate", context=tool_context(runtime, StubAgent(events), session)
     )
 
@@ -431,7 +441,7 @@ async def test_broken_client_does_not_fail_the_subagent() -> None:
     client = BrokenClient()
     _, session, runtime = await connect(client, lody=True)
 
-    result = await run_subagent.run(
+    result = await run_child(
         prompt="delegate",
         context=tool_context(runtime, StubAgent(child_events()), session),
     )
@@ -444,7 +454,7 @@ async def test_nothing_is_published_without_negotiation() -> None:
     client = FakeClient()
     _, session, runtime = await connect(client, negotiate=False)
 
-    result = await run_subagent.run(
+    result = await run_child(
         prompt="delegate",
         context=tool_context(runtime, StubAgent(child_events()), session),
     )
@@ -461,7 +471,7 @@ async def test_lody_clients_get_the_task_lifecycle_on_the_starting_tool_call() -
     client = FakeClient()
     _, session, runtime = await connect(client, negotiate=False, lody=True)
 
-    await run_subagent.run(
+    await run_child(
         prompt="delegate this",
         context=tool_context(runtime, StubAgent(child_events()), session),
     )
@@ -487,7 +497,6 @@ async def test_subagent_requests_list_read_and_cancel_a_running_task() -> None:
 
     started = await run_subagent.run(
         prompt="long task",
-        background=True,
         context=tool_context(runtime, child, session),
     )
     await child.started.wait()
@@ -547,7 +556,7 @@ async def test_subagent_output_request_returns_the_tail() -> None:
         StreamEvent("text", {"delta": "line 1\nline 2\nline 3"}),
         StreamEvent("final", {"ok": True, "text": "line 1\nline 2\nline 3"}),
     ]
-    await run_subagent.run(
+    await run_child(
         prompt="task", context=tool_context(runtime, StubAgent(events), session)
     )
     [run_id] = {payload["runId"] for payload in payloads(client)}
@@ -572,7 +581,7 @@ async def test_subagent_output_request_returns_the_tail() -> None:
 async def test_subagent_requests_reject_bad_parameters(params: dict[str, Any]) -> None:
     client = FakeClient()
     agent, session, runtime = await connect(client)
-    await run_subagent.run(
+    await run_child(
         prompt="task",
         context=tool_context(runtime, StubAgent(child_events()), session),
     )
@@ -592,7 +601,6 @@ async def test_closing_a_session_cancels_its_subagents() -> None:
     child = StubAgent(child_events(), block=True)
     started = await run_subagent.run(
         prompt="long task",
-        background=True,
         context=tool_context(runtime, child, session),
     )
     await child.started.wait()

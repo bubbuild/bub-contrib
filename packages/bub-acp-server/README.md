@@ -371,8 +371,8 @@ Bub also accepts `_session/steering`. Its optional `steerId` uses the matching
 Bub runs each `subagent` call as a task and publishes `SubagentStarted`,
 `SubagentOutput` and `SubagentFinished` on the runtime agent's event bus. The ACP
 server observes those events; it never replaces the `subagent` tool, so the model
-sees Bub's tool and result unchanged. Background subagents (`background=true`)
-are reported the same way as foreground ones.
+sees Bub's tool and result unchanged. Subagents run in the background, so the
+tool call returns at once and the events keep reporting the child run.
 
 Clients that want each child run can negotiate the Lody `subagentEvents`
 contract. Both sides opt in independently, so the agent advertises the

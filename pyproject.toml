@@ -32,6 +32,7 @@ dependencies = [
     "bub-tapestore-sqlite",
     "bub-web-search",
     "bub-feishu",
+    "bub-herdr",
     "bub-session-prompt",
     "bub-wechat",
     "bub-wecom",
@@ -69,6 +70,7 @@ bub-tapestore-redis = { workspace = true }
 bub-tapestore-sqlite = { workspace = true }
 bub-web-search = { workspace = true }
 bub-feishu = { workspace = true }
+bub-herdr = { workspace = true }
 bub-session-prompt = { workspace = true }
 bub-wechat = { workspace = true }
 bub-wecom = { workspace = true }

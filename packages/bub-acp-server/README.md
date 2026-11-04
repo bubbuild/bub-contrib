@@ -438,7 +438,8 @@ and `output`). It needs no client opt-in:
   across its steps; `tail` keeps the last lines.
 
 Running tasks are always listed; of the finished ones, each session keeps the
-newest 20 and forgets older ones, whose `taskId` is then rejected.
+20 that finished most recently and forgets older ones, whose `taskId` is then
+rejected.
 
 The `taskId` of these requests is the run's `runId` from `_lody/subagents/event`.
 Closing or deleting an ACP session cancels its running subagent tasks.

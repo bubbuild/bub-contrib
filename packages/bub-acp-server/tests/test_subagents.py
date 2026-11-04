@@ -570,6 +570,68 @@ async def test_subagent_output_request_returns_the_tail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_only_the_newest_finished_runs_are_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bub_acp_server.agent.MAX_FINISHED_SUBAGENT_RUNS", 2)
+    client = FakeClient()
+    agent, session, runtime = await connect(client)
+    for index in range(3):
+        await run_child(
+            prompt=f"task {index}",
+            context=tool_context(runtime, StubAgent(child_events()), session),
+        )
+    run_ids = list(dict.fromkeys(payload["runId"] for payload in payloads(client)))
+
+    listed = await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id}
+    )
+
+    assert [task["taskId"] for task in listed["tasks"]] == run_ids[1:]
+    assert len(agent._subagent_task_runs) == 2
+    with pytest.raises(RequestError):
+        await agent.ext_method(
+            "lody/subagents/output",
+            {"sessionId": session.session_id, "taskId": run_ids[0]},
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_finishes_last_is_kept_even_if_it_started_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bub_acp_server.agent.MAX_FINISHED_SUBAGENT_RUNS", 2)
+    client = FakeClient()
+    agent, session, runtime = await connect(client)
+    long_child = StubAgent(child_events(), block=True)
+    long_context = tool_context(runtime, long_child, session)
+    long_task = await run_subagent.run(prompt="long task", context=long_context)
+    await long_child.started.wait()
+    [long_run_id] = {payload["runId"] for payload in payloads(client)}
+    for index in range(2):
+        await run_child(
+            prompt=f"quick {index}",
+            context=tool_context(runtime, StubAgent(child_events()), session),
+        )
+    long_child.release.set()
+    await subagent_wait.run(
+        task_ids=[long_task["task_id"]], timeout_seconds=30, context=long_context
+    )
+
+    listed = await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id}
+    )
+
+    run_ids = [task["taskId"] for task in listed["tasks"]]
+    assert len(run_ids) == 2
+    assert long_run_id in run_ids
+    assert await agent.ext_method(
+        "lody/subagents/output",
+        {"sessionId": session.session_id, "taskId": long_run_id},
+    ) == {"output": "workall done"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "params",
     [

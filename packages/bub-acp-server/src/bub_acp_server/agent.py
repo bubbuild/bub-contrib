@@ -86,6 +86,7 @@ from bub_acp_server.subagents import (
     LODY_SUBAGENTS_CAPABILITY,
     LODY_SUBAGENTS_LIST_METHOD,
     LODY_SUBAGENTS_OUTPUT_METHOD,
+    MAX_FINISHED_SUBAGENT_RUNS,
     SubagentEventEmitter,
     SubagentRun,
     client_supports_subagent_events,
@@ -149,10 +150,14 @@ _LODY_STEERING_CAPABILITY = {
 
 _LODY_EXTENSION_CAPABILITIES: dict[str, object] = {
     "steering": _LODY_STEERING_CAPABILITY,
-    "subagentEvents": dict(LODY_SUBAGENT_EVENTS_CAPABILITY),
     "sessionTitle": {"version": 1},
 }
 if BUB_SUBAGENT_TASKS:
+    # Without Bub's subagent tasks there is nothing to observe, so advertising
+    # either capability would only make the client wait for events that never come.
+    _LODY_EXTENSION_CAPABILITIES["subagentEvents"] = dict(
+        LODY_SUBAGENT_EVENTS_CAPABILITY
+    )
     _LODY_EXTENSION_CAPABILITIES["subagents"] = dict(LODY_SUBAGENTS_CAPABILITY)
 
 _SUBAGENT_REQUEST_METHODS = {
@@ -524,6 +529,8 @@ class BubACPAgent:
         self._subagent_events_enabled = False
         self._subagent_runs: dict[str, SubagentRun] = {}
         self._subagent_task_runs: dict[str, str] = {}
+        # Finished run IDs per session, oldest finish first, for retention.
+        self._finished_subagent_runs: dict[str, deque[str]] = {}
         self._lody_client = False
         self._title_tasks: dict[str, asyncio.Task[None]] = {}
         self._title_sessions: set[str] = set()
@@ -1133,6 +1140,7 @@ class BubACPAgent:
         if run.terminated:
             return
         run.terminated = True
+        self._prune_finished_subagent_runs(run)
         task = run.task
         if run.emitter is not None:
             # Progress counters are display observations, never usage accounting input.
@@ -1153,6 +1161,22 @@ class BubACPAgent:
                 reason_message=reason[1] if reason else None,
             )
         await self._publish_subagent_lifecycle(run)
+
+    def _prune_finished_subagent_runs(self, run: SubagentRun) -> None:
+        """Record that ``run`` finished and keep only the session's newest finishes.
+
+        Finished runs answer ``list`` and ``output``, but each one holds the Bub task
+        (and with it the child's request state), so an open session must not keep
+        every run it ever started. Retention follows completion order, so the run
+        that just finished always survives, however early it started.
+        """
+
+        finished = self._finished_subagent_runs.setdefault(run.session_id, deque())
+        finished.append(run.run_id)
+        while len(finished) > MAX_FINISHED_SUBAGENT_RUNS:
+            dropped = self._subagent_runs.pop(finished.popleft(), None)
+            if dropped is not None:
+                self._subagent_task_runs.pop(dropped.task.task_id, None)
 
     async def _publish_subagent_lifecycle(self, run: SubagentRun) -> None:
         """Tag the tool call that started the task with its `_meta.lody.task` lifecycle."""
@@ -1221,6 +1245,7 @@ class BubACPAgent:
             if run.session_id == session_id:
                 self._subagent_runs.pop(run_id, None)
                 self._subagent_task_runs.pop(run.task.task_id, None)
+        self._finished_subagent_runs.pop(session_id, None)
 
     def _schedule_session_title(
         self, prompt: list[ACPPromptBlock], session: ACPSession

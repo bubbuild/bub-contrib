@@ -374,6 +374,10 @@ server observes those events; it never replaces the `subagent` tool, so the mode
 sees Bub's tool and result unchanged. Subagents run in the background, so the
 tool call returns at once and the events keep reporting the child run.
 
+This needs a Bub that runs subagents as tasks (`bub.builtin.subagents`, newer than
+0.6.0). With an older Bub the server advertises neither `subagentEvents` nor
+`subagents`.
+
 Clients that want each child run can negotiate the Lody `subagentEvents`
 contract. Both sides opt in independently, so the agent advertises the
 capability:
@@ -432,6 +436,10 @@ and `output`). It needs no client opt-in:
   a no-op.
 - **`_lody/subagents/output`** returns the text the child has written so far,
   across its steps; `tail` keeps the last lines.
+
+Running tasks are always listed; of the finished ones, each session keeps the
+20 that finished most recently and forgets older ones, whose `taskId` is then
+rejected.
 
 The `taskId` of these requests is the run's `runId` from `_lody/subagents/event`.
 Closing or deleting an ACP session cancels its running subagent tasks.

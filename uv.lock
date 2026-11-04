@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -420,8 +420,8 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.6.1.dev5+g180ef0b50"
-source = { git = "https://github.com/bubbuild/bub.git?branch=main#180ef0b50523023ae4e2431cc25720e7fed95893" }
+version = "0.6.1.dev9+gd14de719d"
+source = { git = "https://github.com/bubbuild/bub.git?branch=main#d14de719da57640cf2f80658217d94d94a5b7c42" }
 dependencies = [
     { name = "loguru" },
     { name = "pydantic" },

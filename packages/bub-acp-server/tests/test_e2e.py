@@ -306,6 +306,13 @@ async def test_acknowledged_steering_starts_turn_over_extension_route(
                     "configPolicy": "active",
                 },
                 "subagentEvents": {"version": 1},
+                "subagents": {
+                    "version": 1,
+                    "lifecycle": True,
+                    "list": True,
+                    "cancel": True,
+                    "output": True,
+                },
                 "sessionTitle": {"version": 1},
             }
         }

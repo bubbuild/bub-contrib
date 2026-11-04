@@ -338,7 +338,8 @@ def republic_module(
 
     Monty passes host functions as references to their ``__name__``, which
     ``external_lookup`` must resolve, so pass the functions there. Their names
-    (``republic.<name>``) cannot clash with names in the code.
+    (``republic:<name>``) cannot clash with names in the code; they avoid dots,
+    which ``external_lookup`` does not resolve since pydantic-monty 1.4.
     """
 
     async def call(name: str, arguments: dict[str, Any]) -> Any:
@@ -365,7 +366,7 @@ def republic_module(
         "assistant": message(assistant),
     }
     for name, function in functions.items():
-        function.__name__ = f"republic.{name}"
+        function.__name__ = f"republic:{name}"
     namespace = Record(
         **functions,
         **{cls.__name__: t for cls, t in _MEDIA_TYPES.items()},

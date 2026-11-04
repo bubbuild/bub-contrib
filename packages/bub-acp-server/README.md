@@ -18,6 +18,7 @@ Expose Bub as an Agent Client Protocol agent.
 - `session/cancel` stops active and queued prompts, which return `stopReason: "cancelled"`; clients without the steering extension can steer by cancelling and re-prompting
 - Mid-turn steering through the `_lody/session/steer` ACP extension
 - Streamed subagent execution events through `_lody/subagents/event`
+- Subagent task lifecycle on the starting tool call, plus `_lody/subagents/list|cancel|output`
 - Automatic session titles pushed as `session_info_update`
 
 ## Installation
@@ -286,6 +287,13 @@ A Lody client sees the complete set:
           "configPolicy": "active"
         },
         "subagentEvents": { "version": 1 },
+        "subagents": {
+          "version": 1,
+          "lifecycle": true,
+          "list": true,
+          "cancel": true,
+          "output": true
+        },
         "sessionTitle": { "version": 1 }
       }
     }
@@ -360,10 +368,15 @@ Bub also accepts `_session/steering`. Its optional `steerId` uses the matching
 
 ## Subagent events
 
-Bub's `subagent` tool consumes the child agent's stream internally, so an ACP
-client would otherwise see only the outer tool call. Clients that want the child
-run can negotiate the Lody `subagentEvents` contract. Both sides opt in
-independently, so the agent advertises the capability:
+Bub runs each `subagent` call as a task and publishes `SubagentStarted`,
+`SubagentOutput` and `SubagentFinished` on the runtime agent's event bus. The ACP
+server observes those events; it never replaces the `subagent` tool, so the model
+sees Bub's tool and result unchanged. Background subagents (`background=true`)
+are reported the same way as foreground ones.
+
+Clients that want each child run can negotiate the Lody `subagentEvents`
+contract. Both sides opt in independently, so the agent advertises the
+capability:
 
 ```json
 {
@@ -380,39 +393,48 @@ independently, so the agent advertises the capability:
 ```
 
 and a client opts in by sending the same version in
-`InitializeRequest.clientCapabilities._meta.lody`. Only then does Bub replace
-that session's `subagent` tool with a streaming variant and publish
+`InitializeRequest.clientCapabilities._meta.lody`. Only then does Bub publish
 `_lody/subagents/event` notifications. The advertisement is part of the Lody
 capability block, so only Lody clients see it; the client's answer remains the
 switch, and an opt-in is honored even from a client that never saw the
-advertisement. The replacement keeps the tool's name,
-description, parameters, renderer and output schema, and still returns Bub's
-`{session_id, output, errors}` result to the model, so delegation behaves
-exactly as before.
+advertisement.
 
-Each event carries the ACP `sessionId`, an opaque per-execution `runId`, and one
-of three payloads:
+Each event carries the ACP `sessionId`, an opaque per-task `runId`, and one of
+three payloads:
 
 | `type`     | Payload                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------ |
-| `snapshot` | Task state (`running`, `completed`, `failed`, `cancelled`), description, model, summary    |
-| `progress` | Sparse absolute observations such as `lastToolName`, `toolCallCount`, `turnCount`, `durationMs` |
+| `snapshot` | Task state (`running`, `completed`, `failed`, `cancelled`), description, model, profile name, summary, reason |
+| `progress` | Sparse absolute observations such as `lastToolName`, `toolCallCount`, `turnCount`, `durationMs`, `totalTokens` |
 | `output`   | One child stream chunk as an ACP session update: text, thought, or tool call/update         |
 
 Snapshots replace previously known task metadata, and output follows the child's
 connection order. There are no sequence numbers, no replay guarantees and no
 cross-reconnect deduplication, and progress counters are display observations
-rather than usage accounting. A client that cannot receive an event never fails
-the tool.
+rather than usage accounting. Publishing is best effort: a client that cannot
+receive an event never fails the run, and the tool still returns its result.
+Every run advertises `outputRead: "live_tail"` and `cancel: true`.
 
-`outputRead` is advertised as `none` and `cancel` as `false`, because runs are
-not addressable through the separate `_lody/subagents/list|cancel|output`
-request surface. Publishing is best effort: a client that cannot receive an
-event never fails the run, and the tool still returns its result.
+## Subagent tasks
 
-The capability is always advertised, and client negotiation alone decides
-whether events are published. Clients that never opt in keep Bub's stock
-`subagent` tool unchanged.
+Lody clients also see the `subagents` capability (`lifecycle`, `list`, `cancel`
+and `output`). It needs no client opt-in:
+
+- **Lifecycle.** When the task starts and when it ends, the `subagent` tool call
+  that started it receives a `tool_call_update` whose `_meta.lody.task` is a
+  `LodyTaskMeta` with `kind: "subagent"`: status, description, profile (`actor`),
+  model, timestamps, summary or error, last tool and usage. A cancelled task
+  ends as `failed` with the error `cancelled`.
+- **`_lody/subagents/list`** returns the session's tasks (`activeOnly` keeps the
+  running ones). Statuses are `running`, `completed`, `failed`, `timed_out` and
+  `killed` (cancelled).
+- **`_lody/subagents/cancel`** stops a running task; cancelling a finished one is
+  a no-op.
+- **`_lody/subagents/output`** returns the text the child has written so far,
+  across its steps; `tail` keeps the last lines.
+
+The `taskId` of these requests is the run's `runId` from `_lody/subagents/event`.
+Closing or deleting an ACP session cancels its running subagent tasks.
 
 ## Session titles
 

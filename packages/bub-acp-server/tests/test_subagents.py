@@ -1,19 +1,27 @@
-"""Tests for the Lody subagent event extension (`_lody/subagents/event`)."""
+"""Tests for the Lody subagent extensions: `_lody/subagents/event` and `subagents`."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from acp.schema import ClientCapabilities, TextContentBlock
+from acp.exceptions import RequestError
+from acp.schema import (
+    ClientCapabilities,
+    Implementation,
+    TextContentBlock,
+    ToolCallProgress,
+)
 from bub.builtin import tools as builtin_tools
+from bub.builtin.subagents import run_subagent, subagent_manager
+from bub.core.tools import ToolContext
 from bub.errors import BubError, ErrorKind
 from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
-from bub.core.tools import ToolContext
 
 from bub_acp_server.agent import BubACPAgent
 from bub_acp_server.subagents import (
@@ -21,8 +29,8 @@ from bub_acp_server.subagents import (
     client_supports_subagent_events,
 )
 
-
 BUILTIN_TOOLS = {tool.name: tool for tool in builtin_tools.TOOLS}
+PARENT_CALL_ID = "call-parent"
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +54,11 @@ class FakeClient:
 
 
 class BrokenClient(FakeClient):
+    async def session_update(
+        self, session_id: str, update: object, **kwargs: Any
+    ) -> None:
+        raise RuntimeError("cannot deliver updates")
+
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         raise RuntimeError(f"cannot deliver {method}")
 
@@ -82,11 +95,20 @@ class FakeFramework:
 
 
 class StubAgent:
-    """Stand-in for Bub's agent that replays a canned child stream."""
+    """Stand-in child agent that replays a canned stream, optionally after ``release``."""
 
-    def __init__(self, events: list[StreamEvent], *, error: Exception | None = None):
+    def __init__(
+        self,
+        events: list[StreamEvent],
+        *,
+        error: Exception | None = None,
+        block: bool = False,
+    ) -> None:
         self.events = events
         self.error = error
+        self.block = block
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()
         self.calls: list[dict[str, Any]] = []
         self.tools = {
             "subagent": BUILTIN_TOOLS["subagent"],
@@ -101,11 +123,16 @@ class StubAgent:
         async def stream() -> AsyncIterator[StreamEvent]:
             for event in self.events:
                 yield event
+                if self.block and event.kind == "text":
+                    self.started.set()
+                    await self.release.wait()
 
         return AsyncStreamEvents(stream(), state=StreamState())
 
 
 def child_events() -> list[StreamEvent]:
+    """Two child steps: one reads with a tool, the second answers."""
+
     return [
         StreamEvent("text", {"delta": "work"}),
         StreamEvent("reasoning", {"delta": "thinking"}),
@@ -125,50 +152,66 @@ def child_events() -> list[StreamEvent]:
             },
         ),
         StreamEvent("tool_result", {"tool_results": ["file.txt"]}),
-        StreamEvent("final", {"text": "work", "ok": True}),
-        StreamEvent("text", {"delta": " done"}),
+        StreamEvent("final", {"ok": True, "tool_calls": [{"id": "call-1"}]}),
+        StreamEvent("text", {"delta": "all done"}),
         StreamEvent("usage", {"usage": {"total_tokens": 42}}),
+        StreamEvent("final", {"ok": True, "text": "all done"}),
     ]
 
 
-async def make_tool_session(
-    client: FakeClient,
-    events: list[StreamEvent],
-    *,
-    error: Exception | None = None,
-    negotiate: bool = True,
-    session: str = "temp",
-) -> tuple[BubACPAgent, StubAgent, Any]:
-    """Install the streaming subagent tool for one session and return it."""
+async def connect(
+    client: FakeClient, *, negotiate: bool = True, lody: bool = False
+) -> tuple[BubACPAgent, Any, Any]:
+    """Initialize a connection and one session; return the server, session and runtime agent."""
 
-    framework = FakeFramework()
-    agent = BubACPAgent(framework)
+    agent = BubACPAgent(FakeFramework())
     agent.on_connect(client)
     capabilities = (
         ClientCapabilities(field_meta={"lody": {"subagentEvents": {"version": 1}}})
         if negotiate
         else ClientCapabilities()
     )
-    await agent.initialize(protocol_version=1, client_capabilities=capabilities)
-    created = await agent.new_session(cwd=str(Path.cwd()))
-    version = {"session": session, "prompt": "delegate this", "model": None}
-
-    runtime_agent = StubAgent(events, error=error)
-    acp_session = agent._sessions[created.session_id]
-    if negotiate:
-        agent._install_streaming_subagent(runtime_agent, acp_session)
-    context = ToolContext(
-        tape=None,
-        state={
-            "_runtime_agent": runtime_agent,
-            "session_id": f"acp-server:{acp_session.session_id}",
-        },
+    await agent.initialize(
+        protocol_version=1,
+        client_capabilities=capabilities,
+        client_info=Implementation(name="lody", version="1.0") if lody else None,
     )
-    return agent, runtime_agent, (runtime_agent.tools["subagent"], context, version)
+    created = await agent.new_session(cwd=str(Path.cwd()))
+    session = agent._sessions[created.session_id]
+    inbound = agent._build_inbound([TextContentBlock(type="text", text="hi")], session)
+    return agent, session, inbound._runtime_agent
+
+
+def tool_context(runtime: Any, child: StubAgent, session: Any) -> ToolContext:
+    """The context the runtime agent gives its `subagent` call; the child is a stub."""
+
+    return ToolContext(
+        tape=None,  # type: ignore[arg-type]
+        state={
+            "_runtime_agent": child,
+            "session_id": f"acp-server:{session.session_id}",
+        },
+        events=runtime.events,
+        call_id=PARENT_CALL_ID,
+    )
 
 
 def payloads(client: FakeClient) -> Iterator[dict[str, Any]]:
-    return (params for _, params in client.notifications)
+    return (
+        params
+        for method, params in client.notifications
+        if method == LODY_SUBAGENT_EVENT_METHOD
+    )
+
+
+def task_updates(client: FakeClient) -> list[dict[str, Any]]:
+    return [
+        update.field_meta["lody"]["task"]
+        for _, update in client.updates
+        if isinstance(update, ToolCallProgress)
+        and update.tool_call_id == PARENT_CALL_ID
+        and update.field_meta
+    ]
 
 
 def test_client_negotiation_requires_matching_version() -> None:
@@ -192,7 +235,6 @@ def test_client_negotiation_requires_matching_version() -> None:
         )
         is True
     )
-    # Unnegotiated clients never reach the tool, but a raw mapping is equivalent.
     assert (
         client_supports_subagent_events(
             {"_meta": {"lody": {"subagentEvents": {"version": 1}}}}
@@ -222,8 +264,8 @@ def assert_valid_event(payload: dict[str, Any]) -> None:
         support = snapshot["support"]
         assert set(support["stream"]) <= {"text", "thought", "tool", "plan"}
         assert support["progress"] is True
-        assert support["cancel"] is False
-        assert support["outputRead"] in {"none", "live_tail", "final_tail"}
+        assert support["cancel"] is True
+        assert support["outputRead"] == "live_tail"
     elif kind == "progress":
         assert isinstance(payload["progress"], dict)
     elif kind == "output":
@@ -260,28 +302,18 @@ def _assert_no_nulls(value: object, path: str = "$") -> None:
 @pytest.mark.asyncio
 async def test_subagent_run_publishes_snapshot_output_and_progress() -> None:
     client = FakeClient()
-    _, runtime_agent, (tool, context, version) = await make_tool_session(
-        client, child_events()
+    _, session, runtime = await connect(client)
+    child = StubAgent(child_events())
+
+    result = await run_subagent.run(
+        prompt="delegate this", context=tool_context(runtime, child, session)
     )
 
-    result = await tool.run(context=context, **version)
-
-    assert client.notifications
-    assert {method for method, _ in client.notifications} == {
-        LODY_SUBAGENT_EVENT_METHOD
-    }
     events = list(payloads(client))
     for payload in events:
         assert_valid_event(payload)
-
-    assert events[0]["sessionId"] == context.state["session_id"].split(":", 1)[1]
+    assert {payload["sessionId"] for payload in events} == {session.session_id}
     assert len({payload["runId"] for payload in events}) == 1
-
-    assert events[0]["type"] == "snapshot"
-    assert events[0]["snapshot"]["state"] == "running"
-    assert events[0]["snapshot"]["description"] == "delegate this"
-    assert events[0]["snapshot"]["support"]["stream"] == ["text", "thought", "tool"]
-
     assert [event["type"] for event in events] == [
         "snapshot",
         "output",
@@ -293,6 +325,9 @@ async def test_subagent_run_publishes_snapshot_output_and_progress() -> None:
         "progress",
         "snapshot",
     ]
+    assert events[0]["snapshot"]["state"] == "running"
+    assert events[0]["snapshot"]["description"] == "delegate this"
+    assert events[0]["snapshot"]["support"]["stream"] == ["text", "thought", "tool"]
     assert events[1]["update"] == {
         "sessionUpdate": "agent_message_chunk",
         "content": {"type": "text", "text": "work"},
@@ -306,31 +341,29 @@ async def test_subagent_run_publishes_snapshot_output_and_progress() -> None:
     assert events[4]["progress"]["lastToolName"] == "bash"
     assert events[4]["progress"]["toolCallCount"] == 1
     assert events[5]["update"]["sessionUpdate"] == "tool_call_update"
-    assert events[5]["update"]["toolCallId"] == "call-1"
     assert events[5]["update"]["status"] == "completed"
     assert events[5]["update"]["content"][0]["content"]["text"] == "file.txt"
-    assert events[6]["update"]["content"]["text"] == " done"
+    assert events[6]["update"]["content"]["text"] == "all done"
     assert events[7]["progress"] == {
         "lastToolName": "bash",
-        "turnCount": 1,
+        "turnCount": 2,
         "toolCallCount": 1,
         "durationMs": events[7]["progress"]["durationMs"],
         "totalTokens": 42,
     }
     assert events[8]["snapshot"]["state"] == "completed"
-    assert events[8]["snapshot"]["summary"] == "work done"
+    assert events[8]["snapshot"]["summary"] == "all done"
 
-    # The tool still returns Bub's structured result to the model.
-    assert result["output"] == "work done"
-    assert result["errors"] == []
-    assert result["session_id"].startswith("temp/")
-    assert runtime_agent.calls[0]["session_id"] == result["session_id"]
-    assert runtime_agent.calls[0]["prompt"] == "delegate this"
+    # The tool still returns Bub's result, the child's final answer, to the model.
+    assert result["output"] == "all done"
+    assert result["status"] == "completed"
+    assert child.calls[0]["session_id"] == result["session_id"]
 
 
 @pytest.mark.asyncio
 async def test_subagent_failed_tool_call_is_reported_as_failed() -> None:
     client = FakeClient()
+    _, session, runtime = await connect(client)
     error = BubError(ErrorKind.TOOL, "command exited with code 1")
     events = [
         event
@@ -338,9 +371,10 @@ async def test_subagent_failed_tool_call_is_reported_as_failed() -> None:
         else StreamEvent("tool_result", {"tool_results": [error]})
         for event in child_events()
     ]
-    _, _, (tool, context, version) = await make_tool_session(client, events)
 
-    await tool.run(context=context, **version)
+    await run_subagent.run(
+        prompt="delegate", context=tool_context(runtime, StubAgent(events), session)
+    )
 
     [update] = [
         payload["update"]
@@ -353,32 +387,20 @@ async def test_subagent_failed_tool_call_is_reported_as_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subagent_inherit_session_reuses_parent_session() -> None:
-    client = FakeClient()
-    _, runtime_agent, (tool, context, version) = await make_tool_session(
-        client, [StreamEvent("text", {"delta": "ok"})], session="inherit"
-    )
-
-    result = await tool.run(context=context, **version)
-
-    assert result["session_id"] == context.state["session_id"]
-    assert runtime_agent.calls[0]["session_id"] == context.state["session_id"]
-
-
-@pytest.mark.asyncio
 async def test_subagent_failure_reports_terminal_snapshot_and_raises() -> None:
     client = FakeClient()
-    _, _, (tool, context, version) = await make_tool_session(
-        client, [], error=RuntimeError("child exploded")
-    )
+    _, session, runtime = await connect(client)
+    child = StubAgent([], error=RuntimeError("child exploded"))
 
     with pytest.raises(RuntimeError, match="child exploded"):
-        await tool.run(context=context, **version)
+        await run_subagent.run(
+            prompt="delegate", context=tool_context(runtime, child, session)
+        )
 
     events = list(payloads(client))
     for payload in events:
         assert_valid_event(payload)
-    assert [event["type"] for event in events] == ["snapshot", "snapshot"]
+    assert [event["type"] for event in events] == ["snapshot", "progress", "snapshot"]
     assert events[-1]["snapshot"]["state"] == "failed"
     assert events[-1]["snapshot"]["reason"] == {
         "code": "error",
@@ -389,13 +411,15 @@ async def test_subagent_failure_reports_terminal_snapshot_and_raises() -> None:
 @pytest.mark.asyncio
 async def test_subagent_stream_errors_are_collected_without_failing_the_run() -> None:
     client = FakeClient()
+    _, session, runtime = await connect(client)
     events = [
         StreamEvent("error", {"message": "tool blew up"}),
         StreamEvent("text", {"delta": "partial"}),
     ]
-    _, _, (tool, context, version) = await make_tool_session(client, events)
 
-    result = await tool.run(context=context, **version)
+    result = await run_subagent.run(
+        prompt="delegate", context=tool_context(runtime, StubAgent(events), session)
+    )
 
     assert result["errors"] == ["tool blew up"]
     assert result["output"] == "partial"
@@ -403,70 +427,181 @@ async def test_subagent_stream_errors_are_collected_without_failing_the_run() ->
 
 
 @pytest.mark.asyncio
-async def test_broken_client_does_not_fail_the_tool() -> None:
+async def test_broken_client_does_not_fail_the_subagent() -> None:
     client = BrokenClient()
-    _, _, (tool, context, version) = await make_tool_session(
-        client, [StreamEvent("text", {"delta": "ok"})]
+    _, session, runtime = await connect(client, lody=True)
+
+    result = await run_subagent.run(
+        prompt="delegate",
+        context=tool_context(runtime, StubAgent(child_events()), session),
     )
 
-    result = await tool.run(context=context, **version)
-
-    assert result["output"] == "ok"
+    assert result["output"] == "all done"
 
 
 @pytest.mark.asyncio
-async def test_subagent_tool_is_untouched_without_negotiation() -> None:
+async def test_nothing_is_published_without_negotiation() -> None:
     client = FakeClient()
-    _, _, (tool, context, version) = await make_tool_session(
-        client, child_events(), negotiate=False
+    _, session, runtime = await connect(client, negotiate=False)
+
+    result = await run_subagent.run(
+        prompt="delegate",
+        context=tool_context(runtime, StubAgent(child_events()), session),
     )
 
-    assert tool.handler is BUILTIN_TOOLS["subagent"].handler
+    assert result["output"] == "all done"
     assert client.notifications == []
-    assert context.state["_runtime_agent"].calls == []
+    assert task_updates(client) == []
+    # The builtin tool is used as is: observation needs no replacement.
+    assert runtime.tools["subagent"] is BUILTIN_TOOLS["subagent"]
 
 
 @pytest.mark.asyncio
-async def test_negotiated_session_replaces_only_this_session_tool() -> None:
+async def test_lody_clients_get_the_task_lifecycle_on_the_starting_tool_call() -> None:
     client = FakeClient()
-    framework = FakeFramework()
-    agent = BubACPAgent(framework)
-    agent.on_connect(client)
-    negotiated = await agent.initialize(
-        protocol_version=1,
-        client_capabilities=ClientCapabilities(
-            field_meta={"lody": {"subagentEvents": {"version": 1}}}
-        ),
-    )
-    assert negotiated.agent_capabilities is not None
-    # This connection negotiated subagent events but never identified itself as
-    # Lody, so nothing Lody-namespaced is reported. The client's own opt-in is
-    # still honored: the contract is bilateral and does not require the agent to
-    # have advertised first.
-    assert negotiated.agent_capabilities.field_meta is None
+    _, session, runtime = await connect(client, negotiate=False, lody=True)
 
-    session = await agent.new_session(cwd=str(Path.cwd()))
-    inbound = agent._build_inbound(
-        [TextContentBlock(type="text", text="hi")], agent._sessions[session.session_id]
+    await run_subagent.run(
+        prompt="delegate this",
+        context=tool_context(runtime, StubAgent(child_events()), session),
     )
-    installed = inbound._runtime_agent.tools["subagent"]
-    assert installed.name == BUILTIN_TOOLS["subagent"].name
-    assert installed.description == BUILTIN_TOOLS["subagent"].description
-    assert installed.parameters == BUILTIN_TOOLS["subagent"].parameters
-    assert installed.renderer is BUILTIN_TOOLS["subagent"].renderer
-    assert installed.exposure == BUILTIN_TOOLS["subagent"].exposure
-    assert installed.output_schema == BUILTIN_TOOLS["subagent"].output_schema
-    assert installed.handler is not BUILTIN_TOOLS["subagent"].handler
-    assert BUILTIN_TOOLS["subagent"].handler is not installed.handler
 
-    plain = BubACPAgent(FakeFramework())
-    plain.on_connect(FakeClient())
-    await plain.initialize(protocol_version=1, client_capabilities=ClientCapabilities())
-    other = await plain.new_session(cwd=str(Path.cwd()))
-    other_inbound = plain._build_inbound(
-        [TextContentBlock(type="text", text="hi")], plain._sessions[other.session_id]
+    started, finished = task_updates(client)
+    assert started["kind"] == "subagent"
+    assert started["status"] == "in_progress"
+    assert started["description"] == "delegate this"
+    assert finished["taskId"] == started["taskId"]
+    assert finished["status"] == "completed"
+    assert finished["summary"] == "all done"
+    assert finished["lastToolName"] == "bash"
+    assert finished["usage"]["toolUses"] == 1
+    assert finished["usage"]["totalTokens"] == 42
+    assert {session_id for session_id, _ in client.updates} == {session.session_id}
+
+
+@pytest.mark.asyncio
+async def test_subagent_requests_list_read_and_cancel_a_running_task() -> None:
+    client = FakeClient()
+    agent, session, runtime = await connect(client, lody=True)
+    child = StubAgent(child_events(), block=True)
+
+    started = await run_subagent.run(
+        prompt="long task",
+        background=True,
+        context=tool_context(runtime, child, session),
     )
+    await child.started.wait()
+    [snapshot] = [
+        payload for payload in payloads(client) if payload["type"] == "snapshot"
+    ]
+    task_id = snapshot["runId"]
+
+    listed = await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id}
+    )
+    assert listed == {
+        "tasks": [
+            {
+                "taskId": task_id,
+                "description": "long task",
+                "status": "running",
+                "startedAtEpochSeconds": listed["tasks"][0]["startedAtEpochSeconds"],
+                "endedAtEpochSeconds": None,
+            }
+        ]
+    }
+    output = await agent.ext_method(
+        "lody/subagents/output", {"sessionId": session.session_id, "taskId": task_id}
+    )
+    assert output == {"output": "work"}
+
     assert (
-        other_inbound._runtime_agent.tools["subagent"].handler
-        is BUILTIN_TOOLS["subagent"].handler
+        await agent.ext_method(
+            "lody/subagents/cancel",
+            {"sessionId": session.session_id, "taskId": task_id},
+        )
+        == {}
     )
+
+    assert subagent_manager.get(started["task_id"]).status == "cancelled"
+    listed = await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id}
+    )
+    [ended] = listed["tasks"]
+    assert ended["status"] == "killed"
+    assert isinstance(ended["endedAtEpochSeconds"], int)
+    assert await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id, "activeOnly": True}
+    ) == {"tasks": []}
+    terminal = [p for p in payloads(client) if p["type"] == "snapshot"][-1]
+    assert terminal["snapshot"]["state"] == "cancelled"
+    assert terminal["snapshot"]["reason"] == {"code": "cancelled"}
+    assert task_updates(client)[-1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_subagent_output_request_returns_the_tail() -> None:
+    client = FakeClient()
+    agent, session, runtime = await connect(client)
+    events = [
+        StreamEvent("text", {"delta": "line 1\nline 2\nline 3"}),
+        StreamEvent("final", {"ok": True, "text": "line 1\nline 2\nline 3"}),
+    ]
+    await run_subagent.run(
+        prompt="task", context=tool_context(runtime, StubAgent(events), session)
+    )
+    [run_id] = {payload["runId"] for payload in payloads(client)}
+
+    output = await agent.ext_method(
+        "lody/subagents/output",
+        {"sessionId": session.session_id, "taskId": run_id, "tail": 2},
+    )
+
+    assert output == {"output": "line 2\nline 3"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"taskId": "missing"},
+        {"taskId": "RUN", "sessionId": "other-session"},
+        {"taskId": "RUN", "tail": 0},
+    ],
+)
+async def test_subagent_requests_reject_bad_parameters(params: dict[str, Any]) -> None:
+    client = FakeClient()
+    agent, session, runtime = await connect(client)
+    await run_subagent.run(
+        prompt="task",
+        context=tool_context(runtime, StubAgent(child_events()), session),
+    )
+    [run_id] = {payload["runId"] for payload in payloads(client)}
+    request = {"sessionId": session.session_id, **params}
+    if request["taskId"] == "RUN":
+        request["taskId"] = run_id
+
+    with pytest.raises(RequestError):
+        await agent.ext_method("lody/subagents/output", request)
+
+
+@pytest.mark.asyncio
+async def test_closing_a_session_cancels_its_subagents() -> None:
+    client = FakeClient()
+    agent, session, runtime = await connect(client)
+    child = StubAgent(child_events(), block=True)
+    started = await run_subagent.run(
+        prompt="long task",
+        background=True,
+        context=tool_context(runtime, child, session),
+    )
+    await child.started.wait()
+
+    await agent.close_session(session_id=session.session_id)
+
+    assert subagent_manager.get(started["task_id"]).status == "cancelled"
+    with pytest.raises(RequestError):
+        await agent.ext_method("lody/subagents/list", {"sessionId": ""})
+    assert await agent.ext_method(
+        "lody/subagents/list", {"sessionId": session.session_id}
+    ) == {"tasks": []}

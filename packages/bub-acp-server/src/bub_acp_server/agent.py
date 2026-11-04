@@ -10,7 +10,7 @@ import time
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -66,7 +66,6 @@ from bub.errors import BubError
 from bub.model_selection import ModelChoice, ModelOptions
 from bub.core.sidecars import sidecar_tape_name
 from bub.streaming import StreamEvent
-from bub.core.tools import ToolContext
 from bub.core.tape import (
     AsyncTapeStoreAdapter,
     Tape,
@@ -81,17 +80,28 @@ from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 from bub_acp_server.config import ACPServerSettings
 from bub_acp_server.mcp import ACPMcpServer, connect_session_mcp, server_configs
 from bub_acp_server.subagents import (
+    BUB_SUBAGENT_TASKS,
     LODY_SUBAGENT_EVENTS_CAPABILITY,
+    LODY_SUBAGENTS_CANCEL_METHOD,
+    LODY_SUBAGENTS_CAPABILITY,
+    LODY_SUBAGENTS_LIST_METHOD,
+    LODY_SUBAGENTS_OUTPUT_METHOD,
     SubagentEventEmitter,
+    SubagentRun,
     client_supports_subagent_events,
     json_safe,
+    lody_task,
+    lody_task_meta,
+    snapshot_reason,
+    summary_line,
+    tail_lines,
 )
 from bub_mcp.plugin import MCPChannel
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
     from bub.builtin.agent import BubAgent
-    from bub.builtin.tools import SubAgentInput, SubAgentResult
+    from bub.builtin.subagents import SubagentEvent, SubagentTask
     from bub.framework import BubFramework
 
 type ACPPromptBlock = (
@@ -141,6 +151,14 @@ _LODY_EXTENSION_CAPABILITIES: dict[str, object] = {
     "steering": _LODY_STEERING_CAPABILITY,
     "subagentEvents": dict(LODY_SUBAGENT_EVENTS_CAPABILITY),
     "sessionTitle": {"version": 1},
+}
+if BUB_SUBAGENT_TASKS:
+    _LODY_EXTENSION_CAPABILITIES["subagents"] = dict(LODY_SUBAGENTS_CAPABILITY)
+
+_SUBAGENT_REQUEST_METHODS = {
+    LODY_SUBAGENTS_LIST_METHOD,
+    LODY_SUBAGENTS_CANCEL_METHOD,
+    LODY_SUBAGENTS_OUTPUT_METHOD,
 }
 
 #: How long a generated session title may take before it is abandoned. A title is
@@ -504,6 +522,8 @@ class BubACPAgent:
         self._steering_locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task[PromptResponse]] = set()
         self._subagent_events_enabled = False
+        self._subagent_runs: dict[str, SubagentRun] = {}
+        self._subagent_task_runs: dict[str, str] = {}
         self._lody_client = False
         self._title_tasks: dict[str, asyncio.Task[None]] = {}
         self._title_sessions: set[str] = set()
@@ -693,6 +713,7 @@ class BubACPAgent:
             if channel is not None:
                 await channel.stop()
             self._runtime_agents.pop(session_id, None)
+            await self._end_subagents(session_id)
             if delete_tape and session is not None:
                 tape = self._session_tape(session)
                 if tape is not None:
@@ -763,6 +784,8 @@ class BubACPAgent:
     async def ext_method(
         self, method: str, params: dict[str, Any]
     ) -> dict[str, object]:
+        if method in _SUBAGENT_REQUEST_METHODS and BUB_SUBAGENT_TASKS:
+            return await self._subagent_request(method, params)
         applied_method = _STEERING_APPLIED_METHODS.get(method)
         if applied_method is None:
             raise RequestError.method_not_found(f"_{method}")
@@ -974,189 +997,230 @@ class BubACPAgent:
 
             runtime_agent = BubAgent(self.framework)
             runtime_agent.tools.update(build_client_tools(self.client_tools))
-            if self._subagent_events_enabled:
-                self._install_streaming_subagent(runtime_agent, session)
+            self._watch_subagents(runtime_agent, session)
             self._runtime_agents[session.session_id] = runtime_agent
         # Bub's builtin load_state uses this instance for recovery and execution.
         inbound._runtime_agent = runtime_agent
         inbound._mcp_channel = self._mcp_channels.get(session.session_id)
         return inbound
 
-    def _install_streaming_subagent(
-        self, runtime_agent: BubAgent, session: ACPSession
-    ) -> None:
-        """Replace this session's `subagent` tool with a streaming variant.
+    def _watch_subagents(self, runtime_agent: BubAgent, session: ACPSession) -> None:
+        """Publish this session's subagent tasks to the client, per negotiated capability."""
 
-        The replacement keeps the original tool's name, description, parameters,
-        renderer, output schema and code-mode flags, so the model sees no
-        difference. Only the handler changes: it republishes the child run
-        through `_lody/subagents/event` while still returning Bub's result.
-        """
-
-        tool = runtime_agent.tools.get("subagent")
-        if tool is None:
+        if not (self._subagent_events_enabled or self._lody_client):
             return
+        if not BUB_SUBAGENT_TASKS:
+            return
+        from bub.builtin.subagents import SubagentEvent
 
-        async def handler(*args: Any, **kwargs: Any) -> Any:
-            from bub.builtin.tools import SubAgentInput
+        async def handler(event: SubagentEvent) -> None:
+            await self._on_subagent_event(session.session_id, event)
 
-            context = kwargs.pop("context", None)
-            param = SubAgentInput(*args, **kwargs)
-            return await self._run_streaming_subagent(param, context, session)
+        runtime_agent.events.on(SubagentEvent, handler)
 
-        runtime_agent.tools["subagent"] = replace(tool, handler=handler)
-
-    async def _run_streaming_subagent(
-        self,
-        param: SubAgentInput,
-        context: ToolContext | None,
-        session: ACPSession,
-    ) -> SubAgentResult:
-        from bub.builtin.tools import resolve_tool_names
-
-        if context is None:
-            raise RuntimeError("subagent tool requires a tool context")
-        agent = context.state.get("_runtime_agent")
-        if agent is None:
-            raise RuntimeError("no runtime agent found in tool context")
-
-        emitter = SubagentEventEmitter(self._require_client(), session.session_id)
-        child_session = _subagent_session_id(
-            param.session, str(context.state.get("session_id") or "")
-        )
-        child_state = {**context.state, "session_id": child_session}
-        allowed_tools = resolve_tool_names(
-            param.allowed_tools or None, exclude={"subagent"}, all_names=agent.tools
-        )
-        await emitter.started(
-            description=_subagent_description(param.prompt), model_id=param.model
+    async def _on_subagent_event(self, session_id: str, event: SubagentEvent) -> None:
+        from bub.builtin.subagents import (
+            SubagentFinished,
+            SubagentOutput,
+            SubagentStarted,
         )
 
-        started_at = time.time()
-        output: list[str] = []
-        errors: list[str] = []
-        pending: list[tuple[str, str]] = []
-        next_index = 0
-        turn_count = 0
-        tool_call_count = 0
-        last_tool_name: str | None = None
-        reported_usage: object = None
+        run = self._subagent_run(session_id, event.task)
+        if isinstance(event, SubagentStarted):
+            if run.emitter is not None:
+                await run.emitter.started(
+                    description=event.task.description or None,
+                    model_id=event.task.model,
+                    name=event.task.profile,
+                )
+            await self._publish_subagent_lifecycle(run)
+        elif isinstance(event, SubagentOutput):
+            await self._publish_subagent_output(run, event.event)
+        elif isinstance(event, SubagentFinished):
+            await self._publish_subagent_end(run)
 
-        def elapsed_ms() -> int:
-            return int((time.time() - started_at) * 1000)
+    def _subagent_run(self, session_id: str, task: SubagentTask) -> SubagentRun:
+        run_id = self._subagent_task_runs.get(task.task_id)
+        if run_id is not None and (run := self._subagent_runs.get(run_id)) is not None:
+            return run
+        emitter = (
+            SubagentEventEmitter(self._require_client(), session_id)
+            if self._subagent_events_enabled
+            else None
+        )
+        run = SubagentRun(
+            run_id=emitter.run_id if emitter is not None else uuid4().hex,
+            session_id=session_id,
+            task=task,
+            emitter=emitter,
+        )
+        self._subagent_runs[run.run_id] = run
+        self._subagent_task_runs[task.task_id] = run.run_id
+        return run
 
+    async def _publish_subagent_output(
+        self, run: SubagentRun, event: StreamEvent
+    ) -> None:
+        emitter = run.emitter
+        if event.kind in ("text", "reasoning"):
+            delta = str(event.data.get("delta", ""))
+            if not delta:
+                return
+            if event.kind == "text":
+                run.output.append(delta)
+            if emitter is not None:
+                await emitter.output(
+                    _text_update(
+                        "agent_message_chunk"
+                        if event.kind == "text"
+                        else "agent_thought_chunk",
+                        delta,
+                    )
+                )
+        elif event.kind == "tool_call":
+            for call in _list_payload(event.data.get("tool_calls")):
+                tool_id = _tool_call_id(run.next_tool_index, call)
+                name = _tool_name(call)
+                raw_input = _tool_raw_input(call)
+                run.next_tool_index += 1
+                title = _tool_title(name, raw_input)
+                run.pending_tools.append((tool_id, title))
+                if emitter is not None:
+                    await emitter.output(
+                        {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": tool_id,
+                            "title": title,
+                            "kind": _tool_kind(name),
+                            "status": "in_progress",
+                            "rawInput": json_safe(raw_input),
+                        }
+                    )
+            if emitter is not None:
+                await emitter.progress(**_subagent_progress(run.task))
+        elif event.kind == "tool_result":
+            results = _list_payload(event.data.get("tool_results"))
+            for position, result in enumerate(results):
+                if position < len(run.pending_tools):
+                    tool_id, title = run.pending_tools[position]
+                else:
+                    tool_id, title = f"tool-{run.next_tool_index}", "tool"
+                    run.next_tool_index += 1
+                status, result = _tool_result_outcome(result)
+                if emitter is not None:
+                    await emitter.output(
+                        {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": tool_id,
+                            "title": title,
+                            "status": status,
+                            "content": [
+                                {
+                                    "type": "content",
+                                    "content": {
+                                        "type": "text",
+                                        "text": _stringify(result),
+                                    },
+                                }
+                            ],
+                        }
+                    )
+            run.pending_tools = []
+        elif event.kind == "usage":
+            run.reported_usage = _event_usage(event)
+
+    async def _publish_subagent_end(self, run: SubagentRun) -> None:
+        if run.terminated:
+            return
+        run.terminated = True
+        task = run.task
+        if run.emitter is not None:
+            # Progress counters are display observations, never usage accounting input.
+            await run.emitter.progress(
+                **_subagent_progress(task),
+                totalTokens=_subagent_total_tokens(task.usage or run.reported_usage),
+            )
+            reason = snapshot_reason(task)
+            await run.emitter.snapshot(
+                task.status,
+                description=task.description or None,
+                model_id=task.model,
+                name=task.profile,
+                summary=summary_line(task.output)
+                if task.status == "completed"
+                else None,
+                reason_code=reason[0] if reason else None,
+                reason_message=reason[1] if reason else None,
+            )
+        await self._publish_subagent_lifecycle(run)
+
+    async def _publish_subagent_lifecycle(self, run: SubagentRun) -> None:
+        """Tag the tool call that started the task with its `_meta.lody.task` lifecycle."""
+
+        call_id = run.task.parent_call_id
+        if not self._lody_client or not call_id:
+            return
+        meta = lody_task_meta(
+            run, _subagent_total_tokens(run.task.usage or run.reported_usage)
+        )
         try:
-            stream = await agent.run_stream(
-                session_id=child_session,
-                prompt=param.prompt,
-                state=child_state,
-                model=param.model,
-                allowed_tools=allowed_tools,
-                allowed_skills=param.allowed_skills,
+            await self._require_client().session_update(
+                run.session_id,
+                ToolCallProgress(
+                    tool_call_id=call_id, field_meta={"lody": {"task": meta}}
+                ),
             )
-            async with contextlib.aclosing(stream):
-                async for event in stream:
-                    if event.kind in ("text", "reasoning"):
-                        delta = str(event.data.get("delta", ""))
-                        if not delta:
-                            continue
-                        if event.kind == "text":
-                            output.append(delta)
-                        await emitter.output(
-                            _text_update(
-                                "agent_message_chunk"
-                                if event.kind == "text"
-                                else "agent_thought_chunk",
-                                delta,
-                            )
-                        )
-                    elif event.kind == "tool_call":
-                        for call in _list_payload(event.data.get("tool_calls")):
-                            tool_id = _tool_call_id(next_index, call)
-                            name = _tool_name(call)
-                            raw_input = _tool_raw_input(call)
-                            next_index += 1
-                            tool_call_count += 1
-                            last_tool_name = name
-                            title = _tool_title(name, raw_input)
-                            pending.append((tool_id, title))
-                            await emitter.output(
-                                {
-                                    "sessionUpdate": "tool_call",
-                                    "toolCallId": tool_id,
-                                    "title": title,
-                                    "kind": _tool_kind(name),
-                                    "status": "in_progress",
-                                    "rawInput": json_safe(raw_input),
-                                }
-                            )
-                        await emitter.progress(
-                            lastToolName=last_tool_name,
-                            turnCount=turn_count,
-                            toolCallCount=tool_call_count,
-                            durationMs=elapsed_ms(),
-                        )
-                    elif event.kind == "tool_result":
-                        results = _list_payload(event.data.get("tool_results"))
-                        for position, result in enumerate(results):
-                            if position < len(pending):
-                                tool_id, title = pending[position]
-                            else:
-                                tool_id, title = f"tool-{next_index}", "tool"
-                                next_index += 1
-                            status, result = _tool_result_outcome(result)
-                            await emitter.output(
-                                {
-                                    "sessionUpdate": "tool_call_update",
-                                    "toolCallId": tool_id,
-                                    "title": title,
-                                    "status": status,
-                                    "content": [
-                                        {
-                                            "type": "content",
-                                            "content": {
-                                                "type": "text",
-                                                "text": _stringify(result),
-                                            },
-                                        }
-                                    ],
-                                }
-                            )
-                        pending = []
-                    elif event.kind == "error":
-                        errors.append(
-                            str(
-                                event.data.get("message")
-                                or event.data.get("error")
-                                or "unknown error"
-                            )
-                        )
-                    elif event.kind == "usage":
-                        reported_usage = _event_usage(event)
-                    elif event.kind == "final":
-                        turn_count += 1
-        except asyncio.CancelledError:
-            await emitter.snapshot("cancelled", reason_code="cancelled")
-            raise
-        except Exception as error:
-            await emitter.snapshot(
-                "failed", reason_code="error", reason_message=str(error)
-            )
-            raise
+        except Exception:
+            # Observing a run must never break the run itself.
+            logger.warning("Failed to publish a subagent task update", exc_info=True)
 
-        text = "".join(output)
-        # Progress counters are display observations, never usage accounting input.
-        await emitter.progress(
-            lastToolName=last_tool_name,
-            turnCount=turn_count,
-            toolCallCount=tool_call_count,
-            durationMs=elapsed_ms(),
-            totalTokens=_subagent_total_tokens(
-                getattr(stream, "usage", None) or reported_usage
-            ),
-        )
-        await emitter.snapshot("completed", summary=_summary(text))
-        return {"session_id": child_session, "output": text, "errors": errors}
+    async def _subagent_request(
+        self, method: str, params: Mapping[str, object]
+    ) -> dict[str, object]:
+        session_id = params.get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            raise RequestError.invalid_params({"field": "sessionId"})
+        if method == LODY_SUBAGENTS_LIST_METHOD:
+            active_only = params.get("activeOnly", False)
+            if not isinstance(active_only, bool):
+                raise RequestError.invalid_params({"field": "activeOnly"})
+            return {
+                "tasks": [
+                    lody_task(run)
+                    for run in self._subagent_runs.values()
+                    if run.session_id == session_id and (run.live or not active_only)
+                ]
+            }
+        task_id = params.get("taskId")
+        run = self._subagent_runs.get(task_id) if isinstance(task_id, str) else None
+        if run is None or run.session_id != session_id:
+            raise RequestError.invalid_params({"field": "taskId"})
+        if method == LODY_SUBAGENTS_CANCEL_METHOD:
+            if run.live:
+                from bub.builtin.subagents import subagent_manager
+
+                await subagent_manager.cancel(run.task.task_id)
+            return {}
+        tail = params.get("tail")
+        if tail is not None and (
+            not isinstance(tail, int) or isinstance(tail, bool) or tail < 1
+        ):
+            raise RequestError.invalid_params({"field": "tail"})
+        return {"output": tail_lines("".join(run.output), tail)}
+
+    async def _end_subagents(self, session_id: str) -> None:
+        """Stop a closed session's subagent tasks and forget its runs."""
+
+        if BUB_SUBAGENT_TASKS:
+            from bub.builtin.subagents import subagent_manager
+
+            await subagent_manager.cancel_session(
+                _bub_session_id(self.settings.channel_name, session_id)
+            )
+        for run_id, run in list(self._subagent_runs.items()):
+            if run.session_id == session_id:
+                self._subagent_runs.pop(run_id, None)
+                self._subagent_task_runs.pop(run.task.task_id, None)
 
     def _schedule_session_title(
         self, prompt: list[ACPPromptBlock], session: ACPSession
@@ -1912,34 +1976,20 @@ def _tool_title(name: str, raw_input: object) -> str:
     return name
 
 
-def _subagent_session_id(strategy: str, parent_session_id: str) -> str:
-    """Mirror Bub's `subagent` session strategy."""
-
-    if strategy == "inherit":
-        return parent_session_id or f"temp/{uuid4().hex[:8]}"
-    if strategy == "temp":
-        return f"temp/{uuid4().hex[:8]}"
-    return strategy
-
-
-def _subagent_description(prompt: object) -> str | None:
-    if not isinstance(prompt, str):
-        return None
-    text = prompt.strip()
-    if not text:
-        return None
-    return text.splitlines()[0].strip()[:200] or None
+def _subagent_progress(task: SubagentTask) -> dict[str, Any]:
+    started = task.started_at or task.created_at
+    return {
+        "lastToolName": task.last_tool,
+        "turnCount": task.steps,
+        "toolCallCount": task.tool_calls,
+        "durationMs": int(((task.ended_at or time.time()) - started) * 1000),
+    }
 
 
 def _subagent_total_tokens(usage: object) -> int | None:
     if not isinstance(usage, Mapping):
         return None
     return _usage_total_tokens(usage)
-
-
-def _summary(text: str) -> str | None:
-    line = text.strip().splitlines()[0].strip() if text.strip() else ""
-    return line[:200] or None
 
 
 def _clean_title(value: str) -> str:

@@ -169,6 +169,13 @@ async def test_session_titles_are_advertised_only_to_lody_clients() -> None:
                     "configPolicy": "active",
                 },
                 "subagentEvents": {"version": 1},
+                "subagents": {
+                    "version": 1,
+                    "lifecycle": True,
+                    "list": True,
+                    "cancel": True,
+                    "output": True,
+                },
                 "sessionTitle": {"version": 1},
             }
         }

@@ -78,38 +78,44 @@ bub mcp remove weather
 
 `bub mcp add` writes the server config into `mcp.json` and performs a connection test before exiting.
 
+## Lifecycle
+
+The plugin owns `mcp.json` connections through Bub's `provide_lifespan` hook, so every entry point
+that enters `framework.running()` (`bub gateway`, `bub chat`, `bub run`, `bub acp`, ...) connects
+the configured servers. Discovery runs in the background; the first turn waits for it before binding
+tools. Servers that fail to connect are reported by the `mcp` tool and do not stop Bub.
+
 ## Embedding
 
-Other Bub plugins can reuse the MCP lifecycle and tool bridge with a read-only configuration:
+Other Bub plugins can reuse the MCP connection and tool bridge with a read-only configuration:
 
 ```python
-from bub_mcp.plugin import MCPChannel
+from bub_mcp.plugin import MCPManager
 
-channel = MCPChannel.from_server_configs(
+manager = MCPManager.from_server_configs(
     {"weather": {"url": "https://weather.example.com/mcp"}}
 )
 
-# Inside the embedding application's async lifecycle:
-await channel.connect()
+# Inside the embedding application's async lifecycle, e.g. its own provide_lifespan hook:
+await manager.connect()
 try:
-    channel.bind_agent(agent)
+    manager.bind_agent(agent)
     # Run the agent while its MCP connections are open.
 finally:
-    await channel.stop()
+    await manager.stop()
 ```
 
-Discovered tools belong to the channel and are available through `channel.tools`; they are not
+`start()` begins discovery in the background instead of waiting for it like `connect()`.
+Discovered tools belong to the manager and are available through `manager.tools`; they are not
 provided through the `provide_tools` hook. Bub collects those tools when a `BubAgent` is created, so
 tools discovered afterward would not reach existing agents. The plugin's `load_state` hook waits for startup
 discovery and binds tools to the turn's Agent (including an explicit `_runtime_agent`). Stopping
-the channel removes its bindings and restores any tools it replaced.
+the manager removes its bindings and restores any tools it replaced.
 
-An embedding application can call `channel.bind_agent(agent)` after startup discovery completes,
-or `await channel.bind_runtime_tools(framework, message)` from its own `load_state` hook. Both paths
+An embedding application can call `manager.bind_agent(agent)` after startup discovery completes,
+or `await manager.bind_runtime_tools(framework, message)` from its own `load_state` hook. Both paths
 use instance tools. This requires Bub's instance-tool API introduced in upstream PR #311.
 
-The default `MCPChannel()` behavior remains backed by Bub's `mcp.json`. Read-only channels reject
-`add()` and `remove()` so an embedding plugin remains the owner of its source configuration. The
-standalone `MCPChannel()` construction remains unchanged. A composite plugin that must
-keep unrelated components running when all MCP servers fail can subclass the channel and set
-`stop_when_all_failed = False`.
+The default `MCPManager()` behavior remains backed by Bub's `mcp.json`. Read-only managers reject
+`add()` and `remove()` so an embedding plugin remains the owner of its source configuration.
+`MCPChannel` remains as a deprecated alias of `MCPManager`; it is no longer a Bub channel.

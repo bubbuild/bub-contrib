@@ -80,18 +80,25 @@ def _write_config(tmp_path: Path, body: str) -> None:
     (tmp_path / "mcp.json").write_text(body, encoding="utf-8")
 
 
-def _make_channel(tmp_path: Path) -> plugin.MCPChannel:
-    channel = plugin.MCPChannel()
+def _make_channel(tmp_path: Path) -> plugin.MCPManager:
+    channel = plugin.MCPManager()
     channel.settings.config_path = tmp_path / "mcp.json"
     return channel
 
 
-def test_lifecycle_channel_uses_manager_start_and_stop(monkeypatch) -> None:
-    channel = plugin.MCPChannel()
+@pytest.mark.asyncio
+async def test_framework_lifespan_starts_and_stops_configured_servers(
+    monkeypatch, tmp_path: Path
+) -> None:
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    mcp_plugin = plugin.MCPPlugin(framework)
+    framework.plugin_manager.register(mcp_plugin, name="mcp")
+    # No channel manager: entry points such as `bub acp` only enter framework.running().
+    assert framework.get_channels(lambda message: None) == {}
+    channel = mcp_plugin._manager
     calls: list[str] = []
 
-    async def fake_bootstrap(stop_event: asyncio.Event) -> None:
-        del stop_event
+    async def fake_bootstrap() -> None:
         calls.append("start")
         channel._servers["weather"] = plugin.MCPServerState(
             client=object(), connected=True
@@ -104,13 +111,10 @@ def test_lifecycle_channel_uses_manager_start_and_stop(monkeypatch) -> None:
     monkeypatch.setattr(channel, "_bootstrap", fake_bootstrap)
     monkeypatch.setattr(channel, "_close_client", fake_close_client)
 
-    async def run_test() -> None:
-        await channel.start(asyncio.Event())
+    async with framework.running():
         assert channel._bootstrap_task is not None
         await channel._bootstrap_task
-        await channel.stop()
-
-    asyncio.run(run_test())
+        assert calls == ["start"]
 
     assert calls == ["start", "stop"]
 
@@ -138,7 +142,7 @@ def test_bootstrap_discovers_remote_tools_without_global_registration(
     channel = _make_channel(tmp_path)
 
     async def start_channel() -> None:
-        await channel.start(asyncio.Event())
+        await channel.start()
         assert channel._bootstrap_task is not None
         await channel._bootstrap_task
 
@@ -177,13 +181,8 @@ def test_channel_list_reads_current_config(monkeypatch, tmp_path: Path) -> None:
     assert channel.list() == {}
 
 
-def test_embedded_channel_can_keep_runtime_alive_when_all_servers_fail(
-    monkeypatch,
-) -> None:
-    class EmbeddedChannel(plugin.MCPChannel):
-        stop_when_all_failed = False
-
-    channel = EmbeddedChannel.from_server_configs({"broken": {"command": "broken"}})
+def test_all_failed_servers_do_not_raise(monkeypatch) -> None:
+    channel = plugin.MCPManager.from_server_configs({"broken": {"command": "broken"}})
 
     async def fake_connect_server(
         server_name: str, server_config: dict[str, object]
@@ -194,32 +193,9 @@ def test_embedded_channel_can_keep_runtime_alive_when_all_servers_fail(
     monkeypatch.setattr(channel, "_connect_server", fake_connect_server)
 
     async def run_test() -> None:
-        stop_event = asyncio.Event()
-        await channel.start(stop_event)
-        async with asyncio.timeout(1):
-            while "broken" not in channel.list():
-                await asyncio.sleep(0)
-        assert not stop_event.is_set()
-        await channel.stop()
-
-    asyncio.run(run_test())
-
-
-def test_default_channel_still_stops_runtime_when_all_servers_fail(monkeypatch) -> None:
-    channel = plugin.MCPChannel.from_server_configs({"broken": {"command": "broken"}})
-
-    async def fake_connect_server(
-        server_name: str, server_config: dict[str, object]
-    ) -> plugin.MCPServerState:
-        del server_name, server_config
-        return plugin.MCPServerState(error="connection refused")
-
-    monkeypatch.setattr(channel, "_connect_server", fake_connect_server)
-
-    async def run_test() -> None:
-        stop_event = asyncio.Event()
-        await channel.start(stop_event)
-        await asyncio.wait_for(stop_event.wait(), timeout=1)
+        await channel.connect()
+        assert channel.list()["broken"].error == "connection refused"
+        assert channel.tools == {}
         await channel.stop()
 
     asyncio.run(run_test())
@@ -266,7 +242,7 @@ def test_bootstrap_records_failed_server_and_keeps_successful_servers(
     channel = _make_channel(tmp_path)
 
     async def start_channel() -> None:
-        await channel.start(asyncio.Event())
+        await channel.start()
         assert channel._bootstrap_task is not None
         await channel._bootstrap_task
 
@@ -334,7 +310,7 @@ def test_bootstrap_connects_servers_in_parallel(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr(channel, "_connect_server", fake_connect_server)
 
     async def run_test() -> None:
-        bootstrap_task = asyncio.create_task(channel._bootstrap(asyncio.Event()))
+        bootstrap_task = asyncio.create_task(channel._bootstrap())
         await asyncio.wait_for(all_started.wait(), timeout=1)
         assert set(started) == {"weather", "calendar"}
         release.set()
@@ -435,7 +411,7 @@ def test_build_tool_forwards_remote_output_schema() -> None:
     )
     remote_tool.outputSchema = output_schema
 
-    tool = plugin.MCPChannel()._build_tool("weather", remote_tool)
+    tool = plugin.MCPManager()._build_tool("weather", remote_tool)
 
     assert tool is not None
     assert tool.output_schema == output_schema
@@ -447,7 +423,7 @@ def test_build_tool_defers_remote_tools_by_default(monkeypatch) -> None:
         "get_forecast", "Get forecast.", {"type": "object", "properties": {}}
     )
 
-    channel = plugin.MCPChannel()
+    channel = plugin.MCPManager()
     tool = channel._build_tool("weather", remote_tool)
     assert tool is not None
     assert tool.deferred is True
@@ -498,7 +474,7 @@ async def test_late_discovery_reaches_existing_agent_and_stop_restores_tools(
     channel._server_configs = {"weather": {"command": "weather"}}
     monkeypatch.setattr(plugin, "_create_fastmcp_client", FakeClient)
 
-    await channel.start(asyncio.Event())
+    await channel.start()
     try:
         # build_state waits for discovery, even though the Agent predates it.
         state = await framework.build_state({}, "test:weather")
@@ -529,7 +505,7 @@ async def test_mcp_binds_explicit_runtime_agent_without_changing_default(
     framework.load_builtin_hooks()
     default = framework.plugin_manager.get_plugin("builtin")._get_agent()
     embedded = BubAgent(framework, tools=[])
-    channel = plugin.MCPChannel()
+    channel = plugin.MCPManager()
     remote = plugin.Tool(name="mcp.embedded", handler=lambda: "ok")
     channel._servers["embedded"] = plugin.MCPServerState(tools=[remote], connected=True)
 

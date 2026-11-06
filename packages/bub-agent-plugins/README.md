@@ -7,7 +7,8 @@ The plugin supports both portable component types:
 
 - `skills/*/SKILL.md` is validated with Bub's existing Agent Skills parser and added to its normal
   discovery namespace. Project and user skills keep their existing precedence.
-- `mcp.json` is validated and adapted to a read-only `bub-mcp` lifecycle channel. Stdio,
+- `mcp.json` is validated and adapted to a read-only `bub-mcp` manager that is connected for the duration of
+  `framework.running()`. Stdio,
   Streamable HTTP, and legacy SSE transports are supported.
 
 Invalid manifests reject only that plugin. Invalid skills, MCP files, server entries, or connection
@@ -20,7 +21,7 @@ bub install bub-mcp@main
 bub install bub-agent-plugins@main
 ```
 
-`bub-mcp>=0.3.0` is a runtime requirement, but intentionally not a transitive package dependency,
+`bub-mcp>=0.4.0` is a runtime requirement, but intentionally not a transitive package dependency,
 matching the repository convention that Bub host capabilities are installed explicitly into the
 same environment. Its existing `~/.bub/mcp.json` configuration remains independent.
 

@@ -4,20 +4,18 @@ import asyncio
 import contextlib
 import functools
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Self, TypedDict, final
 from weakref import WeakKeyDictionary
 
+import bub
 import fastmcp
 import mcp.types
 import typer
-import bub
 from bub import hookimpl, tool
-from bub.channels import Channel, Lifecycle
 from bub.core.tools import Tool, ToolContext
-from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope, field_of
 from bub.turn import TurnState
 from loguru import logger
@@ -32,7 +30,6 @@ TOOL_PREFIX = "mcp."
 TEXT_OUTPUT_SCHEMA: dict[str, Any] = {"type": "string"}
 
 type ResultMode = Literal["text", "structured", "wrapped"]
-LIFECYCLE_CHANNEL_NAME = "mcp.lifecycle"
 
 
 def _create_fastmcp_client(
@@ -150,9 +147,8 @@ class MCPServerState:
     error: str | None = None
 
 
-class MCPChannel(Lifecycle):
-    name = LIFECYCLE_CHANNEL_NAME
-    stop_when_all_failed = True
+class MCPManager:
+    """Own MCP server connections and bind their tools to Bub Agents."""
 
     def __init__(self) -> None:
         self.settings = bub.ensure_config(MCPSettings)
@@ -163,7 +159,6 @@ class MCPChannel(Lifecycle):
         self._bindings: WeakKeyDictionary[
             BubAgent, dict[str, tuple[Tool, Tool | None]]
         ] = WeakKeyDictionary()
-        self._stop_event: asyncio.Event | None = None
 
     @classmethod
     def from_server_configs(
@@ -176,26 +171,25 @@ class MCPChannel(Lifecycle):
         }
         return channel
 
-    async def start(self, stop_event: asyncio.Event) -> None:
-        self._stop_event = stop_event
+    async def start(self) -> None:
+        """Start discovery in the background; turns wait for it before binding tools."""
         if any(server.connected for server in self._servers.values()):
             return
         if self._bootstrap_task is not None and not self._bootstrap_task.done():
             return
         self._bootstrap_task = asyncio.create_task(
-            self._bootstrap(stop_event), name="bub-mcp.bootstrap"
+            self._bootstrap(), name="bub-mcp.bootstrap"
         )
 
     async def connect(self) -> None:
-        """Wait for discovery when embedded without Bub's channel manager."""
-        await self.start(asyncio.Event())
+        """Start discovery and wait for it to finish."""
+        await self.start()
         if self._bootstrap_task is not None:
             await self._bootstrap_task
 
     async def stop(self) -> None:
         task = self._bootstrap_task
         self._bootstrap_task = None
-        self._stop_event = None
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -323,13 +317,9 @@ class MCPChannel(Lifecycle):
         return _tool_result_value(result, mode=result_mode)
 
     def bootstrap(self) -> None:
-        async def main() -> None:
-            stop_event = asyncio.Event()
-            await self._bootstrap(stop_event)
+        asyncio.run(self._bootstrap())
 
-        asyncio.run(main())
-
-    async def _bootstrap(self, stop_event: asyncio.Event) -> None:
+    async def _bootstrap(self) -> None:
         async with self._lock:
             try:
                 config = self._read_mcp_servers()
@@ -364,13 +354,6 @@ class MCPChannel(Lifecycle):
                         config_items, server_states, strict=False
                     )
                 }
-
-                if (
-                    self.stop_when_all_failed
-                    and self._servers
-                    and not any(server.connected for server in self._servers.values())
-                ):
-                    stop_event.set()
             except asyncio.CancelledError:
                 for server in self._servers.values():
                     if server.client is not None:
@@ -385,8 +368,6 @@ class MCPChannel(Lifecycle):
                         server.client = None
                     server.connected = False
                 logger.warning("bub-mcp bootstrap failed: {}", exc)
-                if self.stop_when_all_failed:
-                    stop_event.set()
 
     def _read_mcp_servers(self) -> dict[str, Any]:
         if self._server_configs is not None:
@@ -475,7 +456,7 @@ class MCPChannel(Lifecycle):
 class MCPPlugin:
     def __init__(self, framework: Any) -> None:
         self.framework = framework
-        self._manager = MCPChannel()
+        self._manager = MCPManager()
 
     @hookimpl
     async def load_state(self, message: Envelope, session_id: str) -> TurnState:
@@ -488,9 +469,13 @@ class MCPPlugin:
         return [_mcp_list_tool()]
 
     @hookimpl
-    def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
-        del message_handler
-        return [self._manager]
+    async def provide_lifespan(self) -> AsyncIterator[None]:
+        # Every framework.running() entry point (gateway, chat, run, acp) gets mcp.json servers.
+        await self._manager.start()
+        try:
+            yield
+        finally:
+            await self._manager.stop()
 
     @hookimpl
     def register_cli_commands(self, app: typer.Typer) -> None:
@@ -542,8 +527,8 @@ def _mcp_list_tool() -> Tool:
 def mcp_list(*, context: ToolContext) -> MCPServerList:
     """List configured MCP servers."""
     manager = context.state.get("mcp")
-    if not isinstance(manager, MCPChannel):
-        raise RuntimeError("MCP channel is not available in state")
+    if not isinstance(manager, MCPManager):
+        raise RuntimeError("MCP manager is not available in state")
     return {
         "servers": {
             name: {
@@ -554,3 +539,7 @@ def mcp_list(*, context: ToolContext) -> MCPServerList:
             for name, server in manager.list().items()
         }
     }
+
+
+# Deprecated alias kept for embedders written against bub-mcp 0.3.
+MCPChannel = MCPManager

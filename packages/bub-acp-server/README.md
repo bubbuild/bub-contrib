@@ -84,7 +84,7 @@ History is read through Bub's configured tape store. Store errors are reported i
 
 ## Session MCP servers
 
-`bub-acp-server` depends on `bub-mcp>=0.3.0`. Initialization advertises
+`bub-acp-server` depends on `bub-mcp>=0.4.0`. Initialization advertises
 `mcpCapabilities: {"http": true, "sse": true}`; stdio support is implicit in ACP.
 Pass servers in `mcpServers` when creating, loading, or resuming a session:
 

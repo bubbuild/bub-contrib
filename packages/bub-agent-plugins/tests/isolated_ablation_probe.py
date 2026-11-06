@@ -82,21 +82,27 @@ def _write_runtime_files(
     return config_file
 
 
-async def _exercise_channels(
-    framework: Any, channels: dict[str, Any], mcp_enabled: bool
+def _assert_skills(workspace: Path, skills_enabled: bool) -> bool:
+    from bub.skills import discover_skills
+
+    skills = {skill.name: skill for skill in discover_skills(workspace)}
+    assert skills["baseline-skill"].body() == "Return `baseline-skill-ok`."
+    assert skills["shared-skill"].body() == "Return `workspace-skill-ok`."
+    assert ("basic-skill" in skills) is skills_enabled
+    if skills_enabled:
+        assert (
+            skills["basic-skill"].body()
+            == "Return `basic-skill-ok` when this skill is invoked."
+        )
+    return "basic-skill" in skills
+
+
+async def _exercise_runtime(
+    framework: Any, workspace: Path, skills_enabled: bool, mcp_enabled: bool
 ) -> dict[str, Any]:
-    baseline = channels["mcp.lifecycle"]
-    plugin_channel = channels.get("agent-plugins.mcp")
-    assert (plugin_channel is not None) is mcp_enabled
-
-    active_channels = [baseline]
-    if plugin_channel is not None:
-        active_channels.append(plugin_channel)
-
-    try:
-        for channel in active_channels:
-            await channel.start(asyncio.Event())
-
+    # Plugins load and MCP servers live for framework.running(); no channel manager is involved.
+    async with framework.running():
+        plugin_skill = _assert_skills(workspace, skills_enabled)
         state = await framework.build_state({}, "probe:tools")
         agent = state["_runtime_agent"]
         provided = {tool.name for tool in framework.get_tools()}
@@ -106,21 +112,20 @@ async def _exercise_channels(
         assert baseline_result == "basic-mcp-ok:baseline"
 
         plugin_result = None
-        if plugin_channel is not None:
+        if mcp_enabled:
             plugin_tool = agent.tools["mcp.basic-agent-plugin.basic_ping"]
             assert "mcp.basic-agent-plugin.basic_ping" not in provided
             plugin_result = await plugin_tool.run(value="plugin")
             assert plugin_result == "basic-mcp-ok:plugin"
         else:
-            assert "mcp.basic-agent-plugin.basic_ping" not in provided
+            assert "mcp.basic-agent-plugin.basic_ping" not in agent.tools
 
-        return {
-            "baseline_mcp": baseline_result,
-            "plugin_mcp": plugin_result,
-        }
-    finally:
-        for channel in reversed(active_channels):
-            await channel.stop()
+    assert "mcp.baseline_ping" not in agent.tools
+    return {
+        "plugin_skill": plugin_skill,
+        "baseline_mcp": baseline_result,
+        "plugin_mcp": plugin_result,
+    }
 
 
 def _assert_plugin_headers_stay_on_origin() -> None:
@@ -202,35 +207,21 @@ def main() -> None:
     os.chdir(workspace)
 
     from bub.framework import BubFramework
-    from bub.skills import discover_skills
 
     framework = BubFramework(config_file=config_file)
     framework.load_hooks()
     _assert_plugin_headers_stay_on_origin()
 
-    async def message_handler(_message: Any) -> None:
-        return None
-
-    channels = framework.get_channels(message_handler)
-    skills = {skill.name: skill for skill in discover_skills(workspace)}
-    assert skills["baseline-skill"].body() == "Return `baseline-skill-ok`."
-    assert skills["shared-skill"].body() == "Return `workspace-skill-ok`."
-    assert ("basic-skill" in skills) is skills_enabled
-    if skills_enabled:
-        assert (
-            skills["basic-skill"].body()
-            == "Return `basic-skill-ok` when this skill is invoked."
-        )
-
-    mcp_results = asyncio.run(_exercise_channels(framework, channels, mcp_enabled))
+    results = asyncio.run(
+        _exercise_runtime(framework, workspace, skills_enabled, mcp_enabled)
+    )
     print(
         json.dumps(
             {
                 "skills_enabled": skills_enabled,
                 "mcp_enabled": mcp_enabled,
                 "baseline_skill": True,
-                "plugin_skill": "basic-skill" in skills,
-                **mcp_results,
+                **results,
             },
             sort_keys=True,
         )

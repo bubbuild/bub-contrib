@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import bub
 from bub import hookimpl
-from bub.channels import Channel
-from bub.channels.contracts import MessageHandler
 from bub.envelope import Envelope
 from bub.turn import TurnState
 from loguru import logger
@@ -21,21 +20,13 @@ from bub_agent_plugins.models import AgentPluginLoadResult
 from bub_agent_plugins.skills import PluginSkillRegistry
 
 try:
-    from bub_mcp.plugin import MCPChannel
-except ModuleNotFoundError as exc:
-    if exc.name == "bub_mcp":
+    from bub_mcp.plugin import MCPManager
+except ImportError as exc:
+    if exc.name in {"bub_mcp", "bub_mcp.plugin"} or "MCPManager" in str(exc):
         raise RuntimeError(
-            "bub-agent-plugins requires bub-mcp>=0.3.0 in the Bub runtime environment"
+            "bub-agent-plugins requires bub-mcp>=0.4.0 in the Bub runtime environment"
         ) from exc
     raise
-
-if not all(
-    callable(getattr(MCPChannel, name, None))
-    for name in ("from_server_configs", "bind_runtime_tools")
-):
-    raise RuntimeError(
-        "bub-agent-plugins requires bub-mcp>=0.3.0 in the Bub runtime environment"
-    )
 
 
 def default_data_root() -> Path:
@@ -53,10 +44,7 @@ class AgentPluginsSettings(bub.Settings):
     data_root: Path = Field(default_factory=default_data_root)
 
 
-class AgentPluginMCPChannel(MCPChannel):
-    name = "agent-plugins.mcp"
-    stop_when_all_failed = False
-
+class AgentPluginMCPManager(MCPManager):
     def _create_client(self, server_name: str, server_config: dict[str, Any]) -> Any:
         return create_agent_plugin_client(
             server_name,
@@ -76,7 +64,7 @@ class AgentPluginsPlugin:
         self.settings = settings or bub.ensure_config(AgentPluginsSettings)
         self.catalog = AgentPluginLoadResult()
         self._skills = PluginSkillRegistry()
-        self._mcp_channel: AgentPluginMCPChannel | None = None
+        self._mcp_manager: AgentPluginMCPManager | None = None
         self._loaded_workspace: Path | None = None
 
     def load(self) -> AgentPluginLoadResult:
@@ -98,8 +86,8 @@ class AgentPluginsPlugin:
             self.catalog.diagnostics.append(
                 f"skills component disabled: cannot register skill directories: {exc}"
             )
-        self._mcp_channel = (
-            AgentPluginMCPChannel.from_server_configs(self.catalog.mcp_servers)
+        self._mcp_manager = (
+            AgentPluginMCPManager.from_server_configs(self.catalog.mcp_servers)
             if self.settings.mcp_enabled and self.catalog.mcp_servers
             else None
         )
@@ -113,16 +101,23 @@ class AgentPluginsPlugin:
         del session_id
         catalog = self.load()
         state: TurnState = {"agent_plugins": catalog}
-        if self._mcp_channel is not None:
-            await self._mcp_channel.bind_runtime_tools(self.framework, message)
-            state["agent_plugins_mcp"] = self._mcp_channel
+        if self._mcp_manager is not None:
+            await self._mcp_manager.bind_runtime_tools(self.framework, message)
+            state["agent_plugins_mcp"] = self._mcp_manager
         return state
 
     @hookimpl
-    def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:
-        del message_handler
+    async def provide_lifespan(self) -> AsyncIterator[None]:
         self.load()
-        return [self._mcp_channel] if self._mcp_channel is not None else []
+        manager = self._mcp_manager
+        if manager is None:
+            yield
+            return
+        await manager.start()
+        try:
+            yield
+        finally:
+            await manager.stop()
 
 
 def _discover_plugin_roots(

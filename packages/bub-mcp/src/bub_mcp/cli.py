@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import typer
 
 if TYPE_CHECKING:
-    from bub_mcp.plugin import MCPChannel, MCPServerState
+    from bub_mcp.plugin import MCPManager, MCPServerState
 
 
 class MCPTransport(StrEnum):
@@ -101,7 +101,7 @@ def _build_server_config(
     return _build_remote_server_config(transport, targets, env_items, header_items)
 
 
-def _probe_server(manager: MCPChannel, name: str) -> tuple[bool, str]:
+def _probe_server(manager: MCPManager, name: str) -> tuple[bool, str]:
     try:
         manager.bootstrap()
         server = manager.list().get(name)
@@ -116,7 +116,7 @@ def _probe_server(manager: MCPChannel, name: str) -> tuple[bool, str]:
         asyncio.run(manager.stop())
 
 
-def make_mcp_command(manager: MCPChannel) -> typer.Typer:
+def make_mcp_command(manager: MCPManager) -> typer.Typer:
     app = typer.Typer()
 
     @app.command("list")

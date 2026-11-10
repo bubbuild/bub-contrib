@@ -5,6 +5,7 @@ from bub import hookimpl
 from bub.channels import Channel
 from bub.framework import BubFramework
 from bub.channels.contracts import MessageHandler
+from bub.core.tools import Tool
 from bub.envelope import Envelope
 from bub.turn import TurnState
 
@@ -19,14 +20,18 @@ def default_scheduler() -> BaseScheduler:
 
 class ScheduleImpl:
     def __init__(self, framework: BubFramework | None = None) -> None:
-        from bub_schedule import tools  # noqa: F401
-
         self.framework = framework
         self.scheduler = default_scheduler()
 
     @hookimpl
     def load_state(self, message: Envelope, session_id: str) -> TurnState:
         return {"scheduler": self.scheduler}
+
+    @hookimpl
+    def provide_tools(self) -> list[Tool]:
+        from bub_schedule.tools import TOOLS
+
+        return list(TOOLS)
 
     @hookimpl
     def provide_channels(self, message_handler: MessageHandler) -> list[Channel]:

@@ -8,15 +8,23 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "agent-client-protocol==0.10.1",
-    "bub",
+    "agent-client-protocol==1.0.0rc2",
+    "bub[app]>=0.6.0",
+    "bub-mcp>=0.4.0",
+    "loguru",
+    "pydantic",
+    "pydantic-settings",
+    "typer",
+]
+
+[project.optional-dependencies]
+http = [
+    "agent-client-protocol[http]",
+    "hypercorn>=0.17,<0.19",
 ]
 
 [project.entry-points.bub]
 acp-server = "bub_acp_server.plugin:ACPServerPlugin"
-
-[project.scripts]
-bub-acp-server = "bub_acp_server.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]

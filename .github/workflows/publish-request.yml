@@ -1,0 +1,185 @@
+name: Publish Request
+
+run-name: "Publish request #${{ github.event.issue.number }}"
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - labeled
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate request
+    if: >-
+      (contains(github.event.issue.body, '<!-- publish-request -->') ||
+      startsWith(github.event.issue.title, 'Request for publish')) &&
+      (github.event.action != 'labeled' || github.event.label.name == 'to-be-published')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      valid: ${{ steps.request.outputs.valid }}
+      subpackage: ${{ steps.request.outputs.subpackage }}
+      version: ${{ steps.request.outputs.version }}
+      error: ${{ steps.request.outputs.error }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Validate publish request
+        id: request
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: >-
+          python scripts/validate_publish_request.py
+          --title "$ISSUE_TITLE"
+          --repository .
+          --github-output "$GITHUB_OUTPUT"
+
+  release:
+    name: Release package
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'to-be-published'
+    needs:
+      - validate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    with:
+      subpackage: ${{ needs.validate.outputs.subpackage }}
+      version: ${{ needs.validate.outputs.version }}
+
+  report:
+    name: Report result
+    if: >-
+      always() &&
+      (contains(github.event.issue.body, '<!-- publish-request -->') ||
+      startsWith(github.event.issue.title, 'Request for publish')) &&
+      (github.event.action != 'labeled' || github.event.label.name == 'to-be-published')
+    needs:
+      - validate
+      - release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      VALIDATION_RESULT: ${{ needs.validate.result }}
+      VALIDATION_ERROR: ${{ needs.validate.outputs.error }}
+      SUBPACKAGE: ${{ needs.validate.outputs.subpackage }}
+      VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_RESULT: ${{ needs.release.result }}
+      IS_PUBLISH_EVENT: >-
+        ${{ github.event.action == 'labeled' && github.event.label.name == 'to-be-published' }}
+
+    steps:
+      - name: Comment on request
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const marker = "<!-- publish-request-status -->";
+            const issueNumber = context.issue.number;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const publishEvent = process.env.IS_PUBLISH_EVENT === "true";
+            const validationSucceeded = process.env.VALIDATION_RESULT === "success";
+            const releaseSucceeded = process.env.RELEASE_RESULT === "success";
+
+            let body;
+            let closeIssue = false;
+            let removePublishLabel = false;
+
+            if (validationSucceeded) {
+              try {
+                await github.rest.issues.getLabel({
+                  ...context.repo,
+                  name: "to-be-published",
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                await github.rest.issues.createLabel({
+                  ...context.repo,
+                  name: "to-be-published",
+                  color: "FBCA04",
+                  description: "Approved for publication to PyPI",
+                });
+              }
+            }
+
+            if (!validationSucceeded) {
+              const detail = process.env.VALIDATION_ERROR || "See the workflow log for details.";
+              body = `${marker}\n❌ Publish request validation failed: ${detail}\n\n[View workflow run](${runUrl})`;
+              removePublishLabel = publishEvent;
+            } else if (!publishEvent) {
+              const packageName = process.env.SUBPACKAGE;
+              const version = process.env.VERSION;
+              body = `${marker}\n✅ Publish request validated for \`${packageName} ${version}\`. A maintainer can add the \`to-be-published\` label to publish it.\n\n[View workflow run](${runUrl})`;
+            } else if (releaseSucceeded) {
+              const packageName = process.env.SUBPACKAGE;
+              const version = process.env.VERSION;
+              const projectUrl = `https://pypi.org/project/${encodeURIComponent(packageName)}/${encodeURIComponent(version)}/`;
+              body = `${marker}\n✅ Published [\`${packageName} ${version}\`](${projectUrl}) to PyPI.\n\n[View workflow run](${runUrl})`;
+              closeIssue = true;
+            } else {
+              body = `${marker}\n❌ The release workflow failed. The \`to-be-published\` label has been removed so the request can be retried after the problem is fixed.\n\n[View workflow run](${runUrl})`;
+              removePublishLabel = true;
+            }
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number: issueNumber, per_page: 100 },
+            );
+            const statusComment = comments.find(
+              (comment) => comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
+            );
+
+            if (statusComment) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: statusComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            }
+
+            if (removePublishLabel) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  name: "to-be-published",
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+            }
+
+            if (closeIssue) {
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: issueNumber,
+                state: "closed",
+                state_reason: "completed",
+              });
+            }

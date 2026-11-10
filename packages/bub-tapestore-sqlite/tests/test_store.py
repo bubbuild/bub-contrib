@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from bub.errors import BubError
-from bub.tape import TapeEntry, TapeQuery
+from bub.core.tape import TapeEntry, TapeQuery
 
 from bub_tapestore_sqlite import store as store_module
 from bub_tapestore_sqlite.store import SQLiteTapeStore

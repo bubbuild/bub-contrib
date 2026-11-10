@@ -1,43 +1,41 @@
 ---
 name: plugin-creator
 description: |
-  Create or update a Bub plugin in any local path. Use when the task is to scaffold a Python
-  package that exposes a [project.entry-points.bub] entry, implement Bub hooks or tools, and make
-  the plugin take effect by installing it or adding it as a dependency in the Bub runtime project.
-  When working inside bub-contrib, also follow its package and workspace conventions.
+  Create or update a Bub plugin at any local path. Use when the task is to scaffold a Python
+  package that exposes a [project.entry-points.bub] entry, implement Bub hooks or tools, or make
+  a plugin take effect by installing it into, or adding it as a dependency of, the project that
+  runs Bub. Inside bub-contrib, also follow the repository's package and workspace conventions.
 ---
 
 # Bub Plugin Creator
 
-Create Bub plugins as normal Python packages.
+A Bub plugin is an ordinary Python package. It takes effect only when both of these hold:
 
-Core rule: a Bub plugin becomes effective only when both conditions are true:
+1. The package declares an entry point in the `bub` group.
+2. The package is installed in the same Python environment as Bub.
 
-1. the package exposes an entry point in the `bub` group
-2. the package is installed in the same Python environment as Bub
+The plugin does not have to live in `bub-contrib`; that repository is just one possible host.
 
-Do not assume the plugin must live in `bub-contrib`. That repository is only one possible host.
+## Anatomy Of A Bub Plugin
 
-## What Counts As A Bub Plugin
-
-A Bub plugin is usually a Python package with:
+A typical plugin package contains:
 
 - `pyproject.toml`
 - `README.md`
 - `src/<python_package>/__init__.py`
-- `src/<python_package>/plugin.py` or another hook-exporting module such as `tools.py`
-- optional helper modules such as `channel.py`, `store.py`, `jobstore.py`, `config.py`
+- `src/<python_package>/plugin.py`, or another module that exports hooks or tools, such as `tools.py`
+- optional helper modules such as `channel.py`, `store.py`, `jobstore.py`, or `config.py`
 - optional tests under `tests/`
-- optional bundled agent skill files under `src/skills/<skill-name>/`
+- optional bundled agent skills under `src/skills/<skill-name>/`
 
-The package must export a Bub entry point through:
+The entry point is declared like this:
 
 ```toml
 [project.entry-points.bub]
 <plugin-name> = "<python_package>.plugin"
 ```
 
-Other valid targets also exist, for example:
+The target can also be a tools module or a specific object:
 
 ```toml
 [project.entry-points.bub]
@@ -45,80 +43,59 @@ Other valid targets also exist, for example:
 <plugin-name> = "<python_package>.plugin:main"
 ```
 
-Use the narrowest export surface that matches the implementation.
+Point the entry point at the smallest target that covers the implementation.
 
-## First: Identify The Host Project
+## Step 0: Identify The Host Project
 
-Before creating files, determine where the plugin should live and where Bub runs.
+Before creating any files, work out two separate things:
 
-There are three common cases:
+- **Source location**: where the plugin's files live.
+- **Activation location**: the project or environment that installs the package and runs Bub.
 
-1. Existing monorepo package
-   Create a new package inside the current repository and wire it into that repo's dependency flow.
+Most tasks fall into one of three cases:
 
-2. Standalone local package
-   Create a new package in any local path, then install it into the Bub environment with an editable
-   or path-based dependency.
+1. **New package in an existing monorepo.** Add the package to the current repository and wire it
+   into that repository's dependency setup.
+2. **Standalone local package.** Create the package at the requested path, then install it into
+   the Bub environment as an editable or path dependency.
+3. **Existing package.** Update it in place and make sure the environment picks up the change.
 
-3. Existing package to extend
-   Update the package in place and make sure the environment uses the updated dependency.
-
-Important distinction:
-
-- plugin source location: where files are created
-- activation location: the project or environment that installs the package
-
-If the task is ambiguous, infer both from nearby files such as `pyproject.toml`, `uv.lock`,
-`.venv`, and how Bub is launched.
+If the request does not say, infer both locations from nearby `pyproject.toml`, `uv.lock`, and
+`.venv` files, and from how Bub is launched.
 
 ## Classify The Plugin Shape
 
-Inspect the closest existing plugin before writing code. If working in `bub-contrib`, use packages
-under `packages/` as the primary examples.
+Find the closest existing plugin and read it before writing code. In `bub-contrib`, the packages
+under `packages/` are the primary references.
 
 Common shapes:
 
-1. Channel provider
-   Use when the plugin connects Bub to an external message source or sink.
-   Typical hook: `provide_channels`
+| Shape | Use when the plugin... | Typical hooks |
+| --- | --- | --- |
+| Channel provider | connects Bub to an external message source or sink | `provide_channels` |
+| Hook-only provider | contributes one focused hook, such as model execution | `run_model` |
+| Resource provider | returns a store or another singleton runtime resource | `provide_tape_store` |
+| Composite plugin | owns runtime state and also provides channels or tools | `load_state` plus provider hooks |
+| Tool package | mainly defines `@tool` functions | entry point targets the tools module |
 
-2. Hook-only provider
-   Use when the plugin contributes one focused hook such as model execution.
-   Typical hook: `run_model`
-
-3. Resource provider
-   Use when the plugin returns a store or singleton runtime resource.
-   Typical hook: `provide_tape_store`
-
-4. Composite plugin
-   Use when the plugin owns runtime state and also provides channels or tools.
-   Typical hooks: `load_state` plus one or more provider hooks
-
-5. Tool registration package
-   Use when the package mainly exposes `@tool` functions and exports the tool module directly.
-
-Prefer copying the nearest existing shape over inventing a new abstraction.
+Copy the nearest existing shape instead of inventing a new abstraction.
 
 ## Implementation Workflow
 
 ### 1. Read The Closest Reference
 
-Open the closest existing package first.
+At a minimum, read:
 
-Minimum files to inspect:
+- the host project's `pyproject.toml`
+- the closest plugin's `pyproject.toml`, entry module (`plugin.py` or `tools.py`), and `README.md`
+- one or two of its representative tests
 
-- host project's `pyproject.toml`
-- closest plugin package `pyproject.toml`
-- closest plugin entry-point module such as `plugin.py` or `tools.py`
-- one or two representative tests
-- `README.md`
-
-If the plugin interacts with an agent-facing chat platform, also inspect any packaged skill such as
+If the plugin integrates an agent-facing chat platform, also read any bundled skill such as
 `src/skills/<channel>/SKILL.md`.
 
-### 2. Choose The Package Location
+### 2. Choose The Package Layout
 
-Default structure for a new package:
+Default layout for a new package:
 
 ```text
 <plugin-root>/
@@ -137,67 +114,25 @@ Naming conventions:
 
 - distribution name: `bub-<feature>`
 - Python package: `bub_<feature>`
-- Bub entry point name: prefer the user-facing short name, usually `<feature>`
+- entry point name: the short user-facing name, usually `<feature>`
 
-If working inside `bub-contrib`, the preferred location is:
+In `bub-contrib`, put new packages at `packages/bub-<feature>/`. Elsewhere, use the path the user
+asked for, or the host project's existing plugin directory if it has one.
 
-```text
-packages/bub-<feature>/
-```
+### 3. Write The Packaging Metadata
 
-If working outside `bub-contrib`, create the package in the user-requested path or in the nearest
-plugin-oriented subdirectory of the host project.
+`pyproject.toml` usually declares:
 
-### 3. Implement Packaging Metadata
-
-`pyproject.toml` should usually include:
-
-- `name`
-- `version`
-- `description`
-- `readme`
-- `requires-python`
+- `name`, `version`, `description`, `readme`, and `requires-python`
 - runtime `dependencies`
 - `[project.entry-points.bub]`
-- build backend
+- a build backend
 
-Prefer `src/` layout unless the host project clearly uses another convention.
+Use the `src/` layout unless the host project clearly follows another convention.
 
-For `uv`-managed projects, path activation commonly looks like one of these:
+### 4. Implement The Entry Module
 
-```toml
-[project]
-dependencies = ["bub-my-plugin"]
-
-[tool.uv.sources]
-bub-my-plugin = { path = "../bub-my-plugin", editable = true }
-```
-
-or, in a workspace-style repo:
-
-```toml
-[tool.uv.workspace]
-members = ["packages/*", "plugins/*"]
-
-[tool.uv.sources]
-bub-my-plugin = { workspace = true }
-```
-
-For ad hoc local activation without editing host metadata, an editable install is often enough:
-
-```bash
-uv pip install -e /abs/path/to/bub-my-plugin
-```
-
-Choose the activation method that matches the host project:
-
-- persistent project dependency: update host `pyproject.toml`
-- local development only: editable install may be sufficient
-- monorepo workspace: add the package to workspace and source mapping if required
-
-### 4. Implement The Bub Entry Module
-
-Prefer the narrowest hook surface that solves the task.
+Implement only the hooks the task needs.
 
 Common patterns:
 
@@ -205,125 +140,139 @@ Common patterns:
 - `@hookimpl async def run_model(...) -> str`
 - `@hookimpl def provide_tape_store() -> ...`
 - `@hookimpl def load_state(...) -> State`
-- `@tool(name="...")` in a module exported directly as the Bub entry point
+- `@tool(name="...")` in a module that the entry point targets directly
 
 Guidelines:
 
-- Keep the exported entry module thin when possible.
-- Move protocol or platform code into helper modules such as `channel.py`, `store.py`, or `tools.py`.
-- Use `pydantic-settings` or the host project's config approach when environment variables exist.
-- Register every plugin configuration object with `@bub.config(name="<entry-point-name>")`.
-  A configuration object means any `bub.Settings` subclass owned by the plugin, regardless of
-  whether it lives in `plugin.py`, `config.py`, `channel.py`, `tools.py`, or another helper module.
-- In plugin runtime code, read registered settings through `bub.ensure_config(ConfigClass)` instead
-  of direct construction such as `ConfigClass()` or module-level settings singletons. Direct
-  construction is only appropriate for tests, explicit factory injection, or standalone scripts that
-  intentionally read environment variables without a Bub framework context.
-- Use the Bub entry point name as the config section name, such as `qq`, `mcp`,
-  `github-copilot`, or `tapestore-sqlite`. Keep environment variable prefixes specific, such as
-  `BUB_QQ_` or `BUB_TAPESTORE_SQLITE_`.
-- Cache singleton resources only when reuse is intentional and testable.
-- Avoid framework-wide abstractions unless at least two packages actually need them.
+- Keep the entry module thin. Put protocol and platform code in helper modules such as
+  `channel.py`, `store.py`, or `tools.py`.
+- Choose tool `exposure` deliberately. The default `"auto"` suits most tools; use `"direct"` for
+  tools the model must always call directly, `"code"` for tools callable only from `run_code`,
+  and `"command"` for operator comma commands the model must never see.
+- If the plugin reads environment variables, use `pydantic-settings` or the host project's
+  existing configuration approach.
+- Register every configuration class the plugin owns with
+  `@bub.config(name="<entry-point-name>")`. This covers every `bub.Settings` subclass, whichever
+  module defines it.
+- At runtime, read settings with `bub.ensure_config(ConfigClass)`. Do not instantiate
+  `ConfigClass()` directly or keep module-level settings singletons. Direct construction is only
+  for tests, explicit factory injection, or standalone scripts that run outside Bub and
+  intentionally read environment variables.
+- Name the config section after the entry point, such as `qq`, `mcp`, `github-copilot`, or
+  `tapestore-sqlite`, and give environment variables a specific prefix such as `BUB_QQ_` or
+  `BUB_TAPESTORE_SQLITE_`.
+- Cache singleton resources only when reuse is intentional and covered by tests.
+- Do not add shared abstractions until at least two packages actually need them.
 
-### 5. Add Optional Agent Skill Files Only When Needed
+### 5. Bundle An Agent Skill Only When Needed
 
-Create `src/skills/<name>/SKILL.md` only if the plugin exposes agent-facing operational behavior,
-for example a chat channel that needs explicit send, edit, or reply instructions.
+Add `src/skills/<name>/SKILL.md` only when the plugin has agent-facing behavior to teach, such as
+a chat channel that needs explicit send, edit, or reply instructions. Internal providers usually
+do not need one.
 
-Do not add a packaged agent skill for internal providers unless there is a real agent workflow to
-teach.
+If you bundle a skill:
 
-If you add packaged skill files:
+- keep it specific to the platform or workflow
+- write command paths relative to the skill directory
+- put scripts under `src/skills/<name>/scripts/`
+- make sure the build includes `SKILL.md` and the scripts
 
-- keep them specific to the platform or workflow
-- make command paths relative to the skill directory
-- include scripts under `src/skills/<name>/scripts/`
-- make sure packaging includes `SKILL.md` and scripts
+### 6. Activate The Plugin In The Bub Environment
 
-### 6. Wire The Plugin Into The Bub Environment
+This step is required: creating the package does not activate it. Choose one path:
 
-This step is mandatory. Creating the package alone does not activate it.
+1. **Dependency of the host project.** Add the package to the host's `dependencies`, plus a source
+   mapping if needed:
 
-Pick one of these activation paths:
+   ```toml
+   [project]
+   dependencies = ["bub-my-plugin"]
 
-1. Add as a normal dependency in the Bub host project
-   Update host `pyproject.toml` dependencies and any source mapping such as `tool.uv.sources`.
+   [tool.uv.sources]
+   bub-my-plugin = { path = "../bub-my-plugin", editable = true }
+   ```
 
-2. Add as a workspace package
-   Update workspace membership and source mapping so the host environment resolves the plugin.
+2. **Workspace member.** Add the package to the workspace and map it as a workspace source:
 
-3. Install directly into the active environment
-   Use an editable or normal install such as `uv pip install -e /abs/path/to/plugin`.
+   ```toml
+   [tool.uv.workspace]
+   members = ["packages/*", "plugins/*"]
 
-When the task says "make it effective", prefer option 1 or 2 over a one-off install, unless the
-user clearly wants a local experiment.
+   [tool.uv.sources]
+   bub-my-plugin = { workspace = true }
+   ```
 
-If the host project is `bub-contrib`, also check the root `pyproject.toml`. That file keeps
-explicit root dependencies and `tool.uv.sources` entries for workspace packages.
+3. **Direct install.** Install the package into the active environment without editing host
+   metadata:
 
-### 7. Write The Minimum Useful README
+   ```bash
+   uv pip install -e /abs/path/to/bub-my-plugin
+   ```
 
-Keep the README short and operational. Usually include:
+When the user asks to make the plugin take effect, use option 1 or 2 so the setup persists. Use
+option 3 only when the user clearly wants a local experiment.
+
+In `bub-contrib`, also check the root `pyproject.toml`, which lists workspace packages explicitly
+in its dependencies and `tool.uv.sources`.
+
+### 7. Write A Short README
+
+Keep the README short and practical. It usually covers:
 
 - what the plugin provides
 - required environment variables or configuration
-- how to install or enable it
-- any notable behavior or limitations
+- how to install and enable it
+- notable behavior and limitations
 
-Do not pad it with generic packaging tutorials.
+Leave out generic packaging tutorials.
 
 ### 8. Add Targeted Tests
 
-Non-trivial plugin behavior should have tests.
+Test any non-trivial behavior, preferring narrow tests to large integration setups. Typical
+coverage:
 
-Favor narrow tests over large integration scaffolding.
-
-Typical coverage:
-
-- entry hook returns the right type or object
+- the entry hook returns the expected type or object
 - settings parse environment variables correctly
-- plugin-level singleton or factory behavior
-- fallback and error-path behavior for boundary conditions
+- singleton or factory behavior at the plugin level
+- fallback and error paths at boundary conditions
 
-Use the host project's test style. In `bub-contrib`, that usually means:
-
-- `pytest`
-- direct imports from `<package>.plugin`
-- `monkeypatch` for environment variables and runtime substitution
-- `tmp_path` for filesystem behavior
+Follow the host project's test style. In `bub-contrib`, that usually means `pytest`, direct
+imports from `<package>.plugin`, `monkeypatch` for environment variables and runtime
+substitution, and `tmp_path` for filesystem behavior.
 
 ## Decision Rules
 
-- Prefer repository consistency over abstract elegance.
-- Prefer one package per plugin, even if the implementation is small.
-- Prefer `import bub` plus `@bub.config(name="<entry-point-name>")` for config registration so the
-  decorator stays visually tied to the framework API.
-- Prefer `bub.ensure_config(ConfigClass)` at the point of runtime use instead of module-level
-  settings objects, so Bub-loaded config data and caching semantics are respected.
-- Prefer explicit configuration names with a `BUB_<FEATURE>_` prefix when introducing new env vars.
-- Prefer the minimum public surface area required by Bub hooks.
-- Prefer persistent dependency wiring over ephemeral shell-only setup when the user asks to enable
-  the plugin.
+- Match existing repository conventions, even when another design looks cleaner.
+- Use one package per plugin, however small.
+- Register config with `import bub` and `@bub.config(name="<entry-point-name>")`, so the decorator
+  visibly belongs to the framework API.
+- Read config with `bub.ensure_config(ConfigClass)` where it is used, so Bub-loaded config data and
+  caching apply.
+- Prefix new environment variables with `BUB_<FEATURE>_`.
+- Expose no more public surface than the Bub hooks require.
+- When the user asks to enable the plugin, wire it in as a persistent dependency rather than a
+  one-off shell install.
 
 ## Validation Checklist
 
-Before finishing, verify:
+Before finishing, confirm that:
 
-1. Package name, Python module name, and Bub entry point are aligned.
-2. The exported entry-point module only references modules that actually exist.
-3. Dependencies in the plugin `pyproject.toml` match imported third-party packages.
-4. The activation path is complete:
-   either the host project depends on the package, or the package was installed into the runtime
-   environment.
+1. The distribution name, Python package name, and entry point name match each other.
+2. The entry point target imports only modules that exist.
+3. The plugin's `pyproject.toml` declares every third-party package it imports.
+4. Activation is complete: the host project depends on the package, or the package is installed
+   in the runtime environment.
 5. Every plugin-owned `bub.Settings` subclass has `@bub.config(name="<entry-point-name>")`, and
-   importing the Bub entry-point target registers that config.
-6. Runtime code uses `bub.ensure_config(ConfigClass)` for registered settings instead of direct
+   importing the entry point target registers it.
+6. Runtime code reads registered settings through `bub.ensure_config(ConfigClass)`, not direct
    `ConfigClass()` construction or module-level settings singletons.
 7. Tests cover the main hook or configuration path.
-8. README describes the behavior and enablement path that the implementation actually provides.
-9. If packaged skills were added, the build config includes `SKILL.md` and scripts.
+8. The README describes what the implementation actually does and how to enable it.
+9. If skills are bundled, the build includes `SKILL.md` and its scripts.
+10. If the user explicitly asked to publish from `bub-contrib`, the code is on the default branch
+    and the publish request title names the exact package and version.
 
-Recommended commands to suggest, adjusted to the host project:
+Suggested commands, adjusted to the host project:
 
 ```bash
 uv run pytest <plugin-root>/tests
@@ -341,18 +290,59 @@ uv pip install -e /abs/path/to/plugin
 When the host project is this repository:
 
 - create new plugins under `packages/bub-<feature>`
-- use existing packages under `packages/` as primary examples
-- update the root `pyproject.toml` if the new package should participate in the root dev environment
-- if a packaged agent skill is needed, mirror the `src/skills/<name>/` convention used by channel
-  plugins in this repo
+- use existing packages under `packages/` as the primary references
+- update the root `pyproject.toml` if the package should be part of the root dev environment
+- for a bundled agent skill, follow the `src/skills/<name>/` convention used by the channel
+  plugins
+
+### Publish Requests
+
+Creating or updating a plugin in `bub-contrib` does not imply publishing it. Unless the user
+explicitly asks to publish or to open a publish request, do not open an issue and do not run
+`uv publish` locally.
+
+Before requesting a release, confirm that the code is merged into the default branch. Then open an
+issue with the repository's **Publish request** issue template, titled exactly:
+
+```text
+Request for publish: <package> <version>
+```
+
+For example:
+
+```text
+Request for publish: bub-example 1.2.3
+```
+
+The publish request workflow checks that:
+
+- the title contains a valid package name and a PEP 440 version
+- the package exists under `packages/`, and its directory name matches `project.name`
+- `uv version --dry-run` accepts the requested version
+- that package version has not already been published to PyPI
+
+The PyPI check queries `https://pypi.org/pypi/<package>/<version>/json`. Only HTTP 404 means the
+version is available; an existing release, any other HTTP error, or a network error blocks the
+release.
+
+A successful validation does not post a comment. After review, a maintainer adds the
+`to-be-published` label; the workflow validates again, then builds and publishes the package
+through PyPI Trusted Publishing. GitHub Actions comments the release result on the issue: it
+closes the issue on success and removes the label on failure so the request can be retried after
+a fix.
+
+Do not bypass the version check by editing the workflow, uploading manually, or rewriting the
+version string into an equivalent form. If the user asks for a publish request but the code is not
+yet on the default branch, explain that prerequisite instead of opening the request early.
 
 ## Output Contract
 
-When using this skill to implement a plugin, the final response should state:
+After implementing a plugin with this skill, the final response states:
 
 - where the plugin package was created or updated
-- which Bub hooks or tools were implemented
-- how the plugin was wired into the Bub environment
-- whether a packaged agent skill was added
-- what tests should be run
-- any remaining assumptions, especially credentials, endpoints, and runtime environment
+- which Bub hooks or tools it implements
+- how it was wired into the Bub environment
+- whether a bundled agent skill was added
+- which tests to run
+- whether a `bub-contrib` publish request was explicitly requested, opened, or left as a next step
+- any remaining assumptions, especially about credentials, endpoints, and the runtime environment

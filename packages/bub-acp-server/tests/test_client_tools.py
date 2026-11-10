@@ -1,0 +1,520 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+import republic
+from acp.schema import (
+    ClientCapabilities,
+    CreateTerminalResponse,
+    ReadTextFileResponse,
+    TerminalOutputResponse,
+    WaitForTerminalExitResponse,
+)
+from bub.builtin import tools as builtin_tools
+from bub.core.tools import ToolContext, is_content_result, result_content
+from bub.streaming import StreamEvent
+
+from bub_acp_server.agent import ACPStreamRouter
+from bub_acp_server import client_tools as client_tools_module
+from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
+
+
+BUILTIN_TOOLS = {tool.name: tool for tool in builtin_tools.TOOLS}
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.read_content = "line two"
+        self.read_requests: list[dict[str, object]] = []
+        self.write_requests: list[dict[str, object]] = []
+        self.create_requests: list[dict[str, object]] = []
+        self.wait_requests: list[dict[str, object]] = []
+        self.output_requests: list[dict[str, object]] = []
+        self.kill_requests: list[dict[str, object]] = []
+        self.release_requests: list[dict[str, object]] = []
+        self.session_updates: list[tuple[str, object]] = []
+
+    async def session_update(
+        self, session_id: str, update: object, **kwargs: Any
+    ) -> None:
+        del kwargs
+        self.session_updates.append((session_id, update))
+
+    async def read_text_file(self, **kwargs: Any) -> ReadTextFileResponse:
+        self.read_requests.append(kwargs)
+        return ReadTextFileResponse(content=self.read_content)
+
+    async def write_text_file(self, **kwargs: Any) -> None:
+        self.write_requests.append(kwargs)
+
+    async def create_terminal(self, **kwargs: Any) -> CreateTerminalResponse:
+        self.create_requests.append(kwargs)
+        return CreateTerminalResponse(terminal_id="terminal-1")
+
+    async def wait_for_terminal_exit(
+        self, **kwargs: Any
+    ) -> WaitForTerminalExitResponse:
+        self.wait_requests.append(kwargs)
+        return WaitForTerminalExitResponse(exit_code=0)
+
+    async def terminal_output(self, **kwargs: Any) -> TerminalOutputResponse:
+        self.output_requests.append(kwargs)
+        return TerminalOutputResponse(
+            output="hello\n",
+            truncated=False,
+            exit_status={"exitCode": 0},
+        )
+
+    async def kill_terminal(self, **kwargs: Any) -> None:
+        self.kill_requests.append(kwargs)
+
+    async def release_terminal(self, **kwargs: Any) -> None:
+        self.release_requests.append(kwargs)
+
+
+def _runtime(client: FakeClient) -> ACPClientToolRuntime:
+    runtime = ACPClientToolRuntime()
+    runtime.connect(cast(Any, client))
+    runtime.set_capabilities(
+        ClientCapabilities(
+            fs={"readTextFile": True, "writeTextFile": True}, terminal=True
+        )
+    )
+    return runtime
+
+
+def _context(tmp_path: Path) -> ToolContext:
+    return ToolContext(
+        tape=cast(Any, object()),
+        state={
+            "session_id": "acp-server:session-1",
+            "_runtime_workspace": str(tmp_path),
+        },
+    )
+
+
+class FakeTape:
+    def __init__(self) -> None:
+        self.handoffs: list[tuple[str, dict[str, object]]] = []
+
+    async def handoff(self, *, name: str, state: dict[str, object]) -> list[object]:
+        self.handoffs.append((name, state))
+        return []
+
+
+@pytest.mark.asyncio
+async def test_replaces_file_tools_with_acp_client_calls(tmp_path: Path) -> None:
+    client = FakeClient()
+    context = _context(tmp_path)
+    originals = {name: BUILTIN_TOOLS[name] for name in ("fs.read", "fs.write")}
+
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
+    assert client_tools["fs.read"] is not originals["fs.read"]
+    assert client_tools["fs.write"] is not originals["fs.write"]
+    assert client_tools["fs.read"].parameters == originals["fs.read"].parameters
+    assert client_tools["fs.write"].parameters == originals["fs.write"].parameters
+    read_result = await client_tools["fs.read"].run(
+        path="notes.txt", offset=1, limit=3, context=context
+    )
+    write_result = await client_tools["fs.write"].run(
+        path="result.txt", content="done", context=context
+    )
+
+    assert BUILTIN_TOOLS["fs.read"] is originals["fs.read"]
+    assert BUILTIN_TOOLS["fs.write"] is originals["fs.write"]
+    assert read_result == "line two"
+    assert write_result == f"wrote: {tmp_path / 'result.txt'}"
+    assert client.read_requests == [
+        {
+            "path": str(tmp_path / "notes.txt"),
+            "session_id": "session-1",
+            "line": 2,
+            "limit": 3,
+        }
+    ]
+    assert client.write_requests == [
+        {
+            "content": "done",
+            "path": str(tmp_path / "result.txt"),
+            "session_id": "session-1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fs_read_returns_images_as_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeClient()
+    context = _context(tmp_path)
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    (tmp_path / "shot.PNG").write_bytes(png)
+    fs_read = build_client_tools(_runtime(client))["fs.read"]
+
+    image_result = await fs_read.run(path="shot.PNG", context=context)
+    text_result = await fs_read.run(path="notes.txt", context=context)
+
+    assert is_content_result(image_result)
+    assert result_content(image_result) == [
+        f"Image shot.PNG (image/png, {len(png)} bytes):",
+        republic.image(png, media_type="image/png"),
+    ]
+    assert text_result == "line two"
+    assert [request["path"] for request in client.read_requests] == [
+        str(tmp_path / "notes.txt")
+    ]
+
+    monkeypatch.setattr(client_tools_module, "MAX_IMAGE_BYTES", len(png) - 1)
+    with pytest.raises(RuntimeError, match="image is too large to show"):
+        await fs_read.run(path="shot.PNG", context=context)
+
+
+@pytest.mark.asyncio
+async def test_replaces_file_edit_with_acp_read_and_write_calls(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    client.read_content = "before\nold value\nafter\n"
+    context = _context(tmp_path)
+    original = BUILTIN_TOOLS["fs.edit"]
+
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
+    assert client_tools["fs.edit"] is not original
+    assert client_tools["fs.edit"].parameters == original.parameters
+    result = await client_tools["fs.edit"].run(
+        path="notes.txt",
+        old="old",
+        new="new",
+        start=1,
+        context=context,
+    )
+
+    assert BUILTIN_TOOLS["fs.edit"] is original
+    assert result == f"edited: {tmp_path / 'notes.txt'}"
+    assert client.read_requests == [
+        {
+            "path": str(tmp_path / "notes.txt"),
+            "session_id": "session-1",
+            "line": 1,
+            "limit": None,
+        }
+    ]
+    assert client.write_requests == [
+        {
+            "content": "before\nnew value\nafter\n",
+            "path": str(tmp_path / "notes.txt"),
+            "session_id": "session-1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_edit_preserves_missing_trailing_newline(tmp_path: Path) -> None:
+    client = FakeClient()
+    client.read_content = "before\nold value\nafter"
+    context = _context(tmp_path)
+
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
+    await client_tools["fs.edit"].run(
+        path="notes.txt",
+        old="old",
+        new="new",
+        start=1,
+        context=context,
+    )
+
+    assert client.write_requests == [
+        {
+            "content": "before\nnew value\nafter",
+            "path": str(tmp_path / "notes.txt"),
+            "session_id": "session-1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_replaces_bash_with_acp_terminal_calls(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    context = _context(tmp_path)
+    observed_terminals: list[tuple[str, str, str]] = []
+    original = BUILTIN_TOOLS["bash"]
+    runtime = _runtime(client)
+
+    async def observe_terminal(session_id: str, command: str, terminal_id: str) -> None:
+        observed_terminals.append((session_id, command, terminal_id))
+
+    runtime.set_terminal_observer(observe_terminal)
+    client_tools = BUILTIN_TOOLS | build_client_tools(runtime)
+    assert client_tools["bash"] is not original
+    parameters = client_tools["bash"].parameters
+    assert set(parameters["properties"]) == {
+        "command",
+        "cwd",
+        "timeout_seconds",
+        "background",
+    }
+    assert parameters["properties"]["command"] == {"type": "string"}
+    assert parameters["required"] == ["command"]
+    result = await client_tools["bash"].run(command="pwd", context=context)
+
+    assert BUILTIN_TOOLS["bash"] is original
+    assert result == "hello"
+    assert observed_terminals == [("session-1", "pwd", "terminal-1")]
+    assert client.create_requests == [
+        {
+            "command": "bash",
+            "args": ["-lc", "pwd"],
+            "cwd": str(tmp_path),
+            "session_id": "session-1",
+        }
+    ]
+    terminal_request = {"session_id": "session-1", "terminal_id": "terminal-1"}
+    assert client.wait_requests == [terminal_request]
+    assert client.output_requests == [terminal_request]
+    assert client.release_requests == [terminal_request]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["hello\n", "first\nsecond\n", ""])
+async def test_bash_completion_preserves_output_after_terminal_release(
+    tmp_path: Path, output: str
+) -> None:
+    class ReleasingClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.terminals = {"terminal-1": output}
+
+        async def terminal_output(self, **kwargs: Any) -> TerminalOutputResponse:
+            return TerminalOutputResponse(
+                output=self.terminals[kwargs["terminal_id"]], truncated=False
+            )
+
+        async def release_terminal(self, **kwargs: Any) -> None:
+            await super().release_terminal(**kwargs)
+            del self.terminals[kwargs["terminal_id"]]
+
+    client = ReleasingClient()
+    router = ACPStreamRouter(cast(Any, client))
+    runtime = _runtime(client)
+    runtime.set_terminal_observer(router.attach_terminal)
+    bash = build_client_tools(runtime)["bash"]
+
+    async def stream():
+        yield StreamEvent(
+            "tool_call",
+            {
+                "tool_calls": [
+                    {
+                        "id": "bash-1",
+                        "name": "bash",
+                        "arguments": {"command": "printf hello"},
+                    }
+                ]
+            },
+        )
+        result = await bash.run(command="printf hello", context=_context(tmp_path))
+        assert client.release_requests
+        assert client.terminals == {}
+        yield StreamEvent("tool_result", {"tool_results": [result]})
+
+    async for _ in router.wrap_stream({"chat_id": "session-1"}, stream()):
+        pass
+
+    start, attached, completed = [update for _, update in client.session_updates]
+    assert attached.content[0].type == "terminal"
+    assert completed.tool_call_id == start.tool_call_id == "bash-1"
+    assert completed.title == "printf hello"
+    assert completed.status == "completed"
+    assert completed.raw_output == (output.strip() or "(no output)")
+    assert len(completed.content) == 1
+    assert completed.content[0].type == "content"
+    assert completed.content[0].content.text == (output.strip() or "(no output)")
+
+
+@pytest.mark.asyncio
+async def test_background_bash_uses_acp_output_and_kill(tmp_path: Path) -> None:
+    client = FakeClient()
+    context = _context(tmp_path)
+
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
+    started = await client_tools["bash"].run(
+        command="sleep 10", background=True, context=context
+    )
+    output = await client_tools["bash.output"].run(
+        shell_id="terminal-1", context=context
+    )
+    killed = await client_tools["bash.kill"].run(shell_id="terminal-1", context=context)
+
+    terminal_request = {"session_id": "session-1", "terminal_id": "terminal-1"}
+    assert started == "started: terminal-1"
+    assert "output:\nhello" in output
+    assert killed == "id: terminal-1\nstatus: exited\nexit_code: 0"
+    assert client.output_requests == [terminal_request, terminal_request]
+    assert client.kill_requests == [terminal_request]
+    assert client.release_requests == [terminal_request]
+
+
+@pytest.mark.asyncio
+async def test_keeps_builtin_tape_handoff_and_its_tape_semantics(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    tape = FakeTape()
+    context = ToolContext(
+        tape=cast(Any, tape),
+        state={
+            "session_id": "acp-server:session-1",
+            "_runtime_workspace": str(tmp_path),
+        },
+    )
+    original = BUILTIN_TOOLS["tape.handoff"]
+
+    client_tools = BUILTIN_TOOLS | build_client_tools(_runtime(client))
+    assert client_tools["tape.handoff"] is original
+    result = await client_tools["tape.handoff"].run(
+        name="phase-1",
+        summary="Implementation complete",
+        context=context,
+    )
+
+    assert BUILTIN_TOOLS["tape.handoff"] is original
+    assert result == {"anchor": "phase-1"}
+    assert client_tools["tape.handoff"].render(result) == "anchor added: phase-1"
+    assert tape.handoffs == [("phase-1", {"summary": "Implementation complete"})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", [False, True])
+@pytest.mark.parametrize("write", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_initialize_selects_client_tools_by_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    read: bool,
+    write: bool,
+    terminal: bool,
+) -> None:
+    from bub.framework import BubFramework
+    from bub_acp_server.agent import BubACPAgent
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    originals = {tool.name: tool for tool in framework.get_tools()}
+    server = BubACPAgent(framework)
+    server.on_connect(cast(Any, FakeClient()))
+    await server.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(
+            fs={"readTextFile": read, "writeTextFile": write},
+            terminal=terminal,
+        ),
+    )
+    session = await server.new_session(cwd=str(tmp_path))
+    inbound = server._build_inbound([], server._sessions[session.session_id])
+    selected = inbound._runtime_agent.tools
+    for name, client_backed in {
+        "fs.read": read,
+        "fs.write": write,
+        "fs.edit": read and write,
+        "bash": terminal,
+        "bash.output": terminal,
+        "bash.kill": terminal,
+    }.items():
+        assert (selected[name] is not originals[name]) == client_backed, name
+        # Client-backed overrides stay model-facing in code mode like the builtins.
+        assert selected[name].exposure == originals[name].exposure, name
+    assert {tool.name: tool for tool in framework.get_tools()} == originals
+
+
+@pytest.mark.parametrize(
+    "capabilities", [None, ClientCapabilities(), ClientCapabilities(fs={})]
+)
+def test_missing_capabilities_adds_no_client_tools(capabilities) -> None:
+    runtime = ACPClientToolRuntime()
+    runtime.set_capabilities(capabilities)
+    assert build_client_tools(runtime) == {}
+
+
+@pytest.mark.asyncio
+async def test_missing_capabilities_keeps_local_filesystem_working(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    runtime = ACPClientToolRuntime()
+    runtime.connect(cast(Any, client))
+    selected = BUILTIN_TOOLS | build_client_tools(runtime)
+    context = _context(tmp_path)
+    target = tmp_path / "notes.txt"
+    await selected["fs.write"].run(
+        path=str(target), content="old value", context=context
+    )
+    assert target.read_text() == "old value"
+    await selected["fs.edit"].run(
+        path=str(target), old="old", new="new", context=context
+    )
+    assert target.read_text() == "new value"
+    assert "new value" in await selected["fs.read"].run(
+        path=str(target), context=context
+    )
+    assert client.read_requests == []
+    assert client.write_requests == []
+
+
+@pytest.mark.asyncio
+async def test_real_agents_keep_acp_tools_connection_local(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from acp.schema import TextContentBlock
+    from bub.builtin.agent import BubAgent
+    from bub.framework import BubFramework
+
+    from bub_acp_server.agent import BubACPAgent
+    from bub_acp_server.plugin import ACPServerPlugin
+
+    monkeypatch.setenv("BUB_HOME", str(tmp_path / "home"))
+    framework = BubFramework(config_file=tmp_path / "config.yml")
+    framework.load_builtin_hooks()
+    framework.plugin_manager.register(ACPServerPlugin(framework), name="acp-server")
+    # Force the default BubAgent to snapshot tools before either ACP connection exists.
+    default = framework.plugin_manager.get_plugin("builtin")._get_agent()
+    original_tools = default.tools.copy()
+    framework_tools = {tool.name: tool for tool in framework.get_tools()}
+    first_client, second_client = FakeClient(), FakeClient()
+    first_client.read_content = "first connection"
+    second_client.read_content = "second connection"
+    servers = []
+    for client in (first_client, second_client):
+        server = BubACPAgent(framework, client_tools=_runtime(client))
+        server.on_connect(cast(Any, client))
+        session = await server.new_session(cwd=str(tmp_path))
+        servers.append((server, session.session_id))
+
+    for server, session_id in (servers[0], servers[1], servers[0]):
+        response = await server.prompt(
+            session_id=session_id,
+            prompt=[TextContentBlock(text=',fs.read path="notes.txt"')],
+        )
+        assert response.stop_reason == "end_turn"
+        inbound = server._build_inbound([], server._sessions[session_id])
+        state = await framework.build_state(inbound, inbound.session_id)
+        assert state["_runtime_agent"] is server._runtime_agents[session_id]
+        assert (
+            server._runtime_agents[session_id].tools["fs.read"]
+            is not framework_tools["fs.read"]
+        )
+        assert {
+            tool.name: tool for tool in framework.get_tools()
+        } == framework_tools
+        assert default.tools == original_tools
+        # Even an BubAgent created during an ACP connection gets only default tools.
+        assert BubAgent(framework).tools["fs.read"] is framework_tools["fs.read"]
+
+    assert len(first_client.read_requests) == 2
+    assert len(second_client.read_requests) == 1
+    assert {r["session_id"] for r in first_client.read_requests} == {servers[0][1]}
+    assert {r["session_id"] for r in second_client.read_requests} == {servers[1][1]}

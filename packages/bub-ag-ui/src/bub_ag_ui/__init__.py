@@ -1,12 +1,8 @@
-"""AG-UI channel plugin for Bub."""
+"""Bub's AG-UI protocol adapter."""
 
-from bub_ag_ui.channel import AGUIChannel
-from bub_ag_ui.config import AGUISettings, load_settings
-from bub_ag_ui.plugin import AGUIPlugin
+from bub_ag_ui.http import create_app
+from bub_ag_ui.runtime import AGUIAdapter
+from bub_ag_ui.state import SharedState, shared_state
+from bub_ag_ui.tools import InterruptTool
 
-__all__ = [
-    "AGUIChannel",
-    "AGUIPlugin",
-    "AGUISettings",
-    "load_settings",
-]
+__all__ = ["AGUIAdapter", "InterruptTool", "SharedState", "create_app", "shared_state"]

@@ -1,15 +1,26 @@
+"""QQ Open Platform channel for Bub.
+
+Package layout:
+
+- ``protocol``: auth, OpenAPI client, signatures, and event models
+- ``gateway``: webhook / websocket receive transports
+- ``inbound``: QQ events adapted to Bub ``ChannelMessage``
+- ``outbound``: Bub messages delivered through QQ OpenAPI
+"""
+
 from __future__ import annotations
 
-from .auth import QQTokenProvider
 from .channel import QQChannel
 from .config import QQConfig
 from .gateway import QQGatewayInfo
 from .gateway import QQSessionStartLimit
-from .models import QQC2CMessage
-from .openapi import QQOpenAPI
-from .openapi_errors import QQOpenAPIError
-from .webhook import QQWebhookServer
-from .websocket import QQWebSocketClient
+from .gateway import QQWebhookServer
+from .gateway import QQWebSocketClient
+from .protocol import QQC2CMessage
+from .protocol import QQGroupMessage
+from .protocol import QQOpenAPI
+from .protocol import QQOpenAPIError
+from .protocol import QQTokenProvider
 
 __all__ = [
     "QQChannel",
@@ -22,4 +33,5 @@ __all__ = [
     "QQWebhookServer",
     "QQWebSocketClient",
     "QQC2CMessage",
+    "QQGroupMessage",
 ]

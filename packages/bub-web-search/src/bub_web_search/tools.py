@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING, Any
 import bub
 from bub import hookimpl, tool
 from bub import inquirer as bub_inquirer
-from bub.tools import REGISTRY
 
-from bub_web_search import ollama, searxng
+from bub_web_search import deepseek, jina, ollama, searxng
 from bub_web_search.config import (
+    DEFAULT_DEEPSEEK_API_BASE,
+    DEFAULT_JINA_READER_BASE,
+    DEFAULT_JINA_SEARCH_BASE,
     DEFAULT_OLLAMA_API_BASE,
     DEFAULT_SEARXNG_SAFE_SEARCH,
     DEFAULT_SEARXNG_TIMEOUT_SECONDS,
@@ -18,11 +20,11 @@ from bub_web_search.config import (
 )
 
 if TYPE_CHECKING:
-    from bub.tools import Tool
+    from bub.core.tools import Tool
 
 SEARCH_TOOL_NAME = "web.search"
+READ_TOOL_NAME = "web.read"
 CONFIG_NAME = "web-search"
-PROVIDERS = ["ollama", "searxng"]
 
 
 @hookimpl
@@ -43,9 +45,17 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
     )
     if provider == "ollama":
         provider_config = _onboard_ollama(current)
+    elif provider == "jina":
+        provider_config = _onboard_jina(current)
+    elif provider == "deepseek":
+        provider_config = _onboard_deepseek(current)
     else:
         provider_config = _onboard_searxng(current)
-    return {CONFIG_NAME: {"provider": provider, **provider_config}}
+    # DeepSeek Fetch already backs web.read, so no extra reader is needed.
+    reader_config = (
+        {} if provider == "deepseek" else _onboard_reader(current, provider_config)
+    )
+    return {CONFIG_NAME: {"provider": provider, **provider_config, **reader_config}}
 
 
 def _current_provider(current: dict[str, Any]) -> str:
@@ -56,6 +66,10 @@ def _current_provider(current: dict[str, Any]) -> str:
         return "ollama"
     if current.get("searxng_base_url"):
         return "searxng"
+    if current.get("jina_api_key"):
+        return "jina"
+    if current.get("deepseek_api_key"):
+        return "deepseek"
     return "ollama"
 
 
@@ -68,6 +82,58 @@ def _onboard_ollama(current: dict[str, Any]) -> dict[str, Any]:
             default=str(current.get("ollama_api_base") or DEFAULT_OLLAMA_API_BASE),
         ),
     }
+
+
+def _onboard_jina(current: dict[str, Any]) -> dict[str, Any]:
+    api_key = bub_inquirer.ask_secret("Jina API key")
+    return {
+        "jina_api_key": api_key or str(current.get("jina_api_key") or ""),
+        "jina_search_base": bub_inquirer.ask_text(
+            "Jina search base URL",
+            default=str(current.get("jina_search_base") or DEFAULT_JINA_SEARCH_BASE),
+        ),
+        "jina_reader_base": bub_inquirer.ask_text(
+            "Jina reader base URL",
+            default=str(current.get("jina_reader_base") or DEFAULT_JINA_READER_BASE),
+        ),
+    }
+
+
+def _onboard_deepseek(current: dict[str, Any]) -> dict[str, Any]:
+    api_key = bub_inquirer.ask_secret("DeepSeek API key")
+    return {
+        "deepseek_api_key": api_key or str(current.get("deepseek_api_key") or ""),
+        "deepseek_api_base": bub_inquirer.ask_text(
+            "DeepSeek API base URL",
+            default=str(current.get("deepseek_api_base") or DEFAULT_DEEPSEEK_API_BASE),
+        ),
+    }
+
+
+def _onboard_reader(
+    current: dict[str, Any], provider_config: dict[str, Any]
+) -> dict[str, Any]:
+    has_jina_key = bool(
+        provider_config.get("jina_api_key") or current.get("jina_api_key")
+    )
+    enable = bub_inquirer.ask_confirm(
+        "Enable the web.read tool (Jina Reader)",
+        default=has_jina_key,
+    )
+    if not enable:
+        return {}
+    reader_config: dict[str, Any] = {}
+    if not provider_config.get("jina_api_key"):
+        api_key = bub_inquirer.ask_secret("Jina API key")
+        reader_config["jina_api_key"] = api_key or str(
+            current.get("jina_api_key") or ""
+        )
+    if "jina_reader_base" not in provider_config:
+        reader_config["jina_reader_base"] = bub_inquirer.ask_text(
+            "Jina reader base URL",
+            default=str(current.get("jina_reader_base") or DEFAULT_JINA_READER_BASE),
+        )
+    return reader_config
 
 
 def _onboard_searxng(current: dict[str, Any]) -> dict[str, Any]:
@@ -117,28 +183,39 @@ def _onboard_searxng(current: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def register_tools(
+@hookimpl
+def provide_tools() -> list[Tool]:
+    return list(build_tools().values())
+
+
+def build_tools(
     settings_factory: Callable[[], WebSearchSettings] = lambda: bub.ensure_config(
         WebSearchSettings
     ),
-) -> Tool | None:
-    REGISTRY.pop(SEARCH_TOOL_NAME, None)
-
+) -> dict[str, Tool]:
+    """Build one platform's tool per capability, by name; no match means no tool."""
     settings = settings_factory()
-    provider = settings.resolved_provider
-    if provider == "ollama":
-        return _register_ollama_tool(settings)
-    elif provider == "searxng":
-        return _register_searxng_tool(settings)
-    return None
+    built: dict[str, Tool] = {}
+    if builder := SEARCH_BUILDERS.get(settings.resolved_provider):
+        if search_tool := builder(settings):
+            built[search_tool.name] = search_tool
+    # Readers have no selector field: each builder guards on its own
+    # platform configuration, and the first configured one wins.
+    for reader_builder in READER_BUILDERS.values():
+        if read_tool := reader_builder(settings):
+            built[read_tool.name] = read_tool
+            break
+    return built
 
 
-def _register_ollama_tool(settings: WebSearchSettings) -> Tool | None:
+def _build_ollama_tool(settings: WebSearchSettings) -> Tool | None:
     if not settings.ollama_api_key:
         return None
 
-    @tool(name=SEARCH_TOOL_NAME)
-    async def web_search_ollama(query: str, max_results: int = 10) -> str:
+    @tool(name=SEARCH_TOOL_NAME, renderer=ollama.render_search_result)
+    async def web_search_ollama(
+        query: str, max_results: int = 10
+    ) -> ollama.OllamaSearchResult:
         """Search the web with Ollama and return concise results."""
         return await ollama.search(
             query=query, max_results=max_results, settings=settings
@@ -147,7 +224,63 @@ def _register_ollama_tool(settings: WebSearchSettings) -> Tool | None:
     return web_search_ollama
 
 
-def _register_searxng_tool(settings: WebSearchSettings) -> Tool | None:
+def _build_jina_search_tool(settings: WebSearchSettings) -> Tool | None:
+    if not settings.jina_api_key:
+        return None
+
+    @tool(name=SEARCH_TOOL_NAME, renderer=jina.render_content)
+    async def web_search_jina(query: str) -> jina.JinaSearchResult:
+        """Search the web with Jina Search and return SERP results."""
+        return await jina.search(query=query, settings=settings)
+
+    return web_search_jina
+
+
+def _build_jina_read_tool(settings: WebSearchSettings) -> Tool | None:
+    if not settings.jina_api_key:
+        return None
+
+    @tool(name=READ_TOOL_NAME, renderer=jina.render_content)
+    async def web_read_jina(url: str) -> jina.JinaReadResult:
+        """Read a webpage and return its main content as clean markdown."""
+        return await jina.read(url=url, settings=settings)
+
+    return web_read_jina
+
+
+def _build_deepseek_search_tool(settings: WebSearchSettings) -> Tool | None:
+    if not settings.deepseek_api_key:
+        return None
+
+    @tool(name=SEARCH_TOOL_NAME, renderer=deepseek.render_search_result)
+    async def web_search_deepseek(
+        query: str, max_results: int = 10
+    ) -> deepseek.DeepSeekSearchResult:
+        """Search the web with DeepSeek Search and return ranked results.
+
+        The query is limited to 128 characters and supports operators such as
+        site:, -site:, "phrase", lang:, after: and before:.
+        """
+        return await deepseek.search(
+            query=query, max_results=max_results, settings=settings
+        )
+
+    return web_search_deepseek
+
+
+def _build_deepseek_read_tool(settings: WebSearchSettings) -> Tool | None:
+    if not settings.deepseek_api_key:
+        return None
+
+    @tool(name=READ_TOOL_NAME, renderer=deepseek.render_read_result)
+    async def web_read_deepseek(url: str) -> deepseek.DeepSeekReadResult:
+        """Read a webpage and return its main content as clean markdown."""
+        return await deepseek.read(url=url, settings=settings)
+
+    return web_read_deepseek
+
+
+def _build_searxng_tool(settings: WebSearchSettings) -> Tool | None:
     if settings.resolved_searxng_base_url is None:
         return None
 
@@ -155,11 +288,28 @@ def _register_searxng_tool(settings: WebSearchSettings) -> Tool | None:
         name=SEARCH_TOOL_NAME,
         model=searxng.SearXNGSearchInput,
         description="Search a configured SearXNG instance and return concise web results.",
+        renderer=searxng.render_search_result,
     )
-    async def searxng_search(param: searxng.SearXNGSearchInput) -> str:
+    async def searxng_search(
+        param: searxng.SearXNGSearchInput,
+    ) -> searxng.SearXNGSearchResult:
         return await searxng.search(param=param, settings=settings)
 
     return searxng_search
 
 
-register_tools()
+# To add a platform, implement a builder above and list it here. The
+# capability tables below are the single source of truth for both tool
+# building and onboarding choices.
+SEARCH_BUILDERS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = {
+    "ollama": _build_ollama_tool,
+    "searxng": _build_searxng_tool,
+    "jina": _build_jina_search_tool,
+    "deepseek": _build_deepseek_search_tool,
+}
+READER_BUILDERS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = {
+    "jina": _build_jina_read_tool,
+    "deepseek": _build_deepseek_read_tool,
+}
+PROVIDERS = [name for name in SEARCH_BUILDERS if name]
+

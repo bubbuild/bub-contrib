@@ -4,12 +4,14 @@ import asyncio
 
 from bub.channels.message import ChannelMessage
 
-from bub_qq.c2c import QQC2CDeduper
-from bub_qq.c2c import QQC2CInboundService
-from bub_qq.c2c import QQC2CSendService
-from bub_qq.c2c import QQC2CSessionState
-from bub_qq.openapi_errors import QQKnownOpenAPIError
-from bub_qq.openapi_errors import QQOpenAPIError
+from bub_qq import security
+from bub_qq.inbound.c2c import QQC2CInboundService
+from bub_qq.outbound.c2c import QQC2CSendService
+from bub_qq.protocol.errors import QQKnownOpenAPIError
+from bub_qq.protocol.errors import QQOpenAPIError
+from bub_qq.security import QQAccessPolicy
+from bub_qq.session import QQInboundDeduper
+from bub_qq.session import QQSessionState
 
 
 class OpenAPIStub:
@@ -34,6 +36,25 @@ class OpenAPIStub:
         )
         return {"id": "reply-1"}
 
+    async def post_c2c_markdown_message(
+        self,
+        *,
+        openid: str,
+        content: str,
+        msg_id: str,
+        msg_seq: int,
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "openid": openid,
+                "content": content,
+                "msg_id": msg_id,
+                "msg_seq": msg_seq,
+                "msg_type": 2,
+            }
+        )
+        return {"id": "reply-1"}
+
 
 class FailingOpenAPIStub:
     def __init__(self, error: QQOpenAPIError) -> None:
@@ -52,17 +73,26 @@ class FailingOpenAPIStub:
         self.calls += 1
         raise self.error
 
+    async def post_c2c_markdown_message(
+        self,
+        *,
+        openid: str,
+        content: str,
+        msg_id: str,
+        msg_seq: int,
+    ) -> dict[str, object]:
+        del openid, content, msg_id, msg_seq
+        self.calls += 1
+        raise self.error
 
-def _state() -> QQC2CSessionState:
-    return QQC2CSessionState(
-        latest_message_id_by_session={},
-        latest_sequence_by_session_and_msg_id={},
-        latest_timestamp_by_session={},
-        send_record_by_session_msg_id_and_seq={},
-    )
+
+def _state() -> QQSessionState:
+    return QQSessionState()
 
 
-def _payload(message_id: str = "message-1") -> dict[str, object]:
+def _payload(
+    message_id: str = "message-1", content: str = "hello"
+) -> dict[str, object]:
     return {
         "id": "event-1",
         "op": 0,
@@ -70,7 +100,7 @@ def _payload(message_id: str = "message-1") -> dict[str, object]:
         "t": "C2C_MESSAGE_CREATE",
         "d": {
             "author": {"user_openid": "user-openid"},
-            "content": "hello",
+            "content": content,
             "id": message_id,
             "timestamp": "2099-01-01T00:00:00+00:00",
         },
@@ -79,8 +109,11 @@ def _payload(message_id: str = "message-1") -> dict[str, object]:
 
 def test_c2c_inbound_service_parses_and_remembers_session() -> None:
     state = _state()
-    service = QQC2CInboundService(
-        channel_name="qq", deduper=QQC2CDeduper(16), state=state
+    service =     QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=state,
+        policy=QQAccessPolicy(),
     )
 
     parsed = service.parse_inbound(_payload())
@@ -95,12 +128,107 @@ def test_c2c_inbound_service_parses_and_remembers_session() -> None:
 
 def test_c2c_inbound_service_dedupes_repeated_messages() -> None:
     state = _state()
-    service = QQC2CInboundService(
-        channel_name="qq", deduper=QQC2CDeduper(16), state=state
+    service =     QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=state,
+        policy=QQAccessPolicy(),
     )
 
     assert service.parse_inbound(_payload("message-1")) is not None
     assert service.parse_inbound(_payload("message-1")) is None
+
+
+def test_c2c_inbound_includes_quoted_messages_in_payload() -> None:
+    import json
+
+    service = QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=_state(),
+        policy=QQAccessPolicy(),
+    )
+    payload = _payload(content="回复：说得对")
+    payload["d"]["message_type"] = 103  # type: ignore[index]
+    payload["d"]["msg_elements"] = [  # type: ignore[index]
+        {"message_type": 103, "content": "原始消息", "author": {"username": "Bob"}}
+    ]
+
+    parsed = service.parse_inbound(payload)
+
+    assert parsed is not None
+    _, channel_message = parsed
+    content = json.loads(channel_message.content)
+    assert content["quoted_messages"] == [
+        {"message": "原始消息", "sender_name": "Bob"}
+    ]
+    assert content["message_type"] == 103
+
+
+def test_c2c_inbound_service_drops_users_outside_allowlist() -> None:
+    service = QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=_state(),
+        policy=QQAccessPolicy(allow_users=frozenset({"someone-else"})),
+    )
+
+    assert service.parse_inbound(_payload()) is None
+
+
+def test_c2c_inbound_service_gates_comma_commands_by_admin_users() -> None:
+    admin_service = QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=_state(),
+        policy=QQAccessPolicy(),
+        is_admin=lambda requester: requester.identity == "c2c:user-openid",
+    )
+    plain_service = QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=_state(),
+        policy=QQAccessPolicy(),
+    )
+
+    admin_parsed = admin_service.parse_inbound(_payload(content=",status"))
+    plain_parsed = plain_service.parse_inbound(
+        _payload(message_id="message-2", content=",status")
+    )
+
+    assert admin_parsed is not None
+    assert admin_parsed[1].kind == "command"
+    assert plain_parsed is not None
+    assert plain_parsed[1].kind == "normal"
+    assert ",status" in plain_parsed[1].content
+
+
+def test_c2c_commands_follow_bub_command_prefix(monkeypatch) -> None:
+    monkeypatch.setattr(security, "command_prefix", lambda: "/")
+    service = QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=_state(),
+        policy=QQAccessPolicy(),
+        is_admin=lambda requester: requester.identity == "c2c:user-openid",
+    )
+
+    slash = service.parse_inbound(_payload(content="/status"))
+    comma = service.parse_inbound(_payload(message_id="message-2", content=",status"))
+
+    assert slash is not None and slash[1].kind == "command"
+    assert comma is not None and comma[1].kind == "normal"
+
+
+def test_c2c_admin_bypasses_allow_users() -> None:
+    service = QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=_state(),
+        policy=QQAccessPolicy(allow_users=frozenset({"someone-else"})),
+        is_admin=lambda requester: requester.sender_id == "user-openid",
+    )
+    assert service.parse_inbound(_payload(content="hi")) is not None
 
 
 def test_c2c_send_service_sends_using_session_context() -> None:
@@ -145,9 +273,12 @@ def test_c2c_send_service_starts_msg_seq_at_one_after_inbound_transport_sequence
 ):
     async def _run() -> None:
         state = _state()
-        inbound = QQC2CInboundService(
-            channel_name="qq", deduper=QQC2CDeduper(16), state=state
-        )
+        inbound =     QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=state,
+        policy=QQAccessPolicy(),
+    )
         parsed = inbound.parse_inbound(_payload())
 
         assert parsed is not None
@@ -192,9 +323,12 @@ def test_c2c_send_service_resets_msg_seq_for_new_inbound_msg_id() -> None:
     async def _run() -> None:
         state = _state()
         openapi = OpenAPIStub()
-        inbound = QQC2CInboundService(
-            channel_name="qq", deduper=QQC2CDeduper(16), state=state
-        )
+        inbound =     QQC2CInboundService(
+        channel_name="qq",
+        deduper=QQInboundDeduper(16),
+        state=state,
+        policy=QQAccessPolicy(),
+    )
         service = QQC2CSendService(
             channel_name="qq",
             receive_mode="webhook",
@@ -410,8 +544,18 @@ def test_c2c_send_service_swallows_openapi_errors() -> None:
             )
         )
 
-        assert result is None
+        assert result == {
+            "status": "failed",
+            "error_code": 22009,
+            "error": "msg limit exceed",
+        }
         assert openapi.calls == 1
+        assert (
+            state.latest_sequence_by_session_and_msg_id.get(
+                ("qq:c2c:user-openid", "message-1"), 0
+            )
+            == 0
+        )
 
     asyncio.run(_run())
 
@@ -464,6 +608,90 @@ def test_c2c_send_service_treats_remote_duplicate_as_already_sent() -> None:
 
         assert first == {"status": "already_sent"}
         assert second == {"status": "already_sent"}
-        assert openapi.calls == 2
+        # The remote duplicate is recorded locally, so the retry never hits QQ.
+        assert openapi.calls == 1
+
+    asyncio.run(_run())
+
+
+def test_c2c_send_service_treats_async_audit_as_pending_success() -> None:
+    async def _run() -> None:
+        state = _state()
+        state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
+        openapi = FailingOpenAPIStub(
+            QQOpenAPIError(
+                status_code=202,
+                trace_id="trace-audit",
+                error_code=304024,
+                error_message="回复消息异步调用成功，等待人工审核",
+                known=QQKnownOpenAPIError(
+                    304024,
+                    "REPLY_MSG_ASYNC_OK",
+                    "回复消息异步调用成功，等待人工审核",
+                    "async",
+                    False,
+                ),
+            )
+        )
+        service = QQC2CSendService(
+            channel_name="qq",
+            receive_mode="webhook",
+            state=state,
+            openapi=openapi,
+        )
+        message = ChannelMessage(
+            session_id="qq:c2c:user-openid",
+            chat_id="c2c:user-openid",
+            content="hello",
+            channel="qq",
+        )
+
+        first = await service.send(message)
+        second = await service.send(message)
+
+        assert first == {"status": "pending_audit"}
+        assert second == {"status": "already_sent"}
+        # The audited message is recorded locally, so the retry never hits QQ.
+        assert openapi.calls == 1
+
+    asyncio.run(_run())
+
+
+def test_c2c_send_service_dedupes_identical_content_locally() -> None:
+    async def _run() -> None:
+        state = _state()
+        state.latest_message_id_by_session["qq:c2c:user-openid"] = "message-1"
+        state.latest_timestamp_by_session["qq:c2c:user-openid"] = (
+            "2099-01-01T00:00:00+00:00"
+        )
+        openapi = OpenAPIStub()
+        service = QQC2CSendService(
+            channel_name="qq",
+            receive_mode="webhook",
+            state=state,
+            openapi=openapi,
+        )
+        message = ChannelMessage(
+            session_id="qq:c2c:user-openid",
+            chat_id="c2c:user-openid",
+            content="hello",
+            channel="qq",
+        )
+
+        first = await service.send(message)
+        second = await service.send(message)
+
+        assert first == {"id": "reply-1"}
+        assert second == {"id": "reply-1", "status": "already_sent"}
+        assert len(openapi.calls) == 1
+        assert (
+            state.latest_sequence_by_session_and_msg_id[
+                ("qq:c2c:user-openid", "message-1")
+            ]
+            == 1
+        )
 
     asyncio.run(_run())

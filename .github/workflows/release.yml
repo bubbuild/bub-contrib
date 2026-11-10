@@ -1,6 +1,16 @@
 name: Release
 
 on:
+  workflow_call:
+    inputs:
+      subpackage:
+        description: Package name under packages/
+        required: true
+        type: string
+      version:
+        description: PEP 440 version to publish
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       subpackage:
@@ -59,26 +69,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate package
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          package_file="packages/$SUBPACKAGE/pyproject.toml"
-          if [[ ! -f "$package_file" ]]; then
-            echo "::error::Subpackage does not exist: $SUBPACKAGE"
-            exit 1
-          fi
-
-          project_name="$(
-            python -c \
-              'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["name"])' \
-              "$package_file"
-          )"
-          if [[ "$project_name" != "$SUBPACKAGE" ]]; then
-            echo "::error::Directory name does not match project.name: $project_name"
-            exit 1
-          fi
+      - name: Validate package and PyPI version
+        run: >-
+          python scripts/validate_publish_request.py
+          --subpackage "$SUBPACKAGE"
+          --version "$VERSION"
+          --repository .
 
       - name: Set version
         run: uv version --package "$SUBPACKAGE" --frozen "$VERSION"
@@ -86,5 +82,9 @@ jobs:
       - name: Build package
         run: uv build --package "$SUBPACKAGE" --out-dir dist --clear
 
+      # Trusted Publishing; signs and uploads PEP 740 attestations.
       - name: Publish package
-        run: uv publish --trusted-publishing always dist/*
+        uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          packages-dir: dist/
+          attestations: true

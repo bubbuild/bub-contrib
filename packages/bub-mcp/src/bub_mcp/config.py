@@ -28,6 +28,7 @@ class MCPSettings(bub.Settings):
 
     config_path: Path = Field(default_factory=default_config_path)
     init_timeout_seconds: float | None = 20.0
+    deferred_tools: bool = True
 
     def read_mcp_servers(self) -> dict[str, Any]:
         return read_config(self.config_path)

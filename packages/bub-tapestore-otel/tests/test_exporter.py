@@ -9,7 +9,7 @@ from bub_tapestore_otel.exporter import (
     _should_flush_batch,
     build_tape_trace,
 )
-from bub.tape import TapeEntry
+from bub.core.tape import TapeEntry
 
 
 def test_build_tape_trace_exports_genai_and_openinference_llm_attributes() -> None:

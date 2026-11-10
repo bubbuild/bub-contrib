@@ -12,7 +12,7 @@ from typing import Any
 
 import redis.asyncio as redis
 from bub.errors import BubError, ErrorKind
-from bub.tape import TapeEntry, TapeQuery
+from bub.core.tape import TapeEntry, TapeQuery
 from redis.exceptions import ResponseError
 
 DEFAULT_KEY_PREFIX = "republic:tape"

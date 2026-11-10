@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
 
-from bub.tape import (
+from bub.core.tape import (
     AsyncTapeStore,
     AsyncTapeStoreAdapter,
     TapeEntry,

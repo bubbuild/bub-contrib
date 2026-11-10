@@ -7,7 +7,7 @@ from typing import Any
 
 from celpy import CELParseError, CELEvalError, Environment, json_to_cel
 from celpy.celtypes import BoolType
-from bub.tape import TapeEntry
+from bub.core.tape import TapeEntry
 
 
 def entry_text(entry: TapeEntry) -> str:

@@ -52,7 +52,13 @@ For example builds:
 
 By default, `bub-extism` reads `~/.bub/extism.json`.
 
-Use `BUB_EXTISM_CONFIG_PATH=/path/to/extism.json` to override the config path.
+Use `BUB_EXTISM_CONFIG_PATH=/path/to/extism.json` to override the config path,
+or set `extism.config_path` in Bub's YAML configuration:
+
+```yaml
+extism:
+  config_path: /path/to/extism.json
+```
 
 Example:
 

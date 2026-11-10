@@ -7,7 +7,7 @@ from typing import Any
 
 from bub.envelope import normalize_envelope
 from bub.streaming import StreamEvent
-from bub.tape import TapeEntry, utc_now
+from bub.core.tape import TapeEntry, utc_now
 
 BUB_EXTISM_ABI_VERSION = "bub.extism.v1"
 _SKIP_JSON_VALUE = object()

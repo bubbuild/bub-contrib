@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import bub
 from bub import hookimpl
 from bub.streaming import AsyncStreamEvents
-from bub.tape import LAST_ANCHOR, TapeContext
+from bub.core.tape import LAST_ANCHOR, TapeContext
+
 from bub_extism.bridge import ExtismBridge
 from bub_extism.channel import channels_from_value
 from bub_extism.cli import register_cli_commands
@@ -14,18 +16,18 @@ from bub_extism.codec import (
     message_to_json,
     state_to_json,
 )
-from bub_extism.config import ExtismPluginConfig, ExtismSettings, PLUGIN_HOOK_NAMES
+from bub_extism.config import PLUGIN_HOOK_NAMES, ExtismPluginConfig, ExtismSettings
 from bub_extism.stream import stream_events_from_value
 from bub_extism.tape_store import tape_store_from_value
 
 if TYPE_CHECKING:
     import typer
     from bub.channels import Channel
-    from bub.framework import BubFramework
     from bub.channels.contracts import MessageHandler
     from bub.envelope import Envelope
+    from bub.framework import BubFramework
+    from bub.core.tape import TapeStore
     from bub.turn import TurnState
-    from bub.tape import TapeStore
 
 
 def _message_args(message: Envelope) -> dict[str, Any]:
@@ -135,12 +137,12 @@ class ExtismPlugin:
         settings: ExtismSettings | None = None,
     ) -> None:
         self.framework = framework
-        self.settings = settings or ExtismSettings()
+        self.settings = settings or bub.ensure_config(ExtismSettings)
         self.bridge = ExtismBridge()
         self._register_hook_adapters()
 
     def _register_hook_adapters(self) -> None:
-        plugin_manager = getattr(self.framework, "_plugin_manager", None)
+        plugin_manager = getattr(self.framework, "plugin_manager", None)
         if plugin_manager is None:
             return
 

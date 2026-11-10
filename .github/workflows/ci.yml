@@ -1,7 +1,18 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      number:
+        description: Candidate PR number (zero for branch checks)
+        type: string
+        default: '0'
+      head:
+        description: Candidate head to review (dispatch on its branch)
+        type: string
+        default: ''
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
@@ -27,3 +38,75 @@ jobs:
 
       - name: Run tests
         run: uv run --frozen --group test pytest
+
+      - name: Set up Node.js for AG-UI interoperability tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/bub-ag-ui/tests/client/package-lock.json
+
+      - name: Install AG-UI test clients
+        run: npm ci --prefix packages/bub-ag-ui/tests/client
+
+      - name: Run AG-UI SDK interoperability tests
+        run: npm test --prefix packages/bub-ag-ui/tests/client
+
+  landing-feedback:
+    name: Landing review
+    needs: [tests]
+    concurrency:
+      group: landing-review-${{ github.repository_id }}-${{ github.event.pull_request.number || inputs.number || github.ref }}
+      cancel-in-progress: true
+    if: >-
+      always() && !cancelled() && vars.LANDING_MODEL != '' &&
+      ((github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       (github.event_name == 'workflow_dispatch' && inputs.number != '' && inputs.number != '0'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+      - name: Review the candidate
+        id: landing
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: bubbuild/landing@main
+        env:
+          GH_ADMISSION_TOKEN: ${{ secrets.LANDING_ADMISSION_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.LANDING_GITHUB_TOKEN || github.token }}
+          LANDING_MODEL: ${{ vars.LANDING_MODEL }}
+          LANDING_API_KEY: ${{ secrets.LANDING_API_KEY }}
+          LANDING_API_BASE: ${{ vars.LANDING_API_BASE }}
+          LANDING_COMPLETION_ARGS: ${{ vars.LANDING_COMPLETION_ARGS || '{}' }}
+          LANDING_MODEL_TIMEOUT_SECONDS: '120'
+        with:
+          trust: ${{ vars.LANDING_TRUST || 'repository' }}
+          command: review
+          number: ${{ format('{0}', github.event.pull_request.number || inputs.number || 0) }}
+          head: ${{ github.event.pull_request.head.sha || inputs.head || '' }}
+          checked-revision: ${{ github.sha }}
+          instruction: >-
+            Native Tests=${{ needs.tests.result }} (uv run --frozen --group test pytest); ignore Landing feedback for acceptance.
+            Review changed behavior and Markdown against repository guidance, reusing check results and review threads.
+      - name: Report unsuccessful feedback
+        if: ${{ !cancelled() && steps.landing.outcome == 'failure' }}
+        run: echo "::warning::Landing feedback failed. Inspect the task artifact; native checks determine acceptance."
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: landing-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/landing/
+          retention-days: 30
+          if-no-files-found: warn

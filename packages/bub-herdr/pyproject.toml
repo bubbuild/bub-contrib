@@ -1,0 +1,19 @@
+[project]
+name = "bub-herdr"
+version = "0.1.0"
+description = "Report Bub chat status to herdr-core through OSC 7501"
+readme = "README.md"
+authors = [
+    { name = "qiaoborui", email = "boruiqiao@protonmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bub[app]",
+]
+
+[project.entry-points.bub]
+herdr = "bub_herdr.plugin"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"

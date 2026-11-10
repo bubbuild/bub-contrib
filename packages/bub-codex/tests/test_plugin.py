@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 from bub.streaming import AsyncStreamEvents, StreamEvent
-
 from bub_codex import plugin
 
 
@@ -93,3 +92,51 @@ def test_run_model_saves_session_id_from_stderr(
     assert result == "codex-output\n"
     threads_file = tmp_path / plugin.THREADS_FILE
     assert json.loads(threads_file.read_text()) == {"session-3": "thread-123"}
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        [{"type": "text", "text": "hello"}, {"type": "text", "text": "world"}],
+        [
+            {"type": "text", "text": "hello\nworld"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+        ],
+    ],
+)
+def test_run_model_accepts_structured_prompt(monkeypatch, tmp_path, prompt) -> None:
+    commands: list[tuple] = []
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"answer", b""
+
+    async def create_process(*args, **kwargs):
+        commands.append(args)
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(
+        plugin, "with_bub_skills", lambda workspace: contextlib.nullcontext()
+    )
+
+    result = asyncio.run(
+        plugin.run_model(prompt, "structured", {"_runtime_workspace": str(tmp_path)})
+    )
+
+    assert result == "answer"
+    assert commands[0][-1] == "hello\nworld"
+
+
+def test_structured_internal_command_delegates_to_runtime_agent() -> None:
+    agent = FakeAgent()
+    state = {"_runtime_agent": agent}
+
+    result = asyncio.run(
+        plugin.run_model([{"type": "text", "text": ",help"}], "structured", state)
+    )
+
+    assert result == "internal-command-result"
+    assert agent.calls == [("structured", ",help", state)]

@@ -53,6 +53,8 @@ The package exposes one Bub plugin entry point:
 - plugin entry point: `tape-dataset-opendal`
 - command: `bub tape-export`
 
+The command acquires the active tape store inside `BubFramework.running()` and releases lifecycle-managed resources after export.
+
 Minimal example:
 
 ```bash
@@ -89,7 +91,7 @@ Useful flags:
 
 ```python
 from opendal import Operator
-from bub.tape import InMemoryTapeStore, TapeEntry
+from bub.core.tape import InMemoryTapeStore, TapeEntry
 
 from tape_dataset_opendal import ExportableTapeStore
 
@@ -110,7 +112,7 @@ print(report.manifest_path)
 import asyncio
 
 import opendal
-from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
+from bub.core.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry
 
 from tape_dataset_opendal import AsyncExportableTapeStore
 

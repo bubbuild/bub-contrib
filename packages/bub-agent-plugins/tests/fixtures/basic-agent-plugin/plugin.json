@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "basic-agent-plugin",
+  "version": "1.0.0",
+  "description": "Minimal portable plugin used by the isolated ablation check"
+}

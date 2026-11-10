@@ -5,6 +5,8 @@ from bub import inquirer as bub_inquirer
 from bub.channels import Channel
 from bub.channels.contracts import MessageHandler
 
+from .channel import DiscordChannel
+
 CHANNEL_NAME = "discord"
 
 
@@ -20,8 +22,6 @@ def _channel_enabled(current_config: dict[str, Any]) -> bool:
 
 @hookimpl
 def provide_channels(message_handler: MessageHandler) -> list[Channel]:
-    from .channel import DiscordChannel
-
     return [DiscordChannel(message_handler)]
 
 
@@ -30,11 +30,25 @@ def onboard_config(current_config: dict[str, Any]) -> dict[str, Any] | None:
     if not _channel_enabled(current_config):
         return None
 
-    token = bub_inquirer.ask_secret("Discord bot token")
-    allow_users = bub_inquirer.ask_text("Discord allowed users (optional)")
-    allow_channels = bub_inquirer.ask_text("Discord allowed channels (optional)")
-    command_prefix = bub_inquirer.ask_text("Discord command prefix", default="!")
-    proxy = bub_inquirer.ask_text("Discord proxy (optional)")
+    current = current_config.get(CHANNEL_NAME)
+    config = current if isinstance(current, dict) else {}
+    token = bub_inquirer.ask_secret("Discord bot token") or str(
+        config.get("token") or ""
+    )
+    allow_users = bub_inquirer.ask_text(
+        "Discord allowed users (optional)",
+        default=str(config.get("allow_users") or ""),
+    )
+    allow_channels = bub_inquirer.ask_text(
+        "Discord allowed channels (optional)",
+        default=str(config.get("allow_channels") or ""),
+    )
+    command_prefix = bub_inquirer.ask_text(
+        "Discord command prefix", default=str(config.get("command_prefix") or "!")
+    )
+    proxy = bub_inquirer.ask_text(
+        "Discord proxy (optional)", default=str(config.get("proxy") or "")
+    )
 
     return {
         CHANNEL_NAME: {

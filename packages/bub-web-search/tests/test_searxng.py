@@ -125,15 +125,116 @@ def test_search_formats_answers_infoboxes_and_results(monkeypatch) -> None:
     )
     assert capture["session_kwargs"]["headers"]["X-API-Key"] == "secret"
     assert capture["session_kwargs"]["timeout"].total == 12
-    assert "Answers:" in result
-    assert "Suggestions:" in result
-    assert "Infoboxes:" in result
-    assert "1. Bub docs" in result
-    assert "source: duckduckgo [general] 2026-04-15" in result
-    assert "Extra result" not in result
+    assert result == {
+        "answers": ["Bub is a hook-first AI framework."],
+        "suggestions": ["bub framework"],
+        "infoboxes": [
+            {
+                "title": "Bub",
+                "url": "https://example.com/bub",
+                "content": "A hook-first AI framework.",
+            }
+        ],
+        "results": [
+            {
+                "title": "Bub docs",
+                "url": "https://example.com/docs",
+                "content": "Official documentation for Bub.",
+                "engine": "duckduckgo",
+                "category": "general",
+                "published_date": "2026-04-15",
+            }
+        ],
+    }
+    assert searxng.render_search_result(result) == (
+        "Answers:\n"
+        "- Bub is a hook-first AI framework.\n"
+        "\n"
+        "Suggestions:\n"
+        "- bub framework\n"
+        "\n"
+        "Infoboxes:\n"
+        "- Bub\n"
+        "  https://example.com/bub\n"
+        "  A hook-first AI framework.\n"
+        "\n"
+        "1. Bub docs\n"
+        "   https://example.com/docs\n"
+        "   Official documentation for Bub.\n"
+        "   source: duckduckgo [general] 2026-04-15"
+    )
 
 
-def test_search_returns_http_status_message(monkeypatch) -> None:
+def test_search_parses_results_and_dedupes_title_snippet(monkeypatch) -> None:
+    payload = {
+        "results": [
+            "invalid",
+            {"content": "Only   a\nsnippet", "engine": "bing"},
+            {"title": "Second", "urls": ["https://example.com/second"]},
+        ]
+    }
+    monkeypatch.setattr(
+        aiohttp,
+        "ClientSession",
+        lambda **kwargs: FakeSession(
+            response=FakeResponse(body=searxng.json.dumps(payload)),
+            capture={},
+            **kwargs,
+        ),
+    )
+
+    result = asyncio.run(
+        searxng.search(
+            param=searxng.SearXNGSearchInput(query="bub"),
+            settings=WebSearchSettings(searxng_base_url="https://search.example.com"),
+        )
+    )
+
+    assert result["answers"] == result["suggestions"] == result["infoboxes"] == []
+    assert result["results"] == [
+        {
+            "title": "Only a snippet",
+            "url": "",
+            "content": "",
+            "engine": "bing",
+            "category": "",
+            "published_date": "",
+        },
+        {
+            "title": "Second",
+            "url": "https://example.com/second",
+            "content": "",
+            "engine": "",
+            "category": "",
+            "published_date": "",
+        },
+    ]
+    assert searxng.render_search_result(result) == (
+        "1. Only a snippet\n   source: bing\n2. Second\n   https://example.com/second"
+    )
+
+
+def test_search_returns_empty_result_for_empty_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        aiohttp,
+        "ClientSession",
+        lambda **kwargs: FakeSession(
+            response=FakeResponse(body="{}"), capture={}, **kwargs
+        ),
+    )
+
+    result = asyncio.run(
+        searxng.search(
+            param=searxng.SearXNGSearchInput(query="bub"),
+            settings=WebSearchSettings(searxng_base_url="https://search.example.com"),
+        )
+    )
+
+    assert result == {"answers": [], "suggestions": [], "infoboxes": [], "results": []}
+    assert searxng.render_search_result(result) == "none"
+
+
+def test_search_raises_http_status_message(monkeypatch) -> None:
     monkeypatch.setattr(
         aiohttp,
         "ClientSession",
@@ -144,17 +245,18 @@ def test_search_returns_http_status_message(monkeypatch) -> None:
         ),
     )
 
-    result = asyncio.run(
-        searxng.search(
-            param=searxng.SearXNGSearchInput(query="bub"),
-            settings=WebSearchSettings(searxng_base_url="https://search.example.com"),
+    with pytest.raises(RuntimeError, match="^HTTP 403: Forbidden$"):
+        asyncio.run(
+            searxng.search(
+                param=searxng.SearXNGSearchInput(query="bub"),
+                settings=WebSearchSettings(
+                    searxng_base_url="https://search.example.com"
+                ),
+            )
         )
-    )
-
-    assert result == "HTTP 403: Forbidden"
 
 
-def test_search_returns_invalid_json_error(monkeypatch) -> None:
+def test_search_raises_invalid_json_error(monkeypatch) -> None:
     monkeypatch.setattr(
         aiohttp,
         "ClientSession",
@@ -165,11 +267,12 @@ def test_search_returns_invalid_json_error(monkeypatch) -> None:
         ),
     )
 
-    result = asyncio.run(
-        searxng.search(
-            param=searxng.SearXNGSearchInput(query="bub"),
-            settings=WebSearchSettings(searxng_base_url="https://search.example.com"),
+    with pytest.raises(RuntimeError, match="^error: invalid json response:"):
+        asyncio.run(
+            searxng.search(
+                param=searxng.SearXNGSearchInput(query="bub"),
+                settings=WebSearchSettings(
+                    searxng_base_url="https://search.example.com"
+                ),
+            )
         )
-    )
-
-    assert result.startswith("error: invalid json response:")

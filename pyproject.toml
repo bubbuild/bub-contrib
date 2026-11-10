@@ -5,19 +5,26 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "bub",
-    "bub-ag-ui",
+    "bub[app]",
     "bub-acp-server",
+    "bub-ag-ui",
+    "bub-agent-plugins",
     "bub-codex",
+    "bub-context-budget",
     "bub-cursor",
     "bub-discord",
     "bub-dingtalk",
+    "bub-docker-env",
+    "bub-dsh",
+    "bub-env",
     "bub-extism",
     "bub-github-copilot",
     "bub-kimi",
     "bub-mcp",
     "bub-mcp-server",
+    "bub-monty-env",
     "bub-qq",
+    "bub-sandbox-env",
     "bub-schedule",
     "bub-slack",
     "bub-tapestore-sqlalchemy",
@@ -26,6 +33,7 @@ dependencies = [
     "bub-tapestore-sqlite",
     "bub-web-search",
     "bub-feishu",
+    "bub-herdr",
     "bub-session-prompt",
     "bub-wechat",
     "bub-wecom",
@@ -36,19 +44,26 @@ dependencies = [
 members = ["packages/*"]
 
 [tool.uv.sources]
-bub = { git = "https://github.com/bubbuild/bub.git" }
-bub-ag-ui = { workspace = true }
+bub = { git = "https://github.com/bubbuild/bub.git", branch = "main" }
 bub-acp-server = { workspace = true }
+bub-ag-ui = { workspace = true }
+bub-agent-plugins = { workspace = true }
 bub-codex = { workspace = true }
+bub-context-budget = { workspace = true }
 bub-cursor = { workspace = true }
 bub-discord = { workspace = true }
 bub-dingtalk = { workspace = true }
+bub-docker-env = { workspace = true }
+bub-dsh = { workspace = true }
+bub-env = { workspace = true }
 bub-extism = { workspace = true }
 bub-github-copilot = { workspace = true }
 bub-kimi = { workspace = true }
 bub-mcp = { workspace = true }
 bub-mcp-server = { workspace = true }
+bub-monty-env = { workspace = true }
 bub-qq = { workspace = true }
+bub-sandbox-env = { workspace = true }
 bub-schedule = { workspace = true }
 bub-slack = { workspace = true }
 bub-tapestore-sqlalchemy = { workspace = true }
@@ -57,6 +72,7 @@ bub-tapestore-redis = { workspace = true }
 bub-tapestore-sqlite = { workspace = true }
 bub-web-search = { workspace = true }
 bub-feishu = { workspace = true }
+bub-herdr = { workspace = true }
 bub-session-prompt = { workspace = true }
 bub-wechat = { workspace = true }
 bub-wecom = { workspace = true }
@@ -67,6 +83,7 @@ dev = [
     "ruff>=0.15.20",
 ]
 test = [
+    "bub-acp-server[http]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.21.0",
     "fakeredis>=2.20.0",

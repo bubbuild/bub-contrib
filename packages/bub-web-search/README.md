@@ -1,16 +1,32 @@
 # bub-web-search
 
-Provider-selectable web search tools for `bub`.
+Provider-selectable web tools for `bub`, covering two capabilities:
 
-## Providers
+- `web.search`: search the web, backed by one search provider
+- `web.read`: read a webpage as clean markdown, backed by one reader provider
 
-Set `BUB_SEARCH_PROVIDER` to enable exactly one search provider:
+Each capability has its own provider dimension, so they can be mixed freely
+(e.g. SearXNG for search, Jina for reading).
 
-- `ollama` registers `web.search`
-- `searxng` registers `searxng.search`
+## Search providers
 
-If the provider is unset or its required configuration is missing, neither tool is
-registered.
+Set `BUB_SEARCH_PROVIDER` (or `provider` in the `web-search:` config section)
+to enable exactly one search provider:
+
+- `ollama`
+- `searxng`
+- `jina`
+- `deepseek`
+
+If the provider is unset it is inferred from which provider-specific
+configuration is present. If nothing resolves, `web.search` is not registered.
+
+## Reader providers
+
+There is no explicit reader selector: `web.read` is enabled by configuring a
+reader-capable platform: a `jina_api_key` (Jina Reader) or a
+`deepseek_api_key` (DeepSeek Fetch). When both are present, Jina Reader wins.
+Without either, `web.read` is not registered.
 
 ## Installation
 
@@ -34,6 +50,67 @@ Optional:
   - Default: `https://ollama.com/api`
 
 The `web.search` tool accepts `query` and `max_results`.
+
+## Jina
+
+Required:
+
+- `BUB_SEARCH_PROVIDER=jina` for search; `BUB_SEARCH_JINA_API_KEY` alone
+  already enables the `web.read` reader
+- `BUB_SEARCH_JINA_API_KEY`
+
+Optional:
+
+- `BUB_SEARCH_JINA_SEARCH_BASE`
+  - Default: `https://s.jina.ai`
+- `BUB_SEARCH_JINA_READER_BASE`
+  - Default: `https://r.jina.ai`
+- `BUB_SEARCH_JINA_TIMEOUT_SECONDS`
+  - Default: `30`
+
+The `web.search` tool accepts `query`. The `web.read` tool accepts `url` and
+returns the page content as markdown.
+
+All settings can also be written to the `web-search:` section of the Bub
+config file, e.g.:
+
+```yaml
+web-search:
+  provider: jina
+  jina_api_key: jina_...
+```
+
+or mixing platforms per capability (SearXNG searches, Jina reads):
+
+```yaml
+web-search:
+  provider: searxng
+  searxng_base_url: https://searx.example.com
+  jina_api_key: jina_...
+```
+
+## DeepSeek
+
+Uses DeepSeek's [Search & Fetch API](https://api-docs.deepseek.com/guides/search/)
+with the same API key as the DeepSeek chat models.
+
+Required:
+
+- `BUB_SEARCH_PROVIDER=deepseek` for search; `BUB_SEARCH_DEEPSEEK_API_KEY`
+  alone already enables the `web.read` reader (unless a Jina key is also set)
+- `BUB_SEARCH_DEEPSEEK_API_KEY`
+
+Optional:
+
+- `BUB_SEARCH_DEEPSEEK_API_BASE`
+  - Default: `https://api.deepseek.com`
+- `BUB_SEARCH_DEEPSEEK_TIMEOUT_SECONDS`
+  - Default: `30`
+
+The `web.search` tool accepts `query` (at most 128 characters, supports
+operators such as `site:`, `-site:`, `"phrase"`, `lang:`, `after:`, `before:`)
+and `max_results` (clamped to 1–50). The `web.read` tool accepts `url` and
+returns the page content as markdown.
 
 ## SearXNG
 

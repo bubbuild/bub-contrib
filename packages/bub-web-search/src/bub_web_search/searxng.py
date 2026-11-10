@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Iterable
 from json import JSONDecodeError
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict, final
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,12 +53,39 @@ class SearXNGSearchInput(BaseModel):
         return query
 
 
-async def search(*, param: SearXNGSearchInput, settings: WebSearchSettings) -> str:
+@final
+class SearXNGInfobox(TypedDict):
+    title: str
+    url: str
+    content: str
+
+
+@final
+class SearXNGResult(TypedDict):
+    title: str
+    url: str
+    content: str
+    engine: str
+    category: str
+    published_date: str
+
+
+@final
+class SearXNGSearchResult(TypedDict):
+    answers: list[str]
+    suggestions: list[str]
+    infoboxes: list[SearXNGInfobox]
+    results: list[SearXNGResult]
+
+
+async def search(
+    *, param: SearXNGSearchInput, settings: WebSearchSettings
+) -> SearXNGSearchResult:
     import aiohttp
 
     base_url = settings.resolved_searxng_base_url
     if base_url is None:
-        return "error: searxng base url is not configured"
+        raise RuntimeError("error: searxng base url is not configured")
 
     endpoint = f"{base_url}/search"
     params = _build_request_params(param=param, settings=settings)
@@ -79,26 +106,32 @@ async def search(*, param: SearXNGSearchInput, settings: WebSearchSettings) -> s
             session.get(endpoint, params=params) as response,
         ):
             body = await response.text()
-            if response.status >= 400:
-                detail = (
-                    _compact_text(body, limit=MAX_SNIPPET_CHARS) or "request failed"
-                )
-                return f"HTTP {response.status}: {detail}"
+            status = response.status
     except aiohttp.ClientError as exc:
-        return f"HTTP error: {exc!s}"
-    except TimeoutError:
-        return (
+        raise RuntimeError(f"HTTP error: {exc!s}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
             "error: request timed out after "
             f"{settings.resolved_searxng_timeout_seconds} seconds"
-        )
+        ) from exc
 
+    if status >= 400:
+        detail = _compact_text(body, limit=MAX_SNIPPET_CHARS) or "request failed"
+        raise RuntimeError(f"HTTP {status}: {detail}")
     try:
         payload = json.loads(body)
     except JSONDecodeError as exc:
-        return f"error: invalid json response: {exc!s}"
+        raise RuntimeError(f"error: invalid json response: {exc!s}") from exc
     if not isinstance(payload, dict):
-        return "error: invalid json response: expected a top-level object"
-    return _format_search_response(payload, max_results=param.max_results)
+        raise RuntimeError("error: invalid json response: expected a top-level object")
+    return {
+        "answers": _parse_answers(payload.get("answers")),
+        "suggestions": _parse_suggestions(payload.get("suggestions")),
+        "infoboxes": _parse_infoboxes(payload.get("infoboxes")),
+        "results": _parse_results(
+            payload.get("results"), max_results=param.max_results
+        ),
+    }
 
 
 def _build_request_params(
@@ -126,45 +159,46 @@ def _build_request_params(
     return request_params
 
 
-def _format_search_response(payload: dict[str, Any], *, max_results: int) -> str:
-    lines: list[str] = []
+def render_search_result(result: SearXNGSearchResult) -> str:
+    sections: list[list[str]] = []
+    if result["answers"]:
+        sections.append(["Answers:", *(f"- {text}" for text in result["answers"])])
+    if result["suggestions"]:
+        sections.append(
+            ["Suggestions:", *(f"- {text}" for text in result["suggestions"])]
+        )
+    if result["infoboxes"]:
+        lines = ["Infoboxes:"]
+        for infobox in result["infoboxes"]:
+            lines.append(f"- {infobox['title']}")
+            if infobox["url"]:
+                lines.append(f"  {infobox['url']}")
+            if infobox["content"]:
+                lines.append(f"  {infobox['content']}")
+        sections.append(lines)
+    if result["results"]:
+        lines = []
+        for idx, item in enumerate(result["results"], start=1):
+            lines.append(f"{idx}. {item['title']}")
+            if item["url"]:
+                lines.append(f"   {item['url']}")
+            if item["content"]:
+                lines.append(f"   {item['content']}")
+            metadata = [
+                item["engine"],
+                f"[{item['category']}]" if item["category"] else "",
+                item["published_date"],
+            ]
+            if source := " ".join(part for part in metadata if part):
+                lines.append(f"   source: {source}")
+        sections.append(lines)
+    return "\n\n".join("\n".join(lines) for lines in sections) or "none"
 
-    answer_lines = _format_answer_lines(payload.get("answers"))
-    if answer_lines:
-        lines.extend(["Answers:", *answer_lines])
 
-    suggestion_lines = _format_suggestion_lines(payload.get("suggestions"))
-    if suggestion_lines:
-        if lines:
-            lines.append("")
-        lines.extend(["Suggestions:", *suggestion_lines])
-
-    infobox_lines = _format_infobox_lines(payload.get("infoboxes"))
-    if infobox_lines:
-        if lines:
-            lines.append("")
-        lines.extend(["Infoboxes:", *infobox_lines])
-
-    result_blocks = _format_result_blocks(
-        payload.get("results"), max_results=max_results
-    )
-    if result_blocks:
-        if lines:
-            lines.append("")
-        lines.extend(result_blocks)
-
-    return "\n".join(lines) if lines else "none"
-
-
-def _format_answer_lines(raw_answers: object) -> list[str]:
+def _parse_answers(raw_answers: object) -> list[str]:
     if not isinstance(raw_answers, list):
         return []
-    lines: list[str] = []
-    for item in raw_answers:
-        text = _stringify_answer(item)
-        if text:
-            lines.append(f"- {text}")
-    return lines
+    return [text for item in raw_answers if (text := _stringify_answer(item))]
 
 
 def _stringify_answer(value: object) -> str:
@@ -181,22 +215,21 @@ def _stringify_answer(value: object) -> str:
     return ""
 
 
-def _format_suggestion_lines(raw_suggestions: object) -> list[str]:
+def _parse_suggestions(raw_suggestions: object) -> list[str]:
     if not isinstance(raw_suggestions, list):
         return []
-    lines: list[str] = []
-    for item in raw_suggestions:
-        if isinstance(item, str):
-            suggestion = _compact_text(item, limit=MAX_TITLE_CHARS)
-            if suggestion:
-                lines.append(f"- {suggestion}")
-    return lines
+    return [
+        suggestion
+        for item in raw_suggestions
+        if isinstance(item, str)
+        and (suggestion := _compact_text(item, limit=MAX_TITLE_CHARS))
+    ]
 
 
-def _format_infobox_lines(raw_infoboxes: object) -> list[str]:
+def _parse_infoboxes(raw_infoboxes: object) -> list[SearXNGInfobox]:
     if not isinstance(raw_infoboxes, list):
         return []
-    lines: list[str] = []
+    infoboxes: list[SearXNGInfobox] = []
     for item in raw_infoboxes:
         if not isinstance(item, dict):
             continue
@@ -212,21 +245,24 @@ def _format_infobox_lines(raw_infoboxes: object) -> list[str]:
             ),
             limit=MAX_SNIPPET_CHARS,
         )
-        lines.append(f"- {title}")
-        if url := _extract_url(item):
-            lines.append(f"  {url}")
-        if content and content != title:
-            lines.append(f"  {content}")
-    return lines
+        infoboxes.append(
+            {
+                "title": title,
+                "url": _extract_url(item),
+                "content": content if content != title else "",
+            }
+        )
+    return infoboxes
 
 
-def _format_result_blocks(raw_results: object, *, max_results: int) -> list[str]:
+def _parse_results(raw_results: object, *, max_results: int) -> list[SearXNGResult]:
     if not isinstance(raw_results, list):
         return []
 
-    lines: list[str] = []
-    rendered = 0
+    results: list[SearXNGResult] = []
     for item in raw_results:
+        if len(results) >= max_results:
+            break
         if not isinstance(item, dict):
             continue
         title = _compact_text(
@@ -235,32 +271,23 @@ def _format_result_blocks(raw_results: object, *, max_results: int) -> list[str]
             ),
             limit=MAX_TITLE_CHARS,
         )
-        lines.append(f"{rendered + 1}. {title}")
-        if url := _extract_url(item):
-            lines.append(f"   {url}")
         snippet = _compact_text(
             _first_non_empty(
                 item.get("content"), item.get("snippet"), item.get("description")
             ),
             limit=MAX_SNIPPET_CHARS,
         )
-        if snippet and snippet != title:
-            lines.append(f"   {snippet}")
-
-        metadata: list[str] = []
-        if engine := _clean_value(item.get("engine")):
-            metadata.append(engine)
-        if category := _clean_value(item.get("category")):
-            metadata.append(f"[{category}]")
-        if published := _clean_value(item.get("publishedDate")):
-            metadata.append(published)
-        if metadata:
-            lines.append(f"   source: {' '.join(metadata)}")
-
-        rendered += 1
-        if rendered >= max_results:
-            break
-    return lines if rendered else []
+        results.append(
+            {
+                "title": title,
+                "url": _extract_url(item),
+                "content": snippet if snippet != title else "",
+                "engine": _clean_value(item.get("engine")),
+                "category": _clean_value(item.get("category")),
+                "published_date": _clean_value(item.get("publishedDate")),
+            }
+        )
+    return results
 
 
 def _extract_url(item: dict[str, Any]) -> str:

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from bub_tapestore_sqlalchemy.store import SQLAlchemyTapeStore
 from bub.errors import BubError
-from bub.tape import TapeEntry, TapeQuery
+from bub.core.tape import TapeEntry, TapeQuery
 
 
 def _store(tmp_path: Path) -> SQLAlchemyTapeStore:

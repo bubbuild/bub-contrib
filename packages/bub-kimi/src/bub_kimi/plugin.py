@@ -79,6 +79,16 @@ def _runtime_agent_from_state(state: TurnState) -> RuntimeAgent | None:
     return cast("RuntimeAgent", agent)
 
 
+def _prompt_to_text(prompt: str | list[dict]) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    return "\n".join(
+        str(part.get("text", ""))
+        for part in prompt
+        if isinstance(part, dict) and part.get("type") == "text"
+    ).strip()
+
+
 async def _run_internal_command(
     prompt: str, session_id: str, state: TurnState
 ) -> str | None:
@@ -96,7 +106,8 @@ async def _run_internal_command(
 
 
 @hookimpl
-async def run_model(prompt: str, session_id: str, state: TurnState) -> str:
+async def run_model(prompt: str | list[dict], session_id: str, state: TurnState) -> str:
+    prompt = _prompt_to_text(prompt)
     internal_command_result = await _run_internal_command(prompt, session_id, state)
     if internal_command_result is not None:
         return internal_command_result

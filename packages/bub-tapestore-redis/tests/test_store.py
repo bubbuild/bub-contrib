@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 import pytest_asyncio
 from bub.errors import BubError, ErrorKind
-from bub.tape import LAST_ANCHOR, TapeContext, TapeEntry, TapeQuery, build_messages
+from bub.core.tape import LAST_ANCHOR, TapeContext, TapeEntry, TapeQuery, build_messages
 from bub_tapestore_redis import RedisTapeStore
 from fakeredis import FakeAsyncRedis
 from redis.crc import key_slot
@@ -351,4 +351,4 @@ async def test_tapemanager_reads_last_anchor_slice(store: RedisTapeStore) -> Non
     context = TapeContext(anchor=LAST_ANCHOR)
     entries = await context.build_query(TapeQuery("test_tape", store)).all()
     messages = build_messages(entries, context)
-    assert [message["content"] for message in messages] == ["task 2"]
+    assert [message.text for message in messages] == ["task 2"]

@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import asyncio
 
-from bub_qq.auth import QQAuthError
-from bub_qq.gateway import get_gateway
-from bub_qq.gateway import get_shard_gateway
-from bub_qq.gateway import heartbeat_payload
-from bub_qq.gateway import identify_payload
-from bub_qq.gateway import resume_payload
-from bub_qq.openapi import QQOpenAPI
-from bub_qq.openapi_errors import QQKnownOpenAPIError
-from bub_qq.openapi_errors import QQOpenAPIError
-from bub_qq.websocket import _is_permanent_connect_error
-from bub_qq.ws_errors import QQWebSocketFatalError
-from bub_qq.ws_errors import raise_for_close_code
+from bub_qq.gateway.info import get_gateway
+from bub_qq.gateway.info import get_shard_gateway
+from bub_qq.gateway.info import heartbeat_payload
+from bub_qq.gateway.info import identify_payload
+from bub_qq.gateway.info import resume_payload
+from bub_qq.gateway.websocket import _is_permanent_connect_error
+from bub_qq.gateway.ws_errors import QQWebSocketFatalError
+from bub_qq.gateway.ws_errors import raise_for_close_code
+from bub_qq.protocol.auth import QQAuthError
+from bub_qq.protocol.errors import QQKnownOpenAPIError
+from bub_qq.protocol.errors import QQOpenAPIError
+from bub_qq.protocol.openapi import QQOpenAPI
 
 
 class TokenProviderStub:

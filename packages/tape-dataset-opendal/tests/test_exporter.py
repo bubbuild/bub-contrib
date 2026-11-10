@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import opendal
-from bub.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry, TapeQuery
+from bub.core.tape import AsyncTapeStoreAdapter, InMemoryTapeStore, TapeEntry, TapeQuery
 
 from tape_dataset_opendal import (
     AsyncExportableTapeStore,
@@ -121,7 +121,10 @@ def test_async_export_supports_async_tape_store_and_async_operator(tmp_path) -> 
                         "id": 2,
                         "kind": "tool_call",
                         "meta": {},
-                        "payload": {"calls": [{"id": "call_1", "name": "search"}]},
+                        "payload": {
+                            "calls": [{"id": "call_1", "name": "search"}],
+                            "content": "",
+                        },
                     },
                     {
                         "date": entries[2].date,

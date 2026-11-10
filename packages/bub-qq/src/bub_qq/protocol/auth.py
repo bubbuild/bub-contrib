@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass
+from collections.abc import Callable
+from typing import Protocol
+
+import aiohttp
+
+from ..config import QQConfig
+
+
+@dataclass(frozen=True)
+class QQAccessToken:
+    """Cached access token and its refresh boundary."""
+
+    value: str
+    expires_at: float
+
+    def is_valid(self, *, now: float) -> bool:
+        return now < self.expires_at
+
+
+class QQAuthError(RuntimeError):
+    """Raised when QQ token acquisition fails."""
+
+
+class TokenHTTPClient(Protocol):
+    async def post(self, url: str, **kwargs: object) -> dict[str, object]: ...
+
+
+class QQTokenProvider:
+    """Fetch and cache QQ Open Platform access tokens."""
+
+    def __init__(
+        self,
+        config: QQConfig,
+        *,
+        client: TokenHTTPClient | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._config = config
+        self._client = client
+        self._clock = clock or time.time
+        self._token: QQAccessToken | None = None
+        self._lock = asyncio.Lock()
+
+    async def get_token(self) -> str:
+        now = float(self._clock())
+        token = self._token
+        if token is not None and token.is_valid(now=now):
+            return token.value
+
+        async with self._lock:
+            now = float(self._clock())
+            token = self._token
+            if token is not None and token.is_valid(now=now):
+                return token.value
+
+            self._token = await self._request_new_token()
+            return self._token.value
+
+    def invalidate(self, rejected_token: str | None = None) -> None:
+        """Drop the cached token (e.g. after a 401) so the next call refetches.
+
+        With ``rejected_token``, only drop it if it is still the cached one,
+        so concurrent 401s do not throw away a token another call just got.
+        """
+
+        if rejected_token is None or (
+            self._token is not None and self._token.value == rejected_token
+        ):
+            self._token = None
+
+    async def _request_new_token(self) -> QQAccessToken:
+        if not self._config.appid or not self._config.secret:
+            raise QQAuthError("qq appid/secret is empty")
+
+        payload = await self._request_token()
+
+        access_token = str(payload.get("access_token") or "").strip()
+        expires_in = payload.get("expires_in")
+        if not access_token:
+            raise QQAuthError(f"qq token response missing access_token: {payload}")
+
+        try:
+            expires_in_seconds = int(expires_in)
+        except (TypeError, ValueError) as exc:
+            raise QQAuthError(
+                f"qq token response has invalid expires_in: {payload}"
+            ) from exc
+
+        refresh_after = max(
+            expires_in_seconds - self._config.token_refresh_skew_seconds, 0
+        )
+        return QQAccessToken(
+            value=access_token,
+            expires_at=float(self._clock()) + refresh_after,
+        )
+
+    async def _request_token(self) -> dict[str, object]:
+        kwargs: dict[str, object] = {
+            "json": {
+                "appId": self._config.appid,
+                "clientSecret": self._config.secret,
+            },
+            "headers": {"Content-Type": "application/json"},
+            "timeout": self._config.timeout_seconds,
+        }
+        if self._client is not None:
+            return await self._client.post(self._config.token_url, **kwargs)
+
+        async with aiohttp.ClientSession() as client:
+            async with client.post(self._config.token_url, **kwargs) as response:
+                if response.status < 200 or response.status >= 300:
+                    raise QQAuthError(
+                        f"qq token request failed: http={response.status} reason={response.reason}"
+                    )
+                payload = await response.json()
+                if not isinstance(payload, dict):
+                    raise QQAuthError(
+                        f"qq token response is not a JSON object: {payload!r}"
+                    )
+                return payload

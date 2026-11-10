@@ -54,12 +54,19 @@ one stable `threadId` for the conversation and use a new `runId` for each run.
 The frontend renders the streamed updates. `HttpAgent` also accepts a `headers`
 option for authentication.
 
-Each request supplies its conversation context through `messages` and `state`.
-The adapter does not substitute a separate server-owned display history. If your
-application needs reload persistence, save the client's messages, state, and
-thread ID in application storage, then use `initialMessages` and `initialState`
-when recreating the client. Keep any interrupt outcome needed by your decision
-UI as well. There are no `/threads/...` history, replay, or cancel endpoints.
+Bub owns the conversation and chooses model context from its native session tape.
+The adapter appends only new user messages and results for pending external calls.
+Keep message IDs stable when echoing history: already accepted input is not
+appended again, and echoed assistant messages or old tool results do not replace
+Bub's records. An edit to an accepted user message is rejected; this adapter does
+not implement edit/regenerate branches. Start a new thread for a new conversation.
+
+Your application can save messages, shared state, and the thread ID to restore
+its UI through `initialMessages` and `initialState`. This does not import that
+snapshot into Bub or restore deleted server context. Continuing after a server
+restart requires a persistent Bub tape store. Keep any interrupt outcome needed
+by your decision UI as well. There are no `/threads/...` history, replay, or cancel
+endpoints in this adapter.
 
 ## Frontend tools
 
@@ -72,8 +79,9 @@ When a run requests frontend tools:
 1. Wait for that run to finish and execute the requested tools.
 2. Add a message for each result, with a new `id`, `role: "tool"`, the matching
    `toolCallId`, and `content`.
-3. Start a new run on the same thread, sending the updated messages, state, and
-   tool definitions. Include a result for every pending frontend call.
+3. Start a new run on the same thread, sending the results, shared state, and
+   tool definitions. Include a result for every pending frontend call. Bub already
+   has the suspended exchange; a result-only request does not need to echo it.
 
 No synthetic user message is needed. **`RUN_FINISHED` ends one run; it may mean
 that the agent is waiting for your frontend, not that it has finished answering.**
@@ -109,12 +117,11 @@ interrupt responses. Repeating the same accepted interrupt responses does not
 re-execute resumed work; it is not a replay of the earlier generated answer.
 Continuation across a server restart requires a persistent Bub tape store.
 
-Each thread uses one native execution tape. Before execution, the adapter replaces
-its model context with the request's messages, retaining native session settings,
-loaded-tool visibility, and the continuation checkpoint. It does not archive a
-full conversation copy for every run. Mounted sidecars are left intact. This tape
-is working context, not an append-only conversation archive; the application
-remains responsible for saving the conversation it wants to restore.
+Each thread uses one native tape. Bub continues to own its records, session
+settings, loaded-tool visibility, and handoff anchors. The adapter neither resets
+that tape on each request nor stores a complete client-history copy per run.
+Echoing older messages cannot bring them back into model context after a native
+handoff.
 
 ## Errors and cancellation
 
@@ -125,6 +132,7 @@ remains responsible for saving the conversation it wants to restore.
 - Another executing request on the same thread is rejected with `RUN_ERROR`.
   Run one adapter per store/workspace; cross-process coordination is not provided.
 - Reusing a run ID does not request replay or provide general request deduplication.
+  A history-only request with no new input is rejected rather than re-executed.
   Reconnecting does not restart interrupted work. Retry policy belongs to the
   application; consider tool side effects before submitting work again.
 

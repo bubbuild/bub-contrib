@@ -14,10 +14,7 @@ from typing import Any
 import jsonschema
 from ag_ui.core import RunAgentInput
 from bub.builtin.agent import BubAgent
-from bub.builtin.settings import load_session_settings, set_session_setting
-from bub.builtin.tools import TOOL_LOADED_EVENT, loaded_tool_names
-from bub.core.tape import TapeEntry, session_tape_name, to_message
-from bub.core.tools import ToolContext
+from bub.core.tape import Tape, TapeEntry, session_tape_name, to_message
 
 from bub_ag_ui.continuation import Continuation
 from bub_ag_ui.events import EventStream, RunProjection, result_text
@@ -79,12 +76,44 @@ def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
     return result
 
 
+async def new_inputs(
+    tape: Tape, messages: list[dict[str, Any]], pending_ids: set[str]
+) -> list[tuple[str, dict[str, Any]]]:
+    """Map AG-UI input to native appends, never rebuild context from UI history.
+
+    IDs on native input entries distinguish new messages from client echoes,
+    including echoes of messages that Bub has already moved behind a handoff.
+    Assistant output and backend tool results belong to the native recorder.
+    """
+    accepted = {
+        entry.meta["ag_ui_message_id"]: entry.payload
+        for entry in await tape.query().kinds("message").all()
+        if "ag_ui_message_id" in entry.meta
+    }
+    additions = []
+    for message in messages:
+        if message["role"] != "user" and not (
+            message["role"] == "tool" and message["toolCallId"] in pending_ids
+        ):
+            continue
+        converted = model_message(message)
+        if message["id"] in accepted:
+            if accepted[message["id"]] != converted:
+                raise ProtocolError(
+                    "Editing accepted input is not supported; start a new thread"
+                )
+            continue
+        additions.append((message["id"], converted))
+    # Resolve the native pending exchange before any new user input sent with it.
+    return sorted(additions, key=lambda item: item[1]["role"] != "tool")
+
+
 class AGUIAdapter:
     """Adapt a request and its native execution to an AG-UI event stream.
 
-    The client supplies conversation messages/state on every run. Native session
-    settings and external-call checkpoints remain on the thread's working tape.
-    Streaming does not read back events from storage.
+    Bub owns the conversation tape and its context selection. The adapter appends
+    only new user input or results for pending external calls. Client history is
+    not a replacement for native context; streaming never polls stored events.
     """
 
     def __init__(
@@ -188,6 +217,7 @@ class AGUIAdapter:
                 )
                 continuation = await Continuation.load(tape)
                 try:
+                    pending_ids = {call["id"] for call in continuation.pending}
                     messages, repeated = continuation.prepare(request)
                     agent = self.agent_factory(self.framework, tape_store=tape.store)
                     external = ExternalTools([*request.tools, *self.interrupts])
@@ -196,11 +226,13 @@ class AGUIAdapter:
                         jsonschema.Draft202012Validator.check_schema(
                             definition.parameters
                         )
-                    converted = [
-                        value
-                        for m in messages
-                        if (value := model_message(m)) is not None
-                    ]
+                    additions = await new_inputs(tape, messages, pending_ids)
+                    if repeated and additions:
+                        raise ProtocolError(
+                            "Send new input without an already resolved resume"
+                        )
+                    if not additions and not repeated:
+                        raise ProtocolError("No new user input or pending tool result")
                 except (
                     ValueError,
                     jsonschema.ValidationError,
@@ -213,32 +245,19 @@ class AGUIAdapter:
                 )
                 await shared.set(shared.value)
                 if not repeated:
-                    settings = await load_session_settings(tape)
-                    loaded = await loaded_tool_names(tape)
 
-                    async def replace_context() -> None:
-                        # One thread tape, not one archive per request. Keep
-                        # native session settings/tool visibility and mounted
-                        # sidecars while replacing only the execution context.
-                        await tape.store.reset(tape.name)
+                    async def append_input() -> None:
                         await tape.ensure_bootstrap_anchor()
-                        context = ToolContext(tape=tape)
-                        for key, value in settings.items():
-                            await set_session_setting(context, key, value)
-                        if loaded:
-                            await tape.append_event(
-                                TOOL_LOADED_EVENT, {"names": loaded}
-                            )
-                        # Persist consumed responses before resumed side effects.
-                        await continuation.save(tape)
-                        for message in converted:
+                        if pending_ids:
+                            # Record receipt before executing any resumed side effect.
+                            await continuation.save(tape)
+                        for message_id, message in additions:
                             await tape.store.append(
-                                tape.name, TapeEntry.message(message)
+                                tape.name,
+                                TapeEntry.message(message, ag_ui_message_id=message_id),
                             )
 
-                    # Cancellation must not leave a still-running rewrite behind
-                    # after this request releases thread ownership.
-                    await committed(replace_context())
+                    await committed(append_input())
                     inbound = AGUIInboundMessage(
                         session_id=session_id,
                         channel="ag-ui",

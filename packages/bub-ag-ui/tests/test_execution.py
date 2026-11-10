@@ -308,12 +308,14 @@ async def test_custom_provider_output_is_displayed_without_model_tape_supplement
             run="r2",
         ),
     )
-    # A subsequent request explicitly supplies these messages. The adapter must
-    # use that context, not substitute its own persisted display history.
-    assert any(
+    # Display-only provider output is not promoted into Bub's model context by
+    # the client echo. The provider remains responsible for native recording.
+    assert not any(
         m.get("content") == "custom answer" for m in provider.requests[-1]["messages"]
     )
-    assert any(m.get("tool_call_id") == "c1" for m in provider.requests[-1]["messages"])
+    assert not any(
+        m.get("tool_call_id") == "c1" for m in provider.requests[-1]["messages"]
+    )
 
 
 @pytest.mark.parametrize("frontend", [False, True])

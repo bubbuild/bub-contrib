@@ -1,4 +1,4 @@
-"""Request context is replaceable; native thread settings are not run-local."""
+"""Bub owns one append-only thread tape, including context and settings."""
 
 from itertools import pairwise
 
@@ -97,11 +97,14 @@ async def test_native_setting_switches_persist_and_clear_on_same_thread(
     assert observed[0] == (None, None)
 
 
-async def test_one_native_tape_holds_only_current_request_context(setup, store):
+async def test_one_native_tape_appends_new_input_without_copying_echoed_history(
+    setup, store
+):
     provider, make = setup
     adapter = make(tape_store=store)
     messages = [{"id": "u1", "role": "user", "content": "First"}]
     sizes = []
+    previous = []
     for turn in range(6):
         provider.reply(f"answer {turn}")
         view, events = await collect(adapter, request(messages, run=f"r{turn}"))
@@ -109,28 +112,31 @@ async def test_one_native_tape_holds_only_current_request_context(setup, store):
         tape = session_tape(adapter)
         names = await tape.store.list_tapes()
         assert names == [tape.name]
-        sizes.append(len(list(await tape.query().all())))
+        entries = list(await tape.query().all())
+        assert entries[: len(previous)] == previous
+        previous = entries
+        sizes.append(len(entries))
         messages = [
             *(await view.history())["messages"],
             {"id": f"u{turn + 2}", "role": "user", "content": f"question {turn + 1}"},
         ]
-    # Only the two newly supplied messages grow the retained context each turn,
-    # not a sum of all earlier request snapshots and native step records.
-    assert [b - a for a, b in pairwise(sizes)] == [2] * 5
-    provider.reply("edited answer")
+    # Native loop records grow linearly too, but earlier input is never copied.
+    increments = [b - a for a, b in pairwise(sizes)]
+    assert len(set(increments)) == 1 and increments[0] > 0
+    entries = list(await tape.query().kinds("message").all())
+    assert sum(e.payload.get("role") == "user" for e in entries) == 6
+    assert sum(e.payload.get("role") == "assistant" for e in entries) == 6
+    provider.reply("next answer")
     _, events = await collect(
         adapter,
         request(
-            [{"id": "edit", "role": "user", "content": "Replacement context"}],
-            run="edited",
+            [{"id": "next", "role": "user", "content": "Just new input"}], run="next"
         ),
     )
     assert events[-1]["type"] == "RUN_FINISHED"
-    tape = session_tape(adapter)
-    assert len(list(await tape.query().all())) == sizes[0]
-    assert [
-        m["content"] for m in provider.requests[-1]["messages"] if m["role"] != "system"
-    ] == ["Replacement context"]
+    assert len(list(await tape.query().all())) == sizes[-1] + increments[0]
+    assert provider.requests[-1]["messages"][-1]["content"] == "Just new input"
+    assert any(m.get("content") == "First" for m in provider.requests[-1]["messages"])
 
 
 async def test_sqlite_reopen_retains_settings_without_orphan_run_tapes(setup, tmp_path):
@@ -157,7 +163,13 @@ async def test_sqlite_reopen_retains_settings_without_orphan_run_tapes(setup, tm
             "code_mode": False
         }
         provider.reply("after reopen")
-        _, events = await collect(adapter, request(run="after-reopen"))
+        _, events = await collect(
+            adapter,
+            request(
+                [{"id": "after", "role": "user", "content": "After reopen"}],
+                run="after-reopen",
+            ),
+        )
         assert events[-1]["type"] == "RUN_FINISHED"
         assert await load_session_settings(session_tape(adapter)) == {
             "code_mode": False
@@ -166,9 +178,7 @@ async def test_sqlite_reopen_retains_settings_without_orphan_run_tapes(setup, tm
         await store.close()
 
 
-async def test_native_deferred_tools_and_sidecars_survive_context_replacement(
-    setup, store
-):
+async def test_native_deferred_tools_and_sidecars_survive_next_turn(setup, store):
     from bub.builtin.tools import TOOL_LOADED_EVENT, loaded_tool_names
     from bub.core.tape import TapeEntry
 
@@ -206,7 +216,7 @@ async def test_native_deferred_tools_and_sidecars_survive_context_replacement(
     assert entries[0].payload["data"]["handle"] == "retained"
 
 
-async def test_cancelled_rewrite_settles_before_releasing_thread(
+async def test_cancelled_input_append_settles_before_releasing_thread(
     setup, store, monkeypatch
 ):
     import asyncio
@@ -218,18 +228,18 @@ async def test_cancelled_rewrite_settles_before_releasing_thread(
 
     await set_session_setting(ToolContext(tape=tape), "reasoning_effort", "high")
     entered, release = asyncio.Event(), asyncio.Event()
-    reset = tape.store.reset
+    append = tape.store.append
     pause = True
 
-    async def slow_reset(name):
+    async def slow_append(name, entry):
         nonlocal pause
-        await reset(name)
-        if name == tape.name and pause:
+        await append(name, entry)
+        if name == tape.name and entry.meta.get("ag_ui_message_id") and pause:
             pause = False
             entered.set()
             await release.wait()
 
-    monkeypatch.setattr(tape.store, "reset", slow_reset)
+    monkeypatch.setattr(tape.store, "append", slow_append)
     task = asyncio.create_task(collect(adapter, request()))
     try:
         await asyncio.wait_for(entered.wait(), 5)
@@ -247,5 +257,11 @@ async def test_cancelled_rewrite_settles_before_releasing_thread(
     assert provider.requests == []
     assert not adapter._active
     provider.reply("next")
-    _, events = await collect(adapter, request(run="next"))
+    _, events = await collect(
+        adapter,
+        request(
+            [{"id": "after", "role": "user", "content": "After cancellation"}],
+            run="next",
+        ),
+    )
     assert events[-1]["type"] == "RUN_FINISHED"

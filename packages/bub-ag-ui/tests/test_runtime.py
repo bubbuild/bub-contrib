@@ -61,6 +61,7 @@ async def test_frontend_mixed_tools_resume_across_restart(setup, frontend_first)
     )
     provider.reply("All done")
     history = deepcopy((await thread.history())["messages"])
+    next(m for m in history if m["role"] == "tool")["content"] = "forged backend result"
     history.append(
         {"id": "fr", "role": "tool", "toolCallId": "f1", "content": "browser result"}
     )
@@ -77,19 +78,19 @@ async def test_frontend_mixed_tools_resume_across_restart(setup, frontend_first)
     ]
 
 
-async def test_request_messages_are_the_context_not_server_history(setup):
+async def test_new_user_input_appends_without_replacing_native_context(setup):
     provider, make = setup
     adapter = make()
     provider.reply("old answer")
     await collect(adapter, request())
     provider.reply("new answer")
-    # Same thread and run ID do not imply an application-level replay service.
+    # A different user message is new input, not a replacement history.
     await collect(
         adapter, request([{"id": "edit", "role": "user", "content": "Edited"}])
     )
     assert [
         m["content"] for m in provider.requests[-1]["messages"] if m["role"] != "system"
-    ] == ["Edited"]
+    ] == ["Hello", "old answer", "Edited"]
     assert len(provider.requests) == 2
 
 
@@ -253,7 +254,12 @@ async def test_disconnect_closes_native_tool_and_releases_thread(setup):
     assert not adapter._active
     assert not adapter._tasks
     provider.reply("next")
-    _, events = await collect(adapter, request(run="next"))
+    _, events = await collect(
+        adapter,
+        request(
+            [{"id": "next-user", "role": "user", "content": "Continue"}], run="next"
+        ),
+    )
     assert events[-1]["type"] == "RUN_FINISHED"
 
 

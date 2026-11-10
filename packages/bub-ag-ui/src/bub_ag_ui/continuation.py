@@ -61,20 +61,7 @@ class Continuation:
             raise ValueError("Duplicate interrupt response")
         if not repeated and {r["interruptId"] for r in responses} != interrupts.keys():
             raise ValueError("Resume must address every pending interrupt exactly once")
-        calls = {
-            call["id"]: call
-            for message in messages
-            if message["role"] == "assistant"
-            for call in message.get("toolCalls", [])
-        }
         for pending in self.pending:
-            call = calls.get(pending["id"])
-            if call is None or call["function"]["name"] != pending["name"].replace(
-                ".", "_"
-            ):
-                raise ValueError(
-                    "Continuation messages must include the pending tool call"
-                )
             results = [
                 m
                 for m in messages
@@ -92,21 +79,17 @@ class Continuation:
             )
             if repeated and any(m.get("toolCallId") == call["id"] for m in messages):
                 continue
-            if call["id"] not in calls:
-                raise ValueError(
-                    "Resume messages must include the interrupted tool call"
-                )
             if response["status"] == "resolved" and call.get("response_schema"):
                 jsonschema.validate(response["payload"], call["response_schema"])
-            # Put results immediately after the suspended exchange, before any
-            # new user input included alongside the decision.
-            index = (
-                next(
-                    i
+            # Update the client view if it echoes the call. Native execution
+            # already recorded that exchange and does not require it back.
+            index = next(
+                (
+                    i + 1
                     for i, m in enumerate(messages)
                     if any(c["id"] == call["id"] for c in m.get("toolCalls", []))
-                )
-                + 1
+                ),
+                0,
             )
             while index < len(messages) and messages[index]["role"] == "tool":
                 index += 1

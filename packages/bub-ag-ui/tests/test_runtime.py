@@ -132,7 +132,7 @@ async def test_interrupt_invalid_resume_is_run_error_and_keeps_pending(setup, in
     assert accepted[-1]["type"] == "RUN_FINISHED"
 
 
-async def test_interrupt_snapshots_resume_and_idempotency_without_history_api(setup):
+async def test_interrupt_state_resume_and_idempotency(setup):
     provider, make = setup
 
     def update(context):
@@ -151,7 +151,6 @@ async def test_interrupt_snapshots_resume_and_idempotency_without_history_api(se
     provider.reply(calls=[("a1", "approve", "{}"), ("a2", "approve", "{}")])
     view, events = await collect(adapter, request())
     assert events[-1]["type"] == "RUN_FINISHED"
-    assert any(e["type"] == "MESSAGES_SNAPSHOT" for e in events)
     state = next(
         e["snapshot"] for e in reversed(events) if e["type"] == "STATE_SNAPSHOT"
     )

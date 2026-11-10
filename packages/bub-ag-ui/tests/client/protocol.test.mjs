@@ -79,7 +79,6 @@ test("interrupt outcome and resume are understood by the protocol client", async
   const events = [];
   await a.runAgent({}, {onEvent: ({event}) => events.push(event), onRunFinishedEvent: ({event}) => {outcome = event.outcome;}});
   assert.equal(events.at(-1).type, "RUN_FINISHED");
-  assert.ok(events.some(e => e.type === "MESSAGES_SNAPSHOT"));
   assert.ok(events.some(e => e.type === "STATE_SNAPSHOT"));
   assert.equal(outcome.type, "interrupt");
   await a.runAgent({resume: [{interruptId: outcome.interrupts[0].id, status: "resolved", payload: true}]});
@@ -91,6 +90,49 @@ test("state snapshot and RFC6902 delta reach client state", async () => {
   await a.runAgent({});
   assert.deepEqual(a.state, {count: 2});
 });
+
+for (const prompt of ["hello", "frontend", "interrupt"]) {
+  test(`delta-only ${prompt} requests preserve the client's existing messages`, async () => {
+    let deltaOnly = false;
+    const a = new HttpAgent({
+      url: `${base}/agent`, threadId: crypto.randomUUID(),
+      initialMessages: [{id: crypto.randomUUID(), role: "user", content: "hello"}],
+      fetch: (input, init) => {
+        const body = JSON.parse(init.body);
+        if (deltaOnly) body.messages = body.messages.slice(-1);
+        return fetch(input, {...init, body: JSON.stringify(body)});
+      },
+    });
+    await a.runAgent({});
+    const original = a.messages.map(m => m.id);
+    a.addMessage({id: crypto.randomUUID(), role: "user", content: prompt});
+    deltaOnly = true;
+    const tools = prompt === "frontend" ? [{name: "browser", description: "", parameters: {type: "object"}}] : [];
+    let outcome;
+    await a.runAgent({tools}, {onRunFinishedEvent: ({event}) => { outcome = event.outcome; }});
+    assert.ok(original.every(id => a.messages.some(m => m.id === id)));
+    if (prompt !== "hello") {
+      const callMessage = a.messages.findLast(m => m.toolCalls);
+      const call = callMessage?.toolCalls[0];
+      assert.ok(call);
+      const beforeResume = a.messages.map(m => m.id);
+      if (prompt === "frontend") {
+        a.addMessage({id: crypto.randomUUID(), role: "tool", toolCallId: call.id, content: "client result"});
+        await a.runAgent({tools});
+      } else {
+        assert.equal(outcome.type, "interrupt");
+        await a.runAgent({resume: [{interruptId: outcome.interrupts[0].id, status: "resolved", payload: true}]});
+      }
+      assert.ok(beforeResume.every(id => a.messages.some(m => m.id === id)));
+      assert.equal(a.messages.filter(m => m.role === "tool" && m.toolCallId === call.id).length, 1);
+      const displayedCall = fromAgUiMessages(a.messages).find(m => m.id === callMessage.id)
+        ?.content.find(p => p.type === "tool-call" && p.toolCallId === call.id);
+      assert.ok(displayedCall);
+      assert.equal(displayedCall.result, prompt === "frontend" ? "client result" : true);
+    }
+    assert.equal(a.messages.at(-1).content, `Answer: ${prompt}`);
+  });
+}
 
 test("provider errors do not turn into success", async () => {
   const a = agent("error");

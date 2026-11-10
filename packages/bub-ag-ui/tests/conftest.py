@@ -118,7 +118,9 @@ async def collect(adapter, data, user="alice"):
     from bub_ag_ui.events import MessageProjection
 
     events = [event async for event in adapter.run(user, data)]
-    projection = MessageProjection()
+    projection = MessageProjection(
+        [message.model_dump(mode="json", by_alias=True) for message in data.messages]
+    )
     for event in events:
         projection.apply(event)
     return ClientView(projection), events

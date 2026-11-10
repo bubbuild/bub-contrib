@@ -83,8 +83,8 @@ class Continuation:
                 continue
             if response["status"] == "resolved" and call.get("response_schema"):
                 jsonschema.validate(response["payload"], call["response_schema"])
-            # Update the client view if it echoes the call. Native execution
-            # holds that exchange and does not require it back.
+            # Normalize the decision into a tool value for the waiting call.
+            # Native tool execution emits the result; this is not a UI snapshot.
             index = next(
                 (
                     i + 1

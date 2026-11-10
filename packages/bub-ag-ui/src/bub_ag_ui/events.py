@@ -32,18 +32,16 @@ def result_text(value: Any) -> str:
 
 
 class MessageProjection:
-    """Current response messages for activity validation and interrupt snapshots."""
+    """Current response messages for activity validation."""
 
-    def __init__(self) -> None:
-        self.messages: list[dict[str, Any]] = []
+    def __init__(self, messages: list[dict[str, Any]] | None = None) -> None:
+        self.messages = deepcopy(messages or [])
 
     def message(self, id: str) -> dict[str, Any]:
         return next(message for message in self.messages if message["id"] == id)
 
     def apply(self, event: dict[str, Any]) -> None:
         match event["type"]:
-            case "MESSAGES_SNAPSHOT":
-                self.messages = deepcopy(event["messages"])
             case "TEXT_MESSAGE_START":
                 self.messages.append(
                     {"id": event["messageId"], "role": event["role"], "content": ""}
@@ -106,9 +104,9 @@ class MessageProjection:
 class EventStream:
     """One run's wire state; a Bub final closes a step, never a run."""
 
-    def __init__(self, emit: Emit) -> None:
+    def __init__(self, emit: Emit, messages: list[dict[str, Any]]) -> None:
         self._emit = emit
-        self._messages = MessageProjection()
+        self._messages = MessageProjection(messages)
         self.message_id: str | None = None
         self.reasoning_id: str | None = None
 
@@ -118,9 +116,6 @@ class EventStream:
     async def publish(self, event: dict[str, Any]) -> None:
         self._messages.apply(event)
         await self._emit(event)
-
-    async def snapshot(self) -> None:
-        await self.send("MESSAGES_SNAPSHOT", messages=self._messages.messages)
 
     async def text_start(self) -> str:
         if self.message_id is None:

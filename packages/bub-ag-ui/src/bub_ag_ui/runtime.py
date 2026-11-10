@@ -216,7 +216,13 @@ class AGUIAdapter:
         execution.task.add_done_callback(finished)
 
     async def _execute(self, principal: str, request: RunAgentInput, emit: Any) -> None:
-        stream = EventStream(emit)
+        stream = EventStream(
+            emit,
+            [
+                message.model_dump(mode="json", by_alias=True)
+                for message in request.messages
+            ],
+        )
         session_id = self.session_id(principal, request.thread_id)
         acquired = False
         execution: NativeExecution | None = None
@@ -297,7 +303,6 @@ class AGUIAdapter:
                 jsonschema.SchemaError,
             ) as exc:
                 raise ProtocolError(str(exc)) from exc
-            await stream.send("MESSAGES_SNAPSHOT", messages=messages)
             if repeated:
                 await stream.send(
                     "STATE_SNAPSHOT",
@@ -319,7 +324,11 @@ class AGUIAdapter:
                     )
                     shared = execution.inbound.shared
                     await shared.set(request.state if request.state is not None else {})
-                    execution.supplied = set(values)
+                    execution.supplied = {
+                        m.tool_call_id
+                        for m in request.messages
+                        if m.role == "tool" and m.tool_call_id in values
+                    }
                     if request.resume:
                         await committed(continuation.save(tape))
                     external.resolve(values)
@@ -388,7 +397,6 @@ class AGUIAdapter:
             ]
             fields: dict[str, Any] = {}
             if interrupts:
-                await stream.snapshot()
                 await execution.inbound.shared.set(execution.inbound.shared.value)
                 fields["outcome"] = {"type": "interrupt", "interrupts": interrupts}
             await stream.send(

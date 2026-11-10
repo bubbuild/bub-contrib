@@ -37,6 +37,7 @@ async def main(port):
         tool = {
             "backend": "clock",
             "frontend": "browser",
+            "frontend-parallel": "browser",
             "interrupt": "approve",
             "state": "update",
             "activity": "activity",
@@ -53,6 +54,14 @@ async def main(port):
                     }
                 ]
             }
+        if prompt == "frontend-parallel" and "tool_calls" in delta:
+            delta["tool_calls"].append(
+                {
+                    "index": 1,
+                    "id": "call-browser-2",
+                    "function": {"name": "browser", "arguments": "{}"},
+                }
+            )
         events = [
             {
                 "choices": [

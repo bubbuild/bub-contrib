@@ -1,4 +1,4 @@
-"""Protocol sessions and run ownership, independent of the HTTP transport."""
+"""Request-scoped AG-UI execution over Bub; no conversation-management service."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from copy import deepcopy
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -16,15 +15,15 @@ from uuid import uuid4
 import jsonschema
 from ag_ui.core import RunAgentInput
 from bub.builtin.agent import BubAgent
-from bub.core.tape import Tape, TapeEntry, session_tape_name, to_message
+from bub.core.tape import TapeEntry, session_tape_name, to_message
 
-from bub_ag_ui.events import EventStream, result_text, wire_event
+from bub_ag_ui.continuation import Continuation
+from bub_ag_ui.events import EventStream, RunProjection, result_text
 from bub_ag_ui.execution import (
     AGUIInboundMessage,
     StreamRouter,
     install_execution_hooks,
 )
-from bub_ag_ui.history import AGUIHistory, HistoryView, RunEvents
 from bub_ag_ui.lifecycle import committed
 from bub_ag_ui.state import SharedState
 from bub_ag_ui.tools import ExternalTools, InterruptTool
@@ -36,13 +35,6 @@ class ProtocolError(Exception):
     def __init__(self, message: str, status: int = 400) -> None:
         super().__init__(message)
         self.status = status
-
-
-def fingerprint(request: RunAgentInput) -> str:
-    value = request.model_dump(mode="json", by_alias=True)
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
-    ).hexdigest()
 
 
 def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
@@ -69,9 +61,7 @@ def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
                     raise ProtocolError("Media input requires a URL or data source")
                 parts.append(data)
             else:
-                raise ProtocolError(
-                    f"Bub 0.6.1 cannot consume {part['type']} input", 422
-                )
+                raise ProtocolError(f"Bub cannot consume {part['type']} input", 422)
         content = parts
     result = {"role": role, "content": content}
     if role == "assistant" and message.get("toolCalls"):
@@ -87,67 +77,12 @@ def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
     return result
 
 
-@dataclass
-class Thread:
-    """Execution synchronization only; durable state belongs to the mounted tape."""
-
-    tape: Tape
-    changed: asyncio.Condition = field(default_factory=asyncio.Condition)
-    admission: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    @property
-    def sidecar(self) -> AGUIHistory:
-        return self.tape.get_sidecar("ag-ui")
-
-    async def read(self) -> HistoryView:
-        return await self.sidecar.read(self.tape)
-
-    async def history(self) -> dict[str, Any]:
-        return (await self.read()).as_dict()
-
-    async def events(self, run_id: str, after: int = 0) -> RunEvents:
-        return await self.sidecar.events(self.tape, run_id, after)
-
-    async def append(self, kind: str, **data: Any) -> None:
-        async with self.changed:
-
-            async def write() -> None:
-                await self.sidecar.append(self.tape, kind, **data)
-                self.changed.notify_all()
-
-            await committed(write())
-
-    async def checkpoint(self, pending: list[dict[str, Any]], model_tape: str) -> None:
-        await self.append("checkpoint", pending=pending, model_tape=model_tape)
-
-
-@dataclass(frozen=True)
-class Submission:
-    thread: Thread
-    created: bool
-
-
-@dataclass(frozen=True)
-class RunningRun:
-    run_id: str
-    task: asyncio.Task[None]
-    started: asyncio.Event
-
-    async def cancel(self) -> None:
-        # Cancellation must enter the producer's cleanup boundary, even before
-        # its first token. No lock is handed from the HTTP task to the producer.
-        await self.started.wait()
-        if not self.task.done() and not self.task.cancelling():
-            self.task.cancel()
-        await asyncio.gather(self.task, return_exceptions=True)
-
-
 class AGUIAdapter:
-    """One single-writer controller per configured store/workspace.
+    """Adapt a request and its native execution to an AG-UI event stream.
 
-    A run task owns execution; subscribers follow the mounted history tape. Abort
-    cancels execution, not merely the HTTP response. Replaying a run never invokes
-    the model or its tools again. Server restart marks unfinished runs failed.
+    The client supplies conversation messages/state on every run. Only external
+    call correlation and interrupt response receipts survive in the native tape.
+    Streaming does not read back events from storage.
     """
 
     def __init__(
@@ -168,335 +103,138 @@ class AGUIAdapter:
         self.interrupts = interrupts
         self.agent_factory = agent_factory
         self.max_run_seconds = max_run_seconds
-        self._threads: dict[tuple[str, str], Thread] = {}
-        self._runs: dict[str, RunningRun] = {}
-        self._closed = False
-        self._loading = asyncio.Lock()
         self._storage_agent = agent_factory(framework)
+        self._active: set[str] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._closed = False
 
     def session_id(self, principal: str, thread_id: str) -> str:
         identity = json.dumps([principal, thread_id], ensure_ascii=False)
         return "ag-ui:" + hashlib.sha256(identity.encode()).hexdigest()
 
-    async def thread(self, principal: str, thread_id: str) -> Thread:
-        if not principal or not thread_id or len(thread_id) > 512:
-            raise ProtocolError("Invalid principal/threadId")
-        key = principal, thread_id
-        async with self._loading:
-            if key not in self._threads:
-                name = session_tape_name(self.session_id(*key), self.workspace)
-                thread = Thread(self._storage_agent.tape(name))
-                await self._recover(thread)
-                self._threads[key] = thread
-            return self._threads[key]
+    async def run(
+        self, principal: str, request: RunAgentInput
+    ) -> AsyncIterator[dict[str, Any]]:
+        # Bounded, transient delivery only. No event IDs, replay buffers, durable
+        # wire journal, or global run registry. Closing this iterator owns cleanup.
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=16)
+        disconnected = False
 
-    async def history(self, principal: str, thread_id: str) -> dict[str, Any]:
-        thread = await self.thread(principal, thread_id)
-        return (await thread.read()).as_dict()
-
-    async def _recover(self, thread: Thread) -> None:
-        for run_id, run in list((await thread.read()).runs.items()):
-            if run["done"]:
-                continue
-            # Recovery must fail closed if storage is unavailable; unlike a
-            # live producer, there is no owning task to report an interrupted run.
-            await self._finish_failed_run(
-                thread,
-                run_id,
-                "Server stopped before this run completed; it will not be executed again",
-                "INTERRUPTED",
-            )
-
-    async def _close_abandoned(self, thread: Thread, run_id: str) -> None:
-        opened: dict[tuple[str, str], str] = {}
-        steps: set[str] = set()
-        for record in (await thread.events(run_id)).records:
-            event = record["event"]
-            kind = event["type"]
-            if kind == "STEP_STARTED":
-                steps.add(event["stepName"])
-            elif kind == "STEP_FINISHED":
-                steps.discard(event["stepName"])
-            for prefix, id_key in [
-                ("TEXT_MESSAGE", "messageId"),
-                ("REASONING_MESSAGE", "messageId"),
-                ("REASONING", "messageId"),
-                ("TOOL_CALL", "toolCallId"),
-            ]:
-                if kind == prefix + "_START":
-                    opened[prefix, event[id_key]] = id_key
-                elif kind == prefix + "_END":
-                    opened.pop((prefix, event[id_key]), None)
-        for (prefix, id), key in reversed(list(opened.items())):
-            await thread.append(
-                "event", runId=run_id, event=wire_event(prefix + "_END", **{key: id})
-            )
-        for step in steps:
-            await thread.append(
-                "event", runId=run_id, event=wire_event("STEP_FINISHED", stepName=step)
-            )
-
-    async def _write_messages(self, name: str, messages: list[dict[str, Any]]) -> None:
-        tape = self._storage_agent.tape(name)
-        await tape.ensure_bootstrap_anchor()
-        for message in messages:
-            if converted := model_message(message):
-                await tape.store.append(
-                    tape.name,
-                    TapeEntry.message(converted, ag_ui_message_id=message["id"]),
-                )
-
-    def _reconcile(
-        self, request: RunAgentInput, view: HistoryView
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
-        incoming = [
-            message.model_dump(mode="json", by_alias=True)
-            for message in request.messages
-        ]
-        if len({message["id"] for message in incoming}) != len(incoming):
-            raise ProtocolError("Duplicate message IDs")
-        existing = {message["id"]: message for message in view.projection.messages}
-        pending = {call["id"]: call for call in view.pending}
-        additions: list[dict[str, Any]] = []
-        seen_calls: set[str] = set()
-        branch = False
-        edited: set[str] = set()
-        for message in incoming:
-            old = existing.get(message["id"])
-            if old is not None:
-                # Echoed history is not an update: the stored message is authoritative.
-                # Only user edits participate in creating a new context branch.
-                if (
-                    old["role"] == message["role"] == "user"
-                    and old["content"] != message["content"]
-                ):
-                    branch = True
-                    edited.add(message["id"])
-                continue
-            if message["role"] == "tool":
-                call_id = message["toolCallId"]
-                if (
-                    call_id not in pending
-                    or pending[call_id]["kind"] != "frontend"
-                    or call_id in seen_calls
-                ):
-                    raise ProtocolError(
-                        "Unknown, duplicate, or non-frontend tool result", 409
-                    )
-                seen_calls.add(call_id)
-            elif message["role"] != "user":
-                raise ProtocolError(
-                    "Only user input and results of pending frontend calls may be appended",
-                    409,
-                )
-            additions.append(message)
-        if request.resume:
-            for resume in request.resume:
-                call = pending.get(resume.interrupt_id)
-                if (
-                    call is None
-                    or call["kind"] != "interrupt"
-                    or call["id"] in seen_calls
-                ):
-                    raise ProtocolError("Unknown or duplicate interrupt", 409)
-                if resume.status == "resolved" and call.get("response_schema"):
-                    try:
-                        jsonschema.validate(resume.payload, call["response_schema"])
-                    except jsonschema.ValidationError as exc:
-                        raise ProtocolError(
-                            "Resume payload does not match responseSchema", 422
-                        ) from exc
-                seen_calls.add(call["id"])
-                additions.append(
-                    {
-                        "id": str(uuid4()),
-                        "role": "tool",
-                        "toolCallId": call["id"],
-                        "content": result_text(
-                            resume.payload
-                            if resume.status == "resolved"
-                            else {"cancelled": True}
-                        ),
-                    }
-                )
-        if pending:
-            if branch or (
-                any(message["role"] == "user" for message in additions)
-                and seen_calls != pending.keys()
-            ):
-                raise ProtocolError(
-                    "Resolve pending tools/interrupts before sending a new user turn",
-                    409,
-                )
-            if not seen_calls:
-                raise ProtocolError(
-                    "Expected a pending tool result or resume entry", 409
-                )
-        if pending:
-            additions = [
-                message for message in additions if message["role"] == "tool"
-            ] + [message for message in additions if message["role"] == "user"]
-        # The AG-UI runtime sends a truncated history for edit/regenerate. Keep
-        # old tapes immutable, and build a new context generation from server data.
-        if (
-            not pending
-            and incoming
-            and incoming[-1]["role"] == "user"
-            and existing.get(incoming[-1]["id"], {}).get("role") == "user"
-        ):
-            target = incoming[-1]
-            index = next(
-                i
-                for i, m in enumerate(view.projection.messages)
-                if m["id"] == target["id"]
-            )
-            if branch or not additions:
-                if additions or (edited and edited != {target["id"]}):
-                    raise ProtocolError(
-                        "Only the final user message may be edited", 409
-                    )
-                model_message(target)
-                return (
-                    deepcopy(view.projection.messages[:index]) + [target],
-                    [],
-                    True,
-                )
-        if branch:
-            raise ProtocolError(
-                "An edited user message must be the final request message", 409
-            )
-        if not additions:
-            raise ProtocolError("No new user message or pending tool result", 409)
-        for message in additions:
-            try:
-                model_message(message)
-            except (ValueError, TypeError) as exc:
-                raise ProtocolError("Invalid message content", 422) from exc
-        return (
-            additions,
-            [call for id, call in pending.items() if id not in seen_calls],
-            False,
-        )
-
-    async def submit(self, principal: str, request: RunAgentInput) -> Submission:
-        if not request.run_id or len(request.run_id) > 512:
-            raise ProtocolError("Invalid runId")
-        thread = await self.thread(principal, request.thread_id)
-        async with thread.admission:
-            if self._closed:
-                raise ProtocolError("Adapter is shutting down", 503)
-            view = await thread.read()
-            digest = fingerprint(request)
-            if run := view.runs.get(request.run_id):
-                if run["fingerprint"] != digest:
-                    raise ProtocolError(
-                        "runId already belongs to a different request", 409
-                    )
-                return Submission(thread, created=False)
-            if thread.tape.name in self._runs:
-                raise ProtocolError("Another run owns this thread", 409)
-            additions, remaining, branch = self._reconcile(request, view)
-            for tool in request.tools:
-                try:
-                    jsonschema.Draft202012Validator.check_schema(tool.parameters)
-                except jsonschema.SchemaError as exc:
-                    raise ProtocolError("Invalid frontend tool schema", 422) from exc
-            agent = self.agent_factory(
-                self.framework,
-                tape_store=thread.tape.store,
-            )
-            # Admission is validation only. Framework hooks run exactly once,
-            # inside process_inbound, and never for a rejected/replayed request.
-            try:
-                external = ExternalTools([*request.tools, *self.interrupts])
-                external.validate(agent)
-            except ValueError as exc:
-                raise ProtocolError(str(exc), 422) from exc
-            try:
-                await thread.append("admit", runId=request.run_id, fingerprint=digest)
-            except BaseException:
-                # A cancelled append may have committed before propagating the
-                # cancellation. Close that admission before releasing the gate.
-                if request.run_id in (await thread.read()).runs:
-                    await self._fail(
-                        thread,
-                        request.run_id,
-                        "Run cancelled during admission",
-                        "CANCELLED",
-                    )
-                raise
-            started = asyncio.Event()
-            task = asyncio.create_task(
-                self._execute(
-                    thread,
-                    request,
-                    agent,
-                    additions,
-                    remaining,
-                    branch,
-                    self.session_id(principal, request.thread_id),
-                    external,
-                    started,
-                ),
-                name=f"ag-ui:{request.run_id}",
-            )
-            self._runs[thread.tape.name] = RunningRun(request.run_id, task, started)
-        return Submission(thread, created=True)
-
-    async def _execute(
-        self,
-        thread: Thread,
-        request: RunAgentInput,
-        agent: BubAgent,
-        additions: list[dict[str, Any]],
-        remaining: list[dict[str, Any]],
-        branch: bool,
-        session_id: str,
-        external: ExternalTools,
-        started: asyncio.Event,
-    ) -> None:
         async def emit(event: dict[str, Any]) -> None:
-            await thread.append("event", runId=request.run_id, event=event)
+            task = asyncio.current_task()
+            if not disconnected and not (task and task.cancelling()):
+                await queue.put(event)
 
-        stream = EventStream(emit)
+        producer = asyncio.create_task(self._execute(principal, request, emit))
+        self._tasks.add(producer)
         try:
-            started.set()
-            model_tape = (await thread.read()).model_tape
+            while not producer.done() or not queue.empty():
+                if not queue.empty():
+                    yield queue.get_nowait()
+                    continue
+                next_event = asyncio.create_task(queue.get())
+                try:
+                    await asyncio.wait(
+                        (producer, next_event), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if next_event.done():
+                        yield next_event.result()
+                finally:
+                    if not next_event.done():
+                        next_event.cancel()
+                        await asyncio.gather(next_event, return_exceptions=True)
+            await producer
+        finally:
+            disconnected = True
+            if not producer.done():
+                producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+            self._tasks.discard(producer)
+
+    async def _execute(self, principal: str, request: RunAgentInput, emit: Any) -> None:
+        # This projection lives only for this response: patches are validated and
+        # an interrupt can publish the full resume context before RUN_FINISHED.
+        projection = RunProjection()
+
+        async def publish(event: dict[str, Any]) -> None:
+            projection.apply(event)
+            await emit(event)
+
+        stream = EventStream(publish)
+        session_id = self.session_id(principal, request.thread_id)
+        acquired = False
+        try:
+            await stream.send(
+                "RUN_STARTED",
+                threadId=request.thread_id,
+                runId=request.run_id,
+                parentRunId=request.parent_run_id,
+            )
+            if self._closed:
+                raise ProtocolError("Adapter is shutting down")
+            if not principal or not request.thread_id or len(request.thread_id) > 512:
+                raise ProtocolError("Invalid principal/threadId")
+            if not request.run_id or len(request.run_id) > 512:
+                raise ProtocolError("Invalid runId")
+            if session_id in self._active:
+                raise ProtocolError("Another request is executing on this thread")
+            self._active.add(session_id)
+            acquired = True
             async with asyncio.timeout(self.max_run_seconds):
-                await stream.send(
-                    "RUN_STARTED",
-                    threadId=request.thread_id,
-                    runId=request.run_id,
-                    parentRunId=request.parent_run_id,
+                tape = self._storage_agent.tape(
+                    session_tape_name(session_id, self.workspace)
                 )
-                if branch:
-                    model_tape = model_tape + ":branch:" + str(uuid4())
-                    messages = additions
-                else:
-                    messages = [*(await thread.read()).projection.messages, *additions]
-
-                async def prepare() -> None:
-                    await stream.send("MESSAGES_SNAPSHOT", messages=messages)
-                    await self._write_messages(model_tape, additions)
-                    await thread.checkpoint(remaining, model_tape)
-
-                await committed(prepare())
+                continuation = await Continuation.load(tape)
+                try:
+                    had_pending = bool(continuation.pending)
+                    messages, repeated = continuation.prepare(request)
+                    agent = self.agent_factory(self.framework, tape_store=tape.store)
+                    external = ExternalTools([*request.tools, *self.interrupts])
+                    external.validate(agent)
+                    for definition in external.definitions:
+                        jsonschema.Draft202012Validator.check_schema(
+                            definition.parameters
+                        )
+                    converted = [
+                        value
+                        for m in messages
+                        if (value := model_message(m)) is not None
+                    ]
+                except (
+                    ValueError,
+                    jsonschema.ValidationError,
+                    jsonschema.SchemaError,
+                ) as exc:
+                    raise ProtocolError(str(exc)) from exc
+                await stream.send("MESSAGES_SNAPSHOT", messages=messages)
                 shared = SharedState(
-                    request.state
-                    if request.state is not None
-                    else (await thread.read()).projection.state,
-                    emit,
+                    request.state if request.state is not None else {}, publish
                 )
                 await shared.set(shared.value)
-                if not remaining:
+                if not repeated:
+                    # Each request supplies its context. A fresh native execution
+                    # tape prevents server history from silently overriding or
+                    # duplicating client messages; Bub still records model steps.
+                    model_tape = tape.name + ":run:" + str(uuid4())
+                    execution = agent.tape(model_tape)
+                    await execution.ensure_bootstrap_anchor()
+                    for message in converted:
+                        await committed(
+                            execution.store.append(
+                                model_tape, TapeEntry.message(message)
+                            )
+                        )
+                    if had_pending:
+                        # Record receipt before executing any resumed side effect.
+                        await committed(continuation.save(tape))
                     inbound = AGUIInboundMessage(
                         session_id=session_id,
                         channel="ag-ui",
                         chat_id=request.thread_id,
                         content=next(
                             (
-                                m["content"]
-                                for m in reversed(additions)
+                                m.get("content", "")
+                                for m in reversed(messages)
                                 if m["role"] == "user"
                                 and isinstance(m.get("content"), str)
                             ),
@@ -516,26 +254,30 @@ class AGUIAdapter:
                         raise RuntimeError(
                             "AG-UI stream did not complete; check channel configuration"
                         )
-                    # Native stream cleanup and save/render/dispatch hooks have
-                    # completed before the controller checkpoints and finishes.
-                    await thread.checkpoint(external.pending, model_tape)
+                    continuation.pending = external.pending
+                    if external.pending:
+                        await committed(continuation.save(tape))
                 await stream.close()
                 interrupts = [
                     {
-                        "id": call["id"],
-                        "toolCallId": call["id"],
-                        "reason": call["reason"],
-                        "responseSchema": call.get("response_schema"),
+                        "id": c["id"],
+                        "toolCallId": c["id"],
+                        "reason": c["reason"],
+                        "responseSchema": c.get("response_schema"),
                         "metadata": {
-                            "arguments": json.loads(call["arguments"]),
-                            "toolName": call["name"],
+                            "arguments": json.loads(c["arguments"]),
+                            "toolName": c["name"],
                         },
                     }
-                    for call in (await thread.read()).pending
-                    if call["kind"] == "interrupt"
+                    for c in continuation.pending
+                    if c["kind"] == "interrupt"
                 ]
                 fields: dict[str, Any] = {}
                 if interrupts:
+                    await stream.send(
+                        "MESSAGES_SNAPSHOT", messages=deepcopy(projection.messages)
+                    )
+                    await shared.set(shared.value)
                     fields["outcome"] = {"type": "interrupt", "interrupts": interrupts}
                 await stream.send(
                     "RUN_FINISHED",
@@ -544,80 +286,24 @@ class AGUIAdapter:
                     **fields,
                 )
         except asyncio.CancelledError:
-            # A cancellation racing the terminal append may arrive after that
-            # write committed. Never publish a second terminal outcome.
-            await self._fail(thread, request.run_id, "Run cancelled", "CANCELLED")
-        except Exception:
-            logger.exception("AG-UI run failed: %s", request.run_id)
-            await self._fail(
-                thread,
-                request.run_id,
-                "Agent run failed; see server logs",
-                "RUN_FAILED",
+            raise
+        except Exception as exc:
+            logger.exception("AG-UI request failed")
+            await stream.close()
+            message = (
+                str(exc)
+                if isinstance(exc, ProtocolError)
+                else "Agent run failed; see server logs"
             )
+            if isinstance(exc, TimeoutError):
+                message = "Agent run timed out"
+            await stream.send("RUN_ERROR", message=message, code="RUN_FAILED")
         finally:
-            self._runs.pop(thread.tape.name, None)
-            async with thread.changed:
-                thread.changed.notify_all()
-
-    async def _fail(self, thread: Thread, run_id: str, message: str, code: str) -> None:
-        try:
-            await self._finish_failed_run(thread, run_id, message, code)
-        except Exception:
-            logger.exception("Unable to persist AG-UI failure; run remains interrupted")
-
-    async def _finish_failed_run(
-        self, thread: Thread, run_id: str, message: str, code: str
-    ) -> None:
-        view = await thread.read()
-        if view.runs.get(run_id, {}).get("done"):
-            return
-        await thread.checkpoint([], view.model_tape)
-        await self._close_abandoned(thread, run_id)
-        # Close protocol boundaries before the terminal commit; never reconstruct
-        # model context or invent tool results from display-only events.
-        # Restart retries unfinished protocol cleanup;
-        # cancellation racing a committed terminal outcome cannot append another.
-        await thread.append(
-            "event",
-            runId=run_id,
-            event=wire_event("RUN_ERROR", message=message, code=code),
-        )
-
-    async def events(
-        self, thread: Thread, run_id: str, after: int = 0
-    ) -> AsyncIterator[dict[str, Any]]:
-        cursor = after
-        while True:
-            async with thread.changed:
-                batch = await thread.events(run_id, cursor)
-                cursor = batch.cursor
-                if not batch.admitted:
-                    raise ProtocolError(
-                        "Run history was reset; reload thread history", 409
-                    )
-                running = self._runs.get(thread.tape.name)
-                done = batch.done or running is None or running.run_id != run_id
-                if not batch.records and not done:
-                    await thread.changed.wait()
-                    continue
-            for record in batch.records:
-                yield record
-            if done:
-                return
-
-    async def cancel(self, principal: str, thread_id: str, run_id: str) -> bool:
-        thread = await self.thread(principal, thread_id)
-        running = self._runs.get(thread.tape.name)
-        if running is None or running.run_id != run_id:
-            return False
-        await running.cancel()
-        return True
+            if acquired:
+                self._active.discard(session_id)
 
     async def close(self) -> None:
         self._closed = True
-        # Finish in-flight admissions before taking the shutdown snapshot.
-        for thread in list(self._threads.values()):
-            async with thread.admission:
-                pass
-        await asyncio.gather(*(run.cancel() for run in list(self._runs.values())))
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*list(self._tasks), return_exceptions=True)

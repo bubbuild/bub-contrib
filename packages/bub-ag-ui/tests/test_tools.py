@@ -3,10 +3,9 @@
 import pytest
 from ag_ui.core import Tool as ClientTool
 from bub.core.tools import Tool, ToolContext
-from bub_ag_ui.runtime import ProtocolError
 from bub_ag_ui.tools import ExternalCallsPending, ExternalTools, InterruptTool
 
-from .conftest import request
+from .conftest import collect, request
 
 
 @pytest.mark.parametrize(
@@ -22,13 +21,13 @@ async def test_native_tool_name_collisions_are_rejected(
 ):
     provider, make = setup
     adapter = make([Tool.from_callable(lambda: "server", name=server_name)])
-    with pytest.raises(ProtocolError, match="shadows"):
-        await adapter.submit(
-            "alice",
-            request(tools=[{"name": client_name, "description": "", "parameters": {}}]),
-        )
+    _, events = await collect(
+        adapter,
+        request(tools=[{"name": client_name, "description": "", "parameters": {}}]),
+    )
+    assert events[-1]["type"] == "RUN_ERROR"
+    assert "shadows" in events[-1]["message"]
     assert provider.requests == []
-    assert (await adapter.history("alice", "t1"))["runs"] == {}
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
@@ -39,8 +38,9 @@ async def test_external_definitions_cannot_share_model_alias(setup, interrupt):
     tools = [{"name": "web_search", "description": "", "parameters": {}}]
     if not interrupt:
         tools.append(definition)
-    with pytest.raises(ProtocolError, match="shadows"):
-        await adapter.submit("alice", request(tools=tools))
+    _, events = await collect(adapter, request(tools=tools))
+    assert events[-1]["type"] == "RUN_ERROR"
+    assert "shadows" in events[-1]["message"]
 
 
 @pytest.mark.parametrize("interrupt", [False, True])

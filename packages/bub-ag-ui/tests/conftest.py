@@ -71,9 +71,11 @@ async def setup(monkeypatch, tmp_path):
         store = InMemoryTapeStore()
         adapters = []
 
-        def make(tools=(), **kwargs):
+        def make(tools=(), *, tape_store=None, **kwargs):
             def factory(*args, **options):
-                options.setdefault("tape_store", store)
+                options.setdefault(
+                    "tape_store", tape_store if tape_store is not None else store
+                )
                 return BubAgent(*args, tools=tools, skill_dirs=[], **options)
 
             adapter = AGUIAdapter(
@@ -100,9 +102,32 @@ def request(messages=None, *, run="r1", thread="t1", tools=None, **kwargs):
     )
 
 
+class ClientView:
+    """Test-side reducer, never an adapter history API."""
+
+    def __init__(self, projection, pending):
+        self.projection = projection
+        self.pending = pending
+
+    async def history(self):
+        return {
+            "messages": self.projection.messages,
+            "state": self.projection.state,
+            "pending": self.pending,
+        }
+
+
 async def collect(adapter, data, user="alice"):
-    submission = await adapter.submit(user, data)
-    thread = submission.thread
-    records = [record async for record in adapter.events(thread, data.run_id)]
-    events = [record["event"] for record in records]
-    return thread, events
+    from bub.core.tape import session_tape_name
+    from bub_ag_ui.continuation import Continuation
+    from bub_ag_ui.events import RunProjection
+
+    events = [event async for event in adapter.run(user, data)]
+    projection = RunProjection()
+    for event in events:
+        projection.apply(event)
+    tape = adapter._storage_agent.tape(
+        session_tape_name(adapter.session_id(user, data.thread_id), adapter.workspace)
+    )
+    pending = (await Continuation.load(tape)).pending
+    return ClientView(projection, pending), events

@@ -30,8 +30,8 @@ def result_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-class Projection:
-    """Full display history, deliberately independent of tape context anchors."""
+class RunProjection:
+    """Current response messages/state for validation and interrupt snapshots."""
 
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []

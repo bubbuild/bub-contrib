@@ -26,7 +26,7 @@ before(async () => {
   server = spawn(python, [fileURLToPath(new URL("../client_server.py", import.meta.url)), String(port)], { stdio: ["ignore", "ignore", "pipe"] });
   server.stderr.on("data", data => { logs += data.toString(); });
   for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(`${base}/threads/probe/history`)).ok) return; } catch {}
+    try { await fetch(`${base}/agent`); return; } catch {}
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   throw new Error(`Test server failed to start: ${logs}`);
@@ -37,15 +37,16 @@ function agent(prompt) {
   return new HttpAgent({ url: `${base}/agent`, threadId: crypto.randomUUID(), initialMessages: [{id: crypto.randomUUID(), role: "user", content: prompt}] });
 }
 
-test("HttpAgent consumes streamed answer; assistant-ui restores identical history", async () => {
+test("HttpAgent consumes streamed answer; application can restore client messages", async () => {
   const a = agent("hello");
   const events = [];
   await a.runAgent({runId: "text"}, {onEvent: ({event}) => events.push(event)});
   assert.equal(events.at(-1).type, "RUN_FINISHED");
   assert.equal(a.messages.at(-1).content, "Answer: hello");
-  const history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
-  assert.deepEqual(history.messages, a.messages);
-  assert.deepEqual(fromAgUiMessages(history.messages), fromAgUiMessages(a.messages));
+  // Persistence is the application's choice, not another adapter endpoint.
+  const saved = JSON.parse(JSON.stringify({messages: a.messages, state: a.state}));
+  const restored = new HttpAgent({url: `${base}/agent`, threadId: a.threadId, initialMessages: saved.messages, initialState: saved.state});
+  assert.deepEqual(fromAgUiMessages(restored.messages), fromAgUiMessages(a.messages));
 });
 
 test("backend tool has parent, result and final answer", async () => {
@@ -75,7 +76,9 @@ test("frontend call terminates, accepts tool result and continues without a fake
 test("interrupt outcome and resume are understood by the protocol client", async () => {
   const a = agent("interrupt");
   let outcome;
-  await a.runAgent({}, {onRunFinishedEvent: ({event}) => {outcome = event.outcome;}});
+  const events = [];
+  await a.runAgent({}, {onEvent: ({event}) => events.push(event), onRunFinishedEvent: ({event}) => {outcome = event.outcome;}});
+  assert.deepEqual(events.slice(-3).map(e => e.type), ["MESSAGES_SNAPSHOT", "STATE_SNAPSHOT", "RUN_FINISHED"]);
   assert.equal(outcome.type, "interrupt");
   await a.runAgent({resume: [{interruptId: outcome.interrupts[0].id, status: "resolved", payload: true}]});
   assert.equal(a.messages.at(-1).content, "Answer: interrupt");
@@ -95,7 +98,7 @@ test("provider errors do not turn into success", async () => {
   assert.equal(events.filter(e => e.type === "RUN_FINISHED").length, 0);
 });
 
-test("useAgUiRuntime executes frontend tools and automatically continues the thread", async () => {
+test("useAgUiRuntime executes parallel frontend tools and continues with all results", async () => {
   const React = await import("react");
   const {create, act} = await import("react-test-renderer");
   const {useAgUiRuntime} = await import("@assistant-ui/react-ag-ui");
@@ -113,58 +116,45 @@ test("useAgUiRuntime executes frontend tools and automatically continues the thr
     unregister = runtime.registerModelContextProvider({getModelContext: () => ({tools: {
       browser: {description: "Browser action", parameters: {type: "object", properties: {}}, execute: async () => {executed++; return "browser value";}}
     }})});
-    runtime.thread.append("frontend");
+    runtime.thread.append("frontend-parallel");
   });
   for (let i = 0; i < 100; i++) {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
     const state = runtime.thread.getState();
     // Receiving the final text chunk precedes RUN_FINISHED and React's idle state.
-    if (!state.isRunning && state.messages.some(m => m.content.some(p => p.type === "text" && p.text === "Answer: frontend"))) break;
+    if (!state.isRunning && state.messages.some(m => m.content.some(p => p.type === "text" && p.text === "Answer: frontend-parallel"))) break;
   }
   const snapshot = runtime.thread.getState();
   await act(async () => { unregister(); root.unmount(); });
   assert.deepEqual(errors, []);
-  assert.equal(executed, 1);
+  assert.equal(executed, 2);
   assert.equal(snapshot.isRunning, false);
-  assert.ok(snapshot.messages.some(m => m.content.some(p => p.type === "text" && p.text === "Answer: frontend")));
+  assert.ok(snapshot.messages.some(m => m.content.some(p => p.type === "text" && p.text === "Answer: frontend-parallel")));
 });
 
-test("aborting the HTTP stream cancels server execution and persists cancellation", async () => {
+test("aborting the HTTP stream releases execution without a cancel endpoint", async () => {
   const a = agent("cancel");
   let started;
   const ready = new Promise(resolve => {started = resolve;});
-  const running = a.runAgent({runId: "cancel-run"}, {onToolCallEndEvent: () => started()}).catch(() => {});
+  const running = a.runAgent({}, {onToolCallEndEvent: () => started()}).catch(() => {});
   await ready;
   a.abortRun();
   await running;
-  let history;
   for (let i = 0; i < 100; i++) {
-    history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
-    if (history.runs["cancel-run"].done) break;
-    await new Promise(resolve => setTimeout(resolve, 20));
+    const next = new HttpAgent({url: `${base}/agent`, threadId: a.threadId, initialMessages: [{id: crypto.randomUUID(), role: "user", content: "hello"}]});
+    try {
+      await next.runAgent({});
+      assert.equal(next.messages.at(-1).content, "Answer: hello");
+      return;
+    } catch { await new Promise(resolve => setTimeout(resolve, 20)); }
   }
-  assert.equal(history.runs["cancel-run"].outcome.code, "CANCELLED");
-  assert.equal(history.runs["cancel-run"].outcome.type, "RUN_ERROR");
+  assert.fail("thread was not released after abort");
 });
 
-test("disconnecting a duplicate POST does not cancel the owning run", async () => {
-  const a = agent("cancel");
-  const body = {threadId: a.threadId, runId: "shared", messages: a.messages, tools: [], context: [], state: {}, forwardedProps: {}};
-  const ownerAbort = new AbortController();
-  const owner = await fetch(`${base}/agent`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal: ownerAbort.signal});
-  assert.equal(owner.status, 200);
-  const ownerReader = owner.body.getReader();
-  await ownerReader.read();
-  const duplicateAbort = new AbortController();
-  const duplicate = await fetch(`${base}/agent`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal: duplicateAbort.signal});
-  const reader = duplicate.body.getReader();
-  await reader.read();
-  duplicateAbort.abort();
-  await new Promise(resolve => setTimeout(resolve, 40));
-  const history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
-  assert.equal(history.runs.shared.done, false);
-  await fetch(`${base}/threads/${a.threadId}/runs/shared/cancel`, {method: "POST"});
-  ownerAbort.abort();
+test("only the AG-UI run endpoint is exposed", async () => {
+  assert.equal((await fetch(`${base}/threads/t/history`)).status, 404);
+  assert.equal((await fetch(`${base}/threads/t/runs/r/events`)).status, 404);
+  assert.equal((await fetch(`${base}/threads/t/runs/r/cancel`, {method: "POST"})).status, 404);
 });
 
 test("reasoning stays distinct from assistant answer text", async () => {
@@ -176,14 +166,12 @@ test("reasoning stays distinct from assistant answer text", async () => {
   assert.equal(a.messages.at(-1).content, "Answer: reasoning");
 });
 
-test("activity replacement and patches produce the same history as the official reducer", async () => {
+test("activity replacement and patches are consumed by the official reducer", async () => {
   const a = agent("activity");
   await a.runAgent({});
   const activity = a.messages.find(m => m.role === "activity");
   assert.equal(activity.activityType, "progress");
   assert.deepEqual(activity.content, {count: 3});
-  const history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
-  assert.deepEqual(history.messages, a.messages);
 });
 
 
@@ -197,6 +185,12 @@ test("native child steps do not collide with the parent's AG-UI steps", async ()
   assert.equal(a.messages.at(-1).content, "Answer: subagent");
   assert.equal(a.messages.filter(m => m.role === "tool").length, 1);
   assert.equal(a.messages.find(m => m.role === "tool").content, "child result");
-  const history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
-  assert.deepEqual(history.messages, a.messages);
+});
+
+
+test("invalid interrupt resumes end with RUN_ERROR, not an HTTP error", async () => {
+  const a = agent("interrupt");
+  const events = [];
+  await a.runAgent({resume: [{interruptId: "unknown", status: "resolved", payload: true}]}, {onEvent: ({event}) => events.push(event)}).catch(() => {});
+  assert.deepEqual(events.map(e => e.type), ["RUN_STARTED", "RUN_ERROR"]);
 });

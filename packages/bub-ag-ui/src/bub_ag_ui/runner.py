@@ -1,6 +1,6 @@
 """Protocol turn orchestration over Bub's public, native step API.
 
-AG-UI has a durable return-to-client boundary, unlike a continuous CLI loop.
+AG-UI has a return-to-client boundary, unlike a continuous CLI loop.
 BubAgent still owns model requests, policy hooks and the entire tool batch. No
 agent method is overridden and no backend tool is executed by this module.
 """
@@ -155,9 +155,6 @@ async def run_steps(
                             yield StreamEvent(
                                 "tool_result", {"call_ids": ids, "tool_results": values}
                             )
-                        await tape.append_event(
-                            "ag_ui.suspended", {"pending": external.pending}
-                        )
                         final = {"ok": True, "pending": True}
                         yield StreamEvent("final", final)
                 pending = []

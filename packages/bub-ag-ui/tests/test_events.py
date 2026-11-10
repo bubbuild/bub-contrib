@@ -3,18 +3,16 @@ from copy import deepcopy
 
 import pytest
 from ag_ui.core import ActivityDeltaEvent, ActivitySnapshotEvent
+from bub_ag_ui.events import RunProjection
 from bub_ag_ui.state import SharedState
 from jsonpatch import JsonPatchConflict
 
 
-async def test_invalid_activity_patch_does_not_change_history(setup):
-    _, make = setup
-    adapter = make()
-    thread = await adapter.thread("alice", "t1")
-    await thread.append("admit", runId="r", fingerprint="test")
+async def test_invalid_activity_patch_does_not_change_response():
+    projection = RunProjection()
 
     async def emit(event):
-        await thread.append("event", runId="r", event=event)
+        projection.apply(event)
 
     state = SharedState({}, emit)
     await state.emit(
@@ -29,7 +27,7 @@ async def test_invalid_activity_patch_does_not_change_history(setup):
             patch=[{"op": "replace", "path": "/done", "value": 2}],
         )
     )
-    previous = deepcopy(await thread.history())
+    previous = deepcopy(projection.messages)
     with pytest.raises(JsonPatchConflict):
         await state.emit(
             ActivityDeltaEvent(
@@ -38,7 +36,7 @@ async def test_invalid_activity_patch_does_not_change_history(setup):
                 patch=[{"op": "remove", "path": "/does-not-exist"}],
             )
         )
-    assert await thread.history() == previous
+    assert projection.messages == previous
 
 
 async def test_concurrent_state_patches_are_serialized():

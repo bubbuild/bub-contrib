@@ -22,12 +22,12 @@ from bub.builtin.settings import load_session_settings
 from bub.builtin.tools import ALLOWED_TOOLS_STATE_KEY
 from bub.channels.message import ChannelMessage
 from bub.core.events import RunStarted, StepFinished, StepStarted
+from bub.core.tape import session_tape_name
 from bub.envelope import Envelope, field_of
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
 from bub.turn import TurnState
 
 from bub_ag_ui.events import EventStream
-from bub_ag_ui.history import AGUIHistory
 from bub_ag_ui.lifecycle import tape_session
 from bub_ag_ui.runner import run_steps
 from bub_ag_ui.state import SharedState
@@ -65,17 +65,16 @@ def stream_events(
 
 
 class ExecutionHooks:
-    @hookimpl
-    def provide_tape_sidecar(self) -> AGUIHistory:
-        return AGUIHistory()
-
     @hookimpl(tryfirst=True)
     async def load_state(self, message: Envelope) -> TurnState | None:
         if not isinstance(message, AGUIInboundMessage):
             return None
-        # Edits/recovery may move the model tape away from the canonical one.
+        # Native session settings remain thread-scoped; model input comes from
+        # this request rather than an adapter-owned conversation history.
         settings = await load_session_settings(
-            message._runtime_agent.tape(message.model_tape)
+            message._runtime_agent.tape(
+                session_tape_name(message.session_id, message.workspace)
+            )
         )
         return {
             **settings,
@@ -93,8 +92,8 @@ class ExecutionHooks:
     def build_prompt(self, message: Envelope) -> list[str] | None:
         if isinstance(message, AGUIInboundMessage):
             # Descriptive input for the framework's turn result/observers. The
-            # execution hook reads the canonical protocol history from tape;
-            # this text must not be appended to that history a second time.
+            # execution hook consumes the request messages on its native tape;
+            # this text must not be appended to that input a second time.
             return [message.content] if message.content else []
         return None
 

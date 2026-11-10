@@ -109,6 +109,13 @@ interrupt responses. Repeating the same accepted interrupt responses does not
 re-execute resumed work; it is not a replay of the earlier generated answer.
 Continuation across a server restart requires a persistent Bub tape store.
 
+Each thread uses one native execution tape. Before execution, the adapter replaces
+its model context with the request's messages, retaining native session settings,
+loaded-tool visibility, and the continuation checkpoint. It does not archive a
+full conversation copy for every run. Mounted sidecars are left intact. This tape
+is working context, not an append-only conversation archive; the application
+remains responsible for saving the conversation it wants to restore.
+
 ## Errors and cancellation
 
 - Protocol execution failures arrive as `RUN_ERROR`, not `RUN_FINISHED`.

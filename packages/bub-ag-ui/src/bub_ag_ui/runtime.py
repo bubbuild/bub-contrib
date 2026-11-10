@@ -10,12 +10,14 @@ from collections.abc import AsyncIterator, Callable
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import jsonschema
 from ag_ui.core import RunAgentInput
 from bub.builtin.agent import BubAgent
+from bub.builtin.settings import load_session_settings, set_session_setting
+from bub.builtin.tools import TOOL_LOADED_EVENT, loaded_tool_names
 from bub.core.tape import TapeEntry, session_tape_name, to_message
+from bub.core.tools import ToolContext
 
 from bub_ag_ui.continuation import Continuation
 from bub_ag_ui.events import EventStream, RunProjection, result_text
@@ -80,8 +82,8 @@ def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
 class AGUIAdapter:
     """Adapt a request and its native execution to an AG-UI event stream.
 
-    The client supplies conversation messages/state on every run. Only external
-    call correlation and interrupt response receipts survive in the native tape.
+    The client supplies conversation messages/state on every run. Native session
+    settings and external-call checkpoints remain on the thread's working tape.
     Streaming does not read back events from storage.
     """
 
@@ -186,7 +188,6 @@ class AGUIAdapter:
                 )
                 continuation = await Continuation.load(tape)
                 try:
-                    had_pending = bool(continuation.pending)
                     messages, repeated = continuation.prepare(request)
                     agent = self.agent_factory(self.framework, tape_store=tape.store)
                     external = ExternalTools([*request.tools, *self.interrupts])
@@ -212,21 +213,32 @@ class AGUIAdapter:
                 )
                 await shared.set(shared.value)
                 if not repeated:
-                    # Each request supplies its context. A fresh native execution
-                    # tape prevents server history from silently overriding or
-                    # duplicating client messages; Bub still records model steps.
-                    model_tape = tape.name + ":run:" + str(uuid4())
-                    execution = agent.tape(model_tape)
-                    await execution.ensure_bootstrap_anchor()
-                    for message in converted:
-                        await committed(
-                            execution.store.append(
-                                model_tape, TapeEntry.message(message)
+                    settings = await load_session_settings(tape)
+                    loaded = await loaded_tool_names(tape)
+
+                    async def replace_context() -> None:
+                        # One thread tape, not one archive per request. Keep
+                        # native session settings/tool visibility and mounted
+                        # sidecars while replacing only the execution context.
+                        await tape.store.reset(tape.name)
+                        await tape.ensure_bootstrap_anchor()
+                        context = ToolContext(tape=tape)
+                        for key, value in settings.items():
+                            await set_session_setting(context, key, value)
+                        if loaded:
+                            await tape.append_event(
+                                TOOL_LOADED_EVENT, {"names": loaded}
                             )
-                        )
-                    if had_pending:
-                        # Record receipt before executing any resumed side effect.
-                        await committed(continuation.save(tape))
+                        # Persist consumed responses before resumed side effects.
+                        await continuation.save(tape)
+                        for message in converted:
+                            await tape.store.append(
+                                tape.name, TapeEntry.message(message)
+                            )
+
+                    # Cancellation must not leave a still-running rewrite behind
+                    # after this request releases thread ownership.
+                    await committed(replace_context())
                     inbound = AGUIInboundMessage(
                         session_id=session_id,
                         channel="ag-ui",
@@ -243,7 +255,7 @@ class AGUIAdapter:
                         is_active=True,
                         _runtime_agent=agent,
                         request=request,
-                        model_tape=model_tape,
+                        model_tape=tape.name,
                         workspace=self.workspace,
                         shared=shared,
                         events=stream,

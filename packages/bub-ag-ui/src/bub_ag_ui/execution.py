@@ -22,7 +22,6 @@ from bub.builtin.settings import load_session_settings
 from bub.builtin.tools import ALLOWED_TOOLS_STATE_KEY
 from bub.channels.message import ChannelMessage
 from bub.core.events import RunStarted, StepFinished, StepStarted
-from bub.core.tape import session_tape_name
 from bub.envelope import Envelope, field_of
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
 from bub.turn import TurnState
@@ -69,12 +68,9 @@ class ExecutionHooks:
     async def load_state(self, message: Envelope) -> TurnState | None:
         if not isinstance(message, AGUIInboundMessage):
             return None
-        # Native session settings remain thread-scoped; model input comes from
-        # this request rather than an adapter-owned conversation history.
+        # Read settings from the same thread tape the native turn writes.
         settings = await load_session_settings(
-            message._runtime_agent.tape(
-                session_tape_name(message.session_id, message.workspace)
-            )
+            message._runtime_agent.tape(message.model_tape)
         )
         return {
             **settings,

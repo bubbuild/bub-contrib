@@ -148,7 +148,7 @@ test("aborting the HTTP stream releases execution without a cancel endpoint", as
       return;
     } catch { await new Promise(resolve => setTimeout(resolve, 20)); }
   }
-  assert.fail("thread was not released after abort");
+  assert.fail(`thread was not released after abort: ${logs.slice(-18000)}`);
 });
 
 test("only the AG-UI run endpoint is exposed", async () => {
@@ -175,12 +175,11 @@ test("activity replacement and patches are consumed by the official reducer", as
 });
 
 
-test("native child steps do not collide with the parent's AG-UI steps", async () => {
+test("native child events do not leak into the parent AG-UI stream", async () => {
   const a = agent("subagent");
   const events = [];
   await a.runAgent({}, {onEvent: ({event}) => events.push(event)});
-  assert.deepEqual(events.filter(e => e.type === "STEP_STARTED").map(e => e.stepName), ["1", "2"]);
-  assert.deepEqual(events.filter(e => e.type === "STEP_FINISHED").map(e => e.stepName), ["1", "2"]);
+  assert.equal(events.some(e => e.type.startsWith("STEP_")), false);
   assert.equal(events.at(-1).type, "RUN_FINISHED");
   assert.equal(a.messages.at(-1).content, "Answer: subagent");
   assert.equal(a.messages.filter(m => m.role === "tool").length, 1);

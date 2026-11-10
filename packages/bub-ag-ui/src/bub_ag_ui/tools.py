@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ag_ui.core import Tool as ClientTool
 from bub.builtin.agent import BubAgent
-from bub.core.events import ChatFinished, LLMCallFinished, ToolCallFinished
-from bub.core.tape import Tape, TapeEntry
 from bub.core.tools import Tool, ToolContext, tool
-from bub.errors import BubError
-from bub.streaming import StreamEvent
 from bub.turn import TurnState
-
-from bub_ag_ui.events import result_text
 
 
 @dataclass(frozen=True)
@@ -29,21 +24,24 @@ class InterruptTool:
     reason: str = "human_input"
 
 
-class ExternalCallsPending(BaseException):
-    """Control transfer, not a failed tool result or task cancellation.
-
-    Bub's executor waits for the entire parallel batch before propagating this.
-    Ordinary tool exceptions would instead be normalized into model-facing errors.
-    Only an admitted native tool handler can request this transfer: deny/replace
-    decisions never invoke the handler and therefore never create pending work.
-    """
-
-
 @dataclass
 class ExternalTools:
     definitions: list[ClientTool | InterruptTool]
     pending: list[dict[str, Any]] = field(default_factory=list)
-    context: ToolContext | None = None
+    futures: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    batch: dict[str, str] = field(default_factory=dict)
+    completed: set[str] = field(default_factory=set)
+    paused: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def check_pause(self) -> None:
+        if self.pending and self.batch.keys() <= self.completed | self.futures.keys():
+            self.paused.set()
+
+    def resolve(self, values: dict[str, Any]) -> None:
+        self.paused.clear()
+        self.pending.clear()
+        for call_id, value in values.items():
+            self.futures.pop(call_id).set_result(value)
 
     def validate(self, agent: BubAgent) -> None:
         names = {name.replace(".", "_") for name in agent.tools}
@@ -68,12 +66,18 @@ class ExternalTools:
             context=True,
             exposure="direct",
         )
-        def suspend(*, context: ToolContext, **arguments: Any) -> None:
+        async def suspend(*, context: ToolContext, **arguments: Any) -> Any:
             if context.state is not state:
                 raise ValueError(
                     "Frontend/interrupt tools belong to the owning AG-UI turn"
                 )
-            self.context = context
+            if (
+                self.batch.get(context.call_id, "").replace(".", "_")
+                != definition.name.replace(".", "_")
+                or context.command
+                or context.code_mode
+            ):
+                raise ValueError("External tools require a direct model tool call")
             call = {
                 "id": context.call_id,
                 "name": definition.name,
@@ -87,69 +91,10 @@ class ExternalTools:
                     response_schema=definition.response_schema,
                 )
             self.pending.append(call)
-            raise ExternalCallsPending()
+            future = asyncio.get_running_loop().create_future()
+            self.futures[context.call_id] = future
+            self.check_pause()
+            return await future
 
         # Client schemas are supplied at runtime, rather than by Python annotations.
         return replace(suspend, parameters=definition.parameters)
-
-    async def record_pause(
-        self,
-        agent: BubAgent,
-        tape: Tape,
-        completed: LLMCallFinished | None,
-        results: dict[str, ToolCallFinished],
-        system_prompt: str | None,
-        reasoning: list[str],
-    ) -> StreamEvent | None:
-        """Record only the exchange interrupted by an admitted external call.
-
-        Normal exchanges are recorded by run_once. Its tool executor settles
-        the whole batch before propagating our control transfer, so completed
-        backend results are available here without fabricating pending results.
-        """
-        if completed is None or self.context is None:
-            raise RuntimeError("External call without a model exchange")
-        request, response = completed.request, completed.result
-        await agent.events.emit(
-            ChatFinished(
-                state=tape.context.state,
-                tape=tape,
-                run_id=request.run_id,
-                model=request.model,
-                system_prompt=system_prompt,
-                new_messages=self.context.step_messages or [],
-                response_text=response.text,
-                tool_calls=response.tool_calls,
-                usage=response.usage,
-                assistant_fields={"reasoning": "".join(reasoning)} if reasoning else {},
-            )
-        )
-        ids, values = [], []
-        for call in response.tool_calls:
-            if outcome := results.get(call["id"]):
-                result = outcome.result
-                value = result.result
-                if result.error is not None:
-                    value = (
-                        BubError(result.error.kind, result_text(value))
-                        if value is not None and isinstance(result.error, BubError)
-                        else result.error
-                    )
-                ids.append(call["id"])
-                values.append(value)
-                await tape.store.append(
-                    tape.name,
-                    TapeEntry.message(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "content": result_text(value),
-                        },
-                        run_id=request.run_id,
-                    ),
-                )
-        return (
-            StreamEvent("tool_result", {"call_ids": ids, "tool_results": values})
-            if values
-            else None
-        )

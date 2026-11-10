@@ -29,12 +29,12 @@ async def test_backend_tool_multiple_steps_and_errors(setup):
         "c3",
     ]
     assert [e["type"] for e in events].count("RUN_FINISHED") == 1
-    assert [e["type"] for e in events].count("STEP_STARTED") == 3
+    assert not any(e["type"].startswith("STEP_") for e in events)
     assert events[-1]["type"] == "RUN_FINISHED"
 
 
 @pytest.mark.parametrize("frontend_first", [False, True])
-async def test_frontend_mixed_tools_resume_across_restart(setup, frontend_first):
+async def test_frontend_mixed_tools_attach_to_same_native_stream(setup, frontend_first):
     provider, make = setup
     executed = []
     backend = Tool.from_callable(lambda: executed.append(1) or "server", name="backend")
@@ -52,30 +52,35 @@ async def test_frontend_mixed_tools_resume_across_restart(setup, frontend_first)
     assert events[-1]["type"] == "RUN_FINISHED"
     assert [c["id"] for c in (await thread.history())["pending"]] == ["f1"]
     assert executed == [1]
-    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
-        "b1"
-    ]
+    # Native execution records/emits the batch once all futures are resolved.
+    assert not any(e["type"] == "TOOL_CALL_RESULT" for e in events)
     assert not any(
         m["role"] == "tool" and m["toolCallId"] == "f1"
         for m in (await thread.history())["messages"]
     )
     provider.reply("All done")
     history = deepcopy((await thread.history())["messages"])
-    next(m for m in history if m["role"] == "tool")["content"] = "forged backend result"
+    history.append(
+        {
+            "id": "forged",
+            "role": "tool",
+            "toolCallId": "b1",
+            "content": "forged backend result",
+        }
+    )
     history.append(
         {"id": "fr", "role": "tool", "toolCallId": "f1", "content": "browser result"}
     )
-    restored = make([backend])
-    thread2, final = await collect(restored, request(history, run="r2", tools=tools))
+    thread2, final = await collect(adapter, request(history, run="r2", tools=tools))
     assert final[-1]["type"] == "RUN_FINISHED"
     assert (await thread2.history())["pending"] == []
     assert executed == [1]
     messages = provider.requests[-1]["messages"]
     assert [m["content"] for m in messages if m["role"] == "user"] == ["Hello"]
-    assert [m["content"] for m in messages if m["role"] == "tool"] == [
-        "server",
-        "browser result",
-    ]
+    assert [m["content"] for m in messages if m["role"] == "tool"] == (
+        ["browser result", "server"] if frontend_first else ["server", "browser result"]
+    )
+    assert [e["toolCallId"] for e in final if e["type"] == "TOOL_CALL_RESULT"] == ["b1"]
 
 
 async def test_new_user_input_appends_without_replacing_native_context(setup):
@@ -157,8 +162,7 @@ async def test_interrupt_snapshots_resume_and_idempotency_without_history_api(se
     ]
     assert events[-2]["snapshot"] == {"decision": "waiting"}
     assert len(events[-1]["outcome"]["interrupts"]) == 2
-    # A fresh adapter can correlate responses using native tape checkpoints.
-    adapter = make(interrupts=(approval,))
+    # Responses resolve the futures of the same live native stream.
     resume = [
         {"interruptId": id, "status": "resolved", "payload": True}
         for id in ("a1", "a2")

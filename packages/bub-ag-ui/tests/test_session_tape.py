@@ -216,7 +216,7 @@ async def test_native_deferred_tools_and_sidecars_survive_next_turn(setup, store
     assert entries[0].payload["data"]["handle"] == "retained"
 
 
-async def test_cancelled_input_append_settles_before_releasing_thread(
+async def test_cancelled_receipt_append_settles_before_releasing_thread(
     setup, store, monkeypatch
 ):
     import asyncio
@@ -234,11 +234,12 @@ async def test_cancelled_input_append_settles_before_releasing_thread(
     async def slow_append(name, entry):
         nonlocal pause
         await append(name, entry)
-        if name == tape.name and entry.meta.get("ag_ui_message_id") and pause:
+        if entry.payload.get("name") == "ag_ui.inputs" and pause:
             pause = False
             entered.set()
             await release.wait()
 
+    provider.reply("recorded natively")
     monkeypatch.setattr(tape.store, "append", slow_append)
     task = asyncio.create_task(collect(adapter, request()))
     try:
@@ -254,7 +255,7 @@ async def test_cancelled_input_append_settles_before_releasing_thread(
         await asyncio.gather(task, return_exceptions=True)
     assert task.cancelled()
     assert await load_session_settings(tape) == {"reasoning_effort": "high"}
-    assert provider.requests == []
+    assert len(provider.requests) == 1
     assert not adapter._active
     provider.reply("next")
     _, events = await collect(

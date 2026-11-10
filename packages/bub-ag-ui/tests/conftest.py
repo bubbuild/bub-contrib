@@ -117,16 +117,12 @@ class ClientView:
 
 
 async def collect(adapter, data, user="alice"):
-    from bub.core.tape import session_tape_name
-    from bub_ag_ui.continuation import Continuation
     from bub_ag_ui.events import MessageProjection
 
     events = [event async for event in adapter.run(user, data)]
     projection = MessageProjection()
     for event in events:
         projection.apply(event)
-    tape = adapter._storage_agent.tape(
-        session_tape_name(adapter.session_id(user, data.thread_id), adapter.workspace)
-    )
-    pending = (await Continuation.load(tape)).pending
+    live = adapter._turns.get(adapter.session_id(user, data.thread_id))
+    pending = list(live.inbound.external.pending) if live else []
     return ClientView(projection, pending), events

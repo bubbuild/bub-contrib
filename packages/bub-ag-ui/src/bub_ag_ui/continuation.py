@@ -1,4 +1,4 @@
-"""Native tape checkpoint for external calls, not a display history or run journal."""
+"""Validate live external calls and persist consumed interrupt receipts only."""
 
 from __future__ import annotations
 
@@ -24,13 +24,15 @@ class Continuation:
         entries = await tape.query().kinds("event").all()
         for entry in reversed(list(entries)):
             if entry.payload.get("name") == "ag_ui.continuation":
-                return cls(**deepcopy(entry.payload["data"]))
+                return cls(
+                    responses=deepcopy(entry.payload["data"].get("responses", []))
+                )
         return cls()
 
     async def save(self, tape: Tape) -> None:
         await tape.append_event(
             "ag_ui.continuation",
-            {"pending": deepcopy(self.pending), "responses": deepcopy(self.responses)},
+            {"responses": deepcopy(self.responses)},
         )
 
     def prepare(self, request: RunAgentInput) -> tuple[list[dict[str, Any]], bool]:
@@ -82,7 +84,7 @@ class Continuation:
             if response["status"] == "resolved" and call.get("response_schema"):
                 jsonschema.validate(response["payload"], call["response_schema"])
             # Update the client view if it echoes the call. Native execution
-            # already recorded that exchange and does not require it back.
+            # holds that exchange and does not require it back.
             index = next(
                 (
                     i + 1

@@ -10,15 +10,18 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
 import jsonschema
 from ag_ui.core import RunAgentInput
 from bub.builtin.agent import BubAgent
-from bub.core.tape import Tape, TapeEntry, session_tape_name, to_message
+from bub.core.tape import Tape, session_tape_name, to_message
+from bub.prompt import to_content
 
 from bub_ag_ui.continuation import Continuation
 from bub_ag_ui.events import EventStream, result_text
 from bub_ag_ui.execution import (
     AGUIInboundMessage,
+    NativeExecution,
     StreamRouter,
     install_execution_hooks,
 )
@@ -73,44 +76,45 @@ def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
     return result
 
 
-async def new_inputs(
-    tape: Tape, messages: list[dict[str, Any]], pending_ids: set[str]
-) -> list[tuple[str, dict[str, Any]]]:
-    """Map AG-UI input to native appends, never rebuild context from UI history.
+def input_digest(message: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(message, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()
 
-    IDs on native input entries distinguish new messages from client echoes,
-    including echoes of messages that Bub has already moved behind a handoff.
-    Assistant output and backend tool results belong to the native recorder.
-    """
-    accepted = {
-        entry.meta["ag_ui_message_id"]: entry.payload
-        for entry in await tape.query().kinds("message").all()
-        if "ag_ui_message_id" in entry.meta
-    }
+
+async def new_inputs(
+    tape: Tape, messages: list[dict[str, Any]], accepted: dict[str, str]
+) -> list[tuple[str, dict[str, Any]]]:
+    """Deduplicate protocol input without importing client history into Bub."""
+    known = dict(accepted)
+    for entry in await tape.query().kinds("event").all():
+        if entry.payload.get("name") == "ag_ui.inputs":
+            known.update(entry.payload["data"])
+    # Read receipts written by older versions without rewriting native messages.
+    for entry in await tape.query().kinds("message").all():
+        if message_id := entry.meta.get("ag_ui_message_id"):
+            known[message_id] = input_digest(entry.payload)
     additions = []
     for message in messages:
-        if message["role"] != "user" and not (
-            message["role"] == "tool" and message["toolCallId"] in pending_ids
-        ):
+        if message["role"] != "user":
             continue
         converted = model_message(message)
-        if message["id"] in accepted:
-            if accepted[message["id"]] != converted:
+        if message["id"] in known:
+            if known[message["id"]] != input_digest(converted):
                 raise ProtocolError(
                     "Editing accepted input is not supported; start a new thread"
                 )
             continue
         additions.append((message["id"], converted))
-    # Resolve the native pending exchange before any new user input sent with it.
-    return sorted(additions, key=lambda item: item[1]["role"] != "tool")
+    return additions
 
 
 class AGUIAdapter:
     """Adapt a request and its native execution to an AG-UI event stream.
 
-    Bub owns the conversation tape and its context selection. The adapter appends
-    only new user input or results for pending external calls. Client history is
-    not a replacement for native context; streaming never polls stored events.
+    Bub owns the conversation tape, context, and entire model loop. An HTTP
+    request attaches to a live native turn; external tools wait inside that turn.
+    Only input/interrupt receipts are adapter-owned, never model exchanges.
     """
 
     def __init__(
@@ -135,6 +139,7 @@ class AGUIAdapter:
         self._active: set[str] = set()
         self._tasks: set[asyncio.Task[None]] = set()
         self._closed = False
+        self._turns: dict[str, NativeExecution] = {}
 
     def session_id(self, principal: str, thread_id: str) -> str:
         identity = json.dumps([principal, thread_id], ensure_ascii=False)
@@ -143,8 +148,8 @@ class AGUIAdapter:
     async def run(
         self, principal: str, request: RunAgentInput
     ) -> AsyncIterator[dict[str, Any]]:
-        # Bounded, transient delivery only. No event IDs, replay buffers, durable
-        # wire journal, or global run registry. Closing this iterator owns cleanup.
+        # Bounded delivery, not a replay journal. Only an explicitly paused
+        # native turn may outlive this HTTP attachment.
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=16)
         disconnected = False
 
@@ -170,19 +175,58 @@ class AGUIAdapter:
                 finally:
                     if not next_event.done():
                         next_event.cancel()
-                        await asyncio.gather(next_event, return_exceptions=True)
+                        with anyio.CancelScope(shield=True):
+                            await asyncio.gather(next_event, return_exceptions=True)
             await producer
         finally:
             disconnected = True
-            if not producer.done():
-                producer.cancel()
-            await asyncio.gather(producer, return_exceptions=True)
-            self._tasks.discard(producer)
+            with anyio.CancelScope(shield=True):
+                if not producer.done() and not producer.cancelling():
+                    producer.cancel()
+                await asyncio.gather(producer, return_exceptions=True)
+                self._tasks.discard(producer)
+
+    async def _run_native(self, execution: NativeExecution) -> None:
+        inbound = execution.inbound
+        try:
+            async with asyncio.timeout(self.max_run_seconds) as timeout:
+                execution.timeout = timeout
+                execution.deadline = timeout.when()
+                await self.framework.process_inbound(inbound, stream_output=True)
+                if not inbound.stream_complete:
+                    raise RuntimeError(
+                        "AG-UI stream did not complete; check channel configuration"
+                    )
+                # Commands and custom model hooks need not emit ChatFinished.
+                if execution.unrecorded:
+                    tape = inbound._runtime_agent.tape(inbound.model_tape)
+                    await committed(
+                        tape.append_event("ag_ui.inputs", dict(execution.unrecorded))
+                    )
+                    execution.unrecorded.clear()
+        finally:
+            execution.unbind()
+
+    def _start(self, session_id: str, execution: NativeExecution) -> None:
+        self._turns[session_id] = execution
+        execution.task = asyncio.create_task(self._run_native(execution))
+        self._tasks.add(execution.task)
+
+        def finished(task: asyncio.Task[None]) -> None:
+            self._tasks.discard(task)
+            if self._turns.get(session_id) is execution:
+                del self._turns[session_id]
+            if not task.cancelled():
+                task.exception()  # A detached timeout still has its exception observed.
+
+        execution.task.add_done_callback(finished)
 
     async def _execute(self, principal: str, request: RunAgentInput, emit: Any) -> None:
         stream = EventStream(emit)
         session_id = self.session_id(principal, request.thread_id)
         acquired = False
+        execution: NativeExecution | None = None
+        detached = False
         try:
             await stream.send(
                 "RUN_STARTED",
@@ -200,65 +244,113 @@ class AGUIAdapter:
                 raise ProtocolError("Another request is executing on this thread")
             self._active.add(session_id)
             acquired = True
-            async with asyncio.timeout(self.max_run_seconds):
-                tape = self._storage_agent.tape(
-                    session_tape_name(session_id, self.workspace)
+            tape = self._storage_agent.tape(
+                session_tape_name(session_id, self.workspace)
+            )
+            live = self._turns.get(session_id)
+            continuation = await Continuation.load(tape)
+            # Persisted receipts do not resurrect a suspended coroutine.
+            continuation.pending = list(live.inbound.external.pending) if live else []
+            try:
+                messages, repeated = continuation.prepare(request)
+                additions = await new_inputs(
+                    tape, messages, live.accepted if live else {}
                 )
-                continuation = await Continuation.load(tape)
-                try:
-                    pending_ids = {call["id"] for call in continuation.pending}
-                    messages, repeated = continuation.prepare(request)
-                    agent = self.agent_factory(self.framework, tape_store=tape.store)
-                    external = ExternalTools([*request.tools, *self.interrupts])
+                if repeated and additions:
+                    raise ProtocolError(
+                        "Send new input without an already resolved resume"
+                    )
+                if live:
+                    if not live.inbound.external.paused.is_set():
+                        raise ProtocolError(
+                            "Another request is executing on this thread"
+                        )
+                    if request.tools != live.inbound.request.tools:
+                        raise ProtocolError(
+                            "Tool definitions cannot change while a native turn is waiting"
+                        )
+                elif not repeated:
+                    if not additions or (
+                        request.messages and request.messages[-1].role == "tool"
+                    ):
+                        raise ProtocolError(
+                            "No new user input or live external call; waiting calls cannot survive a server restart"
+                        )
+                external = (
+                    live.inbound.external
+                    if live
+                    else ExternalTools([*request.tools, *self.interrupts])
+                )
+                agent = (
+                    live.inbound._runtime_agent
+                    if live
+                    else self.agent_factory(self.framework, tape_store=tape.store)
+                )
+                values = {
+                    m["toolCallId"]: model_message(m)["content"]
+                    for m in messages
+                    if m["role"] == "tool" and m["toolCallId"] in external.futures
+                }
+                if not live:
                     external.validate(agent)
                     for definition in external.definitions:
                         jsonschema.Draft202012Validator.check_schema(
                             definition.parameters
                         )
-                    additions = await new_inputs(tape, messages, pending_ids)
-                    if repeated and additions:
-                        raise ProtocolError(
-                            "Send new input without an already resolved resume"
-                        )
-                    if not additions and not repeated:
-                        raise ProtocolError("No new user input or pending tool result")
-                except (
-                    ValueError,
-                    jsonschema.ValidationError,
-                    jsonschema.SchemaError,
-                ) as exc:
-                    raise ProtocolError(str(exc)) from exc
-                await stream.send("MESSAGES_SNAPSHOT", messages=messages)
-                shared = SharedState(
-                    request.state if request.state is not None else {}, stream.publish
+            except (
+                ValueError,
+                jsonschema.ValidationError,
+                jsonschema.SchemaError,
+            ) as exc:
+                raise ProtocolError(str(exc)) from exc
+            await stream.send("MESSAGES_SNAPSHOT", messages=messages)
+            if repeated:
+                await stream.send(
+                    "STATE_SNAPSHOT",
+                    snapshot=request.state if request.state is not None else {},
                 )
-                await shared.set(shared.value)
-                if not repeated:
+            else:
+                receipts = {key: input_digest(value) for key, value in additions}
+                if live:
+                    execution = live
+                    execution.stream = stream
+                    execution.state["ag_ui_context"] = [
+                        item.model_dump(mode="json") for item in request.context
+                    ]
+                    execution.state["ag_ui_forwarded_props"] = request.forwarded_props
+                    execution.accepted.update(receipts)
+                    execution.queued_receipts.update(receipts)
+                    execution.queued.extend(
+                        to_content(value["content"]) for _, value in additions
+                    )
+                    shared = execution.inbound.shared
+                    await shared.set(request.state if request.state is not None else {})
+                    execution.supplied = set(values)
+                    await committed(continuation.save(tape))
+                    external.resolve(values)
+                else:
 
-                    async def append_input() -> None:
-                        await tape.ensure_bootstrap_anchor()
-                        if pending_ids:
-                            # Record receipt before executing any resumed side effect.
-                            await continuation.save(tape)
-                        for message_id, message in additions:
-                            await tape.store.append(
-                                tape.name,
-                                TapeEntry.message(message, ag_ui_message_id=message_id),
-                            )
+                    async def publish(event: dict[str, Any]) -> None:
+                        if execution is None:
+                            await stream.publish(event)
+                        else:
+                            await execution.publish(event)
 
-                    await committed(append_input())
+                    shared = SharedState(
+                        request.state if request.state is not None else {}, publish
+                    )
+                    await shared.set(shared.value)
+                    prompt = [
+                        part
+                        for _, value in additions
+                        for part in to_content(value["content"])
+                    ]
                     inbound = AGUIInboundMessage(
                         session_id=session_id,
                         channel="ag-ui",
                         chat_id=request.thread_id,
-                        content=next(
-                            (
-                                m.get("content", "")
-                                for m in reversed(messages)
-                                if m["role"] == "user"
-                                and isinstance(m.get("content"), str)
-                            ),
-                            "",
+                        content="\n".join(
+                            part for part in prompt if isinstance(part, str)
                         ),
                         is_active=True,
                         _runtime_agent=agent,
@@ -268,41 +360,51 @@ class AGUIAdapter:
                         shared=shared,
                         events=stream,
                         external=external,
+                        prompt=prompt,
+                        execution=None,
                     )
-                    await self.framework.process_inbound(inbound, stream_output=True)
-                    if not inbound.stream_complete:
-                        raise RuntimeError(
-                            "AG-UI stream did not complete; check channel configuration"
-                        )
-                    continuation.pending = external.pending
-                    if external.pending:
-                        await committed(continuation.save(tape))
-                await stream.close()
-                interrupts = [
-                    {
-                        "id": c["id"],
-                        "toolCallId": c["id"],
-                        "reason": c["reason"],
-                        "responseSchema": c.get("response_schema"),
-                        "metadata": {
-                            "arguments": json.loads(c["arguments"]),
-                            "toolName": c["name"],
-                        },
-                    }
-                    for c in continuation.pending
-                    if c["kind"] == "interrupt"
-                ]
-                fields: dict[str, Any] = {}
-                if interrupts:
-                    await stream.snapshot()
-                    await shared.set(shared.value)
-                    fields["outcome"] = {"type": "interrupt", "interrupts": interrupts}
-                await stream.send(
-                    "RUN_FINISHED",
-                    threadId=request.thread_id,
-                    runId=request.run_id,
-                    **fields,
-                )
+                    execution = NativeExecution(inbound, receipts)
+                    inbound.execution = execution
+                    self._start(session_id, execution)
+                waiter = asyncio.create_task(external.paused.wait())
+                try:
+                    await asyncio.wait(
+                        (execution.task, waiter), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if execution.task.done():
+                        await execution.task
+                    else:
+                        continuation.pending = list(external.pending)
+                finally:
+                    waiter.cancel()
+                    await asyncio.gather(waiter, return_exceptions=True)
+            await stream.close()
+            interrupts = [
+                {
+                    "id": c["id"],
+                    "toolCallId": c["id"],
+                    "reason": c["reason"],
+                    "responseSchema": c.get("response_schema"),
+                    "metadata": {
+                        "arguments": json.loads(c["arguments"]),
+                        "toolName": c["name"],
+                    },
+                }
+                for c in continuation.pending
+                if c["kind"] == "interrupt"
+            ]
+            fields: dict[str, Any] = {}
+            if interrupts:
+                await stream.snapshot()
+                await execution.inbound.shared.set(execution.inbound.shared.value)
+                fields["outcome"] = {"type": "interrupt", "interrupts": interrupts}
+            await stream.send(
+                "RUN_FINISHED",
+                threadId=request.thread_id,
+                runId=request.run_id,
+                **fields,
+            )
+            detached = bool(continuation.pending)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -317,11 +419,20 @@ class AGUIAdapter:
                 message = "Agent run timed out"
             await stream.send("RUN_ERROR", message=message, code="RUN_FAILED")
         finally:
+            if execution is not None:
+                execution.stream = None
+                if not detached and not execution.task.done():
+                    if not execution.finishing and not execution.task.cancelling():
+                        execution.task.cancel()
+                    await asyncio.gather(execution.task, return_exceptions=True)
             if acquired:
                 self._active.discard(session_id)
 
     async def close(self) -> None:
         self._closed = True
-        for task in list(self._tasks):
-            task.cancel()
-        await asyncio.gather(*list(self._tasks), return_exceptions=True)
+        tasks = list(self._tasks)
+        merging = {turn.task for turn in self._turns.values() if turn.finishing}
+        for task in tasks:
+            if task not in merging and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

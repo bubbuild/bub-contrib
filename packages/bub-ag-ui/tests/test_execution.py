@@ -370,17 +370,11 @@ async def test_child_run_events_do_not_escape_into_parent_turn(setup, frontend):
     thread, events = await collect(adapter, request(tools=client_tools))
 
     assert len({id(event.tape) for event in observed_steps}) == 2
-    expected_steps = ["1"] if frontend else ["1", "2"]
-    assert [
-        e["stepName"] for e in events if e["type"] == "STEP_STARTED"
-    ] == expected_steps
-    assert [
-        e["stepName"] for e in events if e["type"] == "STEP_FINISHED"
-    ] == expected_steps
+    assert not any(e["type"].startswith("STEP_") for e in events)
     assert events[-1]["type"] == "RUN_FINISHED"
-    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
-        "delegate-call"
-    ]
+    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == (
+        [] if frontend else ["delegate-call"]
+    )
     assert not any(e.get("delta") == "child answer" for e in events)
 
     if frontend:

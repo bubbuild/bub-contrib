@@ -1,26 +1,34 @@
 # bub-ag-ui
 
-Connect a web frontend to Bub through AG-UI HTTP/SSE. Stream text, reasoning,
-tool calls, and shared state, with support for browser-side tools, human input,
-and conversation history.
+Connect a browser UI to Bub through [AG-UI](https://docs.ag-ui.com/). The adapter
+accepts `RunAgentInput` at `POST /agent` and streams text, reasoning, tool calls,
+application state, and human-input interrupts over SSE. Bub runs the agent and
+keeps its conversation context; your application owns the displayed history.
 
 ## Start the server
 
-Install this package in the environment that runs Bub. In this repository it is
-already a root dependency:
+Install this package in the environment that runs Bub. From this repository:
 
 ```sh
 uv sync
 uv run bub ag-ui --host 127.0.0.1 --port 28201
 ```
 
-The server uses your normal Bub model/provider configuration and tape store.
-History survives a server restart only when that store is persistent.
+Use your normal Bub model configuration. Browser and deployment settings:
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `BUB_AG_UI_ORIGINS` | `["http://localhost:3000"]` | JSON array of allowed browser origins |
+| `BUB_AG_UI_TOKEN` | Unset | Bearer token; required for non-loopback access |
+| `BUB_AG_UI_MAX_RUN_SECONDS` | `600` | Native turn timeout, including time waiting for the client |
+
+When a token is configured, send `Authorization: Bearer <token>`. A shared token
+represents one identity. For multiple users, supply a trusted `authenticate`
+callback to `create_app`; a client-chosen thread ID is not authentication.
 
 ## Connect a frontend
 
-Use an AG-UI client or a frontend integration that accepts an AG-UI endpoint.
-For a minimal browser client, install `@ag-ui/client` and send a message:
+Install `@ag-ui/client`, then create an agent:
 
 ```ts
 import { HttpAgent } from "@ag-ui/client";
@@ -35,131 +43,97 @@ const agent = new HttpAgent({
 
 await agent.runAgent({ runId: crypto.randomUUID() });
 console.log(agent.messages);
+
+agent.addMessage({
+  id: crypto.randomUUID(), role: "user", content: "Tell me more.",
+});
+await agent.runAgent({ runId: crypto.randomUUID() });
 ```
 
-Keep the `threadId` to continue or reload the same conversation. Use a new `runId`
-for each new user turn or tool continuation; reuse a run ID only when retrying
-that exact request. Your frontend is responsible for rendering streamed updates
-and handling any browser-side tools.
+Keep the same `threadId` for subsequent turns and preserve message IDs when
+sending history. Use the agent's `headers` option for authentication.
 
-### Authentication and browser origins
-
-- Loopback access works without a token by default.
-- For non-loopback listening, set `BUB_AG_UI_TOKEN` and send
-  `Authorization: Bearer <token>` on requests. `HttpAgent` accepts a `headers`
-  option for this.
-- Set `BUB_AG_UI_ORIGINS` to a JSON array of allowed browser origins. The default
-  is `["http://localhost:3000"]`.
-- A shared token represents one identity, not separate users. For multi-user
-  hosting, supply a trusted `authenticate` callback to `create_app` that returns
-  a stable user identity. A client-chosen thread ID is not authentication.
+`HttpAgent` maintains the client messages and state. Save these in your application
+and pass them as `initialMessages` and `initialState` when restoring the UI.
+Sending only new input can continue Bub's model context, but does not restore
+missing display history. Responses update the client incrementally; a partial
+request is not published as a replacement for the full conversation.
 
 ## Tools and human input
 
-| Tool type | What the frontend should expect |
-| --- | --- |
-| Server tool | Bub executes it and continues the response without client action. |
-| Frontend tool | The run ends with a pending call. Execute it in the browser, then submit its result in a new run. |
-| Human-input interrupt | The run ends with an interrupt outcome. Show the decision UI, then submit a `resume` entry in a new run. |
+### Frontend tools
 
-**`RUN_FINISHED` means that run has ended, not necessarily that the agent has
-finished answering.** Check for pending tool calls or an interrupt outcome.
+Declare frontend tools in the request's `tools` list, with a name, description,
+and JSON parameter schema. Server tools execute in Bub; frontend tools execute
+in your application or UI framework.
 
-Declare frontend tools in the request's `tools` list. Return each result as a
-message with `role: "tool"`, a new message `id`, the matching `toolCallId`, and
-its `content`. Send the tool definitions again on the continuation. You do not
-need to add a synthetic user message to make the agent continue.
+1. Consume the tool calls and wait for the HTTP run to finish.
+2. Execute the frontend calls and add one result message for each: a new `id`,
+   `role: "tool"`, the matching `toolCallId`, and `content`.
+3. Run again on the same thread with all pending results, the current state, and
+   unchanged tool definitions. No additional user message is needed.
 
-Human-input tools are configured on the server with `InterruptTool`. Respond
-using `resume`, with the matching `interruptId`, a status, and the response
-payload. Resolved payloads must satisfy the interrupt's response schema, if any.
+Tool names must not collide with server tools or each other; `web.search` and
+`web_search` share a model-facing name. Frontend tools belong to the parent turn,
+not its child agents.
 
-Results can arrive in separate requests, but the agent waits until all pending
-calls are resolved before continuing. Resolve them before starting another user
-turn. Unknown or duplicate results are rejected. Tool names must not collide
-with server tools or each other; `web.search` and `web_search` count as the same
-model-facing name.
+### Human input
 
-Browser tools and interrupts belong to the parent AG-UI turn. Child agents cannot
-directly use them; they can return a request to the parent agent to act on.
+Configure server-side `InterruptTool` definitions through `AGUIAdapter`'s
+`interrupts` argument. Each definition supplies a name, description, parameter
+schema, and an optional response schema.
 
-## History, retries, and cancellation
+A human-input pause ends with `RUN_FINISHED` carrying `outcome.type: "interrupt"`.
+The streamed messages and a state snapshot provide the decision UI's context.
+Respond to every open interrupt:
 
-- **Reload a conversation:** fetch its history and restore your client's messages
-  and state. The response also includes pending calls, run status, and a replay
-  cursor. History restoration is a Bub extension; connecting a standard
-  `HttpAgent` alone does not automatically fetch it.
-- **Retry a request:** the same run ID and identical request join the existing run
-  or replay its saved events, without executing the model or tools again. Reusing
-  that ID for a different request returns HTTP `409`.
-- **Replay events:** use the events endpoint with `after=<cursor>` or a
-  `Last-Event-ID` header. Replay returns saved output and follows new output if
-  the run is still active; it does not restart execution. Treat SSE IDs as cursors,
-  not consecutive event counts.
-- **Disconnect:** closing the response that started a run cancels that run.
-  Closing a separate replay or duplicate-request connection does not cancel it.
-  Reconnecting can recover saved output, but does not resume cancelled work.
-- **Cancel explicitly:** use the cancel endpoint. Cancellation does not undo
-  side effects of tools that have already executed.
-- **Restart after an interrupted run:** the unfinished run is marked failed,
-  rather than automatically executed again. Partial output remains available,
-  but it does not imply a completed model exchange or successful tool result.
+```ts
+await agent.runAgent({
+  resume: [{ interruptId, status: "resolved", payload: true }],
+});
+```
 
-Stored history is authoritative: echoing modified assistant messages does not
-rewrite it. To edit or regenerate, send a new run whose message list ends at the
-existing user message being edited or retried. Bub uses that point as the start
-of a new context branch. Resolve pending tools before editing.
+Use `status: "cancelled"` without a payload to abandon a decision. Resolved payloads
+must match their response schemas. Missing, partial, duplicate, or invalid
+responses produce `RUN_ERROR` and can be corrected and resubmitted. Use `resume`,
+not ordinary tool-result messages, for interrupts.
 
-Reset history only while the thread is idle. After a reset, reload history and
-discard old replay cursors. Clearing display history alone does not clear the
-model's conversation context; use a new thread for a separate conversation.
+## Sessions, limits, and errors
 
-## HTTP endpoints and limits
+- **Run completion:** `RUN_FINISHED` ends the HTTP run. Bub may still be waiting
+  for frontend results or human input; one native turn can span several requests.
+- **Waiting calls:** resume on the same adapter before the turn timeout. Restart,
+  shutdown, or timeout discards unfinished calls, even with a persistent tape store.
+- **Conversation context:** completed context follows Bub's configured tape store.
+  Echoed history does not replace it, and editing accepted user input is rejected.
+  Start a new thread for a new conversation.
+- **Cancellation:** `agent.abortRun()` cancels an active HTTP execution, not tool
+  side effects already performed. It cannot cancel a waiting turn after that HTTP
+  run has finished; resolve its calls, cancel its interrupts, or let it time out.
+- **Concurrency and retries:** one executing request per thread, with no
+  cross-process coordination. Repeated accepted interrupt responses are acknowledged
+  without re-execution; this is not answer replay or general request deduplication.
+- **Errors:** authentication, malformed bodies, and body-size limits use HTTP errors.
+  Execution and continuation failures arrive as `RUN_ERROR`.
 
-All routes use the same authentication.
+The adapter exposes no display-history, replay, or separate cancellation endpoint.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/agent` | Submit an AG-UI `RunAgentInput`; receive SSE events. |
-| `GET` | `/threads/{thread_id}/history` | Restore messages, state, pending calls, run status, and cursor. |
-| `GET` | `/threads/{thread_id}/runs/{run_id}/events` | Replay or follow a run's events. |
-| `POST` | `/threads/{thread_id}/runs/{run_id}/cancel` | Cancel an active run; returns `{"cancelled": true}` if cancelled. |
+## Embedding and development
 
-The `/threads/...` routes are Bub extensions, not standard AG-UI endpoints.
-An unknown run returns `404` on the replay and cancel routes.
+Use `bub_ag_ui.http.create_app` to embed the endpoint. Set `manage_framework=False`
+when the host manages `framework.running()`. In a Bub gateway, set
+`channel_managed=True`; an explicitly supplied adapter must also use
+`bind_router=False`.
 
-Only one run may execute on a thread at a time; another run receives `409` while
-that thread is busy. Run one adapter/controller per store/workspace; multiple
-server processes sharing it are not supported. Long histories and additional
-subscribers can increase event-reading overhead.
-
-### Embedding and extensions
-
-Use `bub_ag_ui.http.create_app` to embed the endpoint. In an existing Bub gateway,
-set `channel_managed=True`; an explicitly supplied `AGUIAdapter` must also use
-`bind_router=False`. Set `manage_framework=False` if the host already manages
-`framework.running()`.
-
-Bub's model configuration and native tool policies still apply. Client-supplied
-state and context are application data, not overrides for server configuration.
-If you supply a custom model provider, it remains responsible for recording its
-model conversation, including recovery from partial exchanges. Displayed output
-alone is not automatically converted into model history.
-
-## Development
-
-From the repository root, with Python 3.12+ and Node.js 22+:
+Run the tests from the repository root with Python 3.12+ and Node.js 22+:
 
 ```sh
 uv sync --frozen --group test
-uv run --frozen --group test pytest packages/bub-ag-ui/tests
+uv run --frozen pytest packages/bub-ag-ui/tests
 npm ci --prefix packages/bub-ag-ui/tests/client
 npm test --prefix packages/bub-ag-ui/tests/client
 ```
 
-Python tests cover execution, tools, history, isolation, and cancellation. Socket
-tests use the published `@ag-ui/client` and assistant-ui integration against a
-local server with a deterministic model provider. They need no model API key.
-Set `PYTHON` if the interpreter is not at the workspace's `.venv/bin/python`.
-Both test layers run in repository CI. These are regression and SDK
-interoperability tests, not TCK certification.
+Socket tests use the published AG-UI client and assistant-ui runtime with a
+local deterministic provider; no model API key is needed. Set `PYTHON` if the
+interpreter is not at `.venv/bin/python`.

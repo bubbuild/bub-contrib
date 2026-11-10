@@ -1,11 +1,10 @@
-"""AG-UI's POST/SSE transport, with explicit history, replay and cancel routes."""
+"""AG-UI request/response transport; conversation storage belongs to the host."""
 
 from __future__ import annotations
 
-import asyncio
 import hmac
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import aclosing, asynccontextmanager, nullcontext
 from typing import Any
 
 import bub
@@ -86,54 +85,6 @@ def create_app(
             raise RuntimeError("ASGI lifespan must start before serving requests")
         return runtime
 
-    def cursor(request: Request) -> int:
-        try:
-            value = int(
-                request.query_params.get(
-                    "after", request.headers.get("last-event-id", "0")
-                )
-            )
-            if value < 0:
-                raise ValueError
-            return value
-        except ValueError as exc:
-            raise ProtocolError("Invalid replay cursor") from exc
-
-    def response(
-        thread: Any,
-        run_id: str,
-        after: int,
-        user: str,
-        thread_id: str,
-        *,
-        cancel_on_disconnect: bool,
-    ) -> StreamingResponse:
-        encoder = EventEncoder()
-
-        async def body():
-            completed = False
-            try:
-                async for record in controller().events(thread, run_id, after):
-                    event = EVENT.validate_python(record["event"])
-                    yield f"id: {record['sequence']}\n" + encoder.encode(event)
-                completed = True
-            finally:
-                if not completed and cancel_on_disconnect:
-                    # Shield cleanup from ASGI's cancelled response task.
-                    cleanup = asyncio.create_task(
-                        controller().cancel(user, thread_id, run_id)
-                    )
-                    await asyncio.shield(cleanup)
-
-        return StreamingResponse(
-            body(),
-            media_type=encoder.get_content_type(),
-            headers={
-                "Cache-Control": "no-cache, no-transform",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
     async def run(request: Request):
         user = await principal(request)
         content = bytearray()
@@ -145,72 +96,35 @@ def create_app(
             data = RunAgentInput.model_validate_json(bytes(content))
         except ValidationError as exc:
             raise ProtocolError("Invalid RunAgentInput", 422) from exc
-        after = cursor(request)
-        submission = await controller().submit(user, data)
-        return response(
-            submission.thread,
-            data.run_id,
-            after,
-            user,
-            data.thread_id,
-            cancel_on_disconnect=submission.created,
-        )
+        encoder = EventEncoder()
 
-    async def history(request: Request):
-        user = await principal(request)
-        thread = await controller().thread(user, request.path_params["thread_id"])
-        return JSONResponse(await thread.history())
+        async def body():
+            async with aclosing(controller().run(user, data)) as events:
+                async for event in events:
+                    yield encoder.encode(EVENT.validate_python(event))
 
-    async def replay(request: Request):
-        user = await principal(request)
-        thread_id, run_id = (
-            request.path_params["thread_id"],
-            request.path_params["run_id"],
+        return StreamingResponse(
+            body(),
+            media_type=encoder.get_content_type(),
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
         )
-        thread = await controller().thread(user, thread_id)
-        if run_id not in (await thread.read()).runs:
-            raise ProtocolError("Run not found", 404)
-        return response(
-            thread,
-            run_id,
-            cursor(request),
-            user,
-            thread_id,
-            cancel_on_disconnect=False,
-        )
-
-    async def cancel(request: Request):
-        user = await principal(request)
-        thread_id, run_id = (
-            request.path_params["thread_id"],
-            request.path_params["run_id"],
-        )
-        thread = await controller().thread(user, thread_id)
-        if run_id not in (await thread.read()).runs:
-            raise ProtocolError("Run not found", 404)
-        cancelled = await controller().cancel(user, thread_id, run_id)
-        return JSONResponse({"cancelled": cancelled})
 
     async def error(request: Request, exc: ProtocolError):
         return JSONResponse({"error": str(exc)}, status_code=exc.status)
 
     app = Starlette(
-        routes=[
-            Route("/agent", run, methods=["POST"]),
-            Route("/threads/{thread_id}/history", history),
-            Route("/threads/{thread_id}/runs/{run_id}/events", replay),
-            Route(
-                "/threads/{thread_id}/runs/{run_id}/cancel", cancel, methods=["POST"]
-            ),
-        ],
+        routes=[Route("/agent", run, methods=["POST"])],
         lifespan=lifespan,
         exception_handlers={ProtocolError: error},
     )
     return CORSMiddleware(
         app,
         allow_origins=settings.origins,
-        allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "Authorization", "Last-Event-ID"],
+        allow_methods=["POST"],
+        allow_headers=["Content-Type", "Authorization"],
         expose_headers=["Content-Type"],
     )
 

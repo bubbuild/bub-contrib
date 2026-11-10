@@ -1,11 +1,21 @@
+import json
 from contextlib import asynccontextmanager
 
 import httpx
 from bub_ag_ui.config import AGUISettings
 from bub_ag_ui.http import create_app
 from bub_ag_ui.plugin import AGUIPlugin
+from bub_ag_ui.tools import InterruptTool
 
-from .conftest import request
+from .conftest import collect, request
+
+
+def sse_events(response):
+    return [
+        json.loads(line[5:])
+        for line in response.text.splitlines()
+        if line.startswith("data:")
+    ]
 
 
 @asynccontextmanager
@@ -22,11 +32,10 @@ async def client_for(adapter, **kwargs):
         yield client
 
 
-async def test_http_sse_history_replay_and_cors(setup):
+async def test_http_sse_and_cors_without_management_routes(setup):
     provider, make = setup
     provider.reply("你好")
-    adapter = make()
-    async with client_for(adapter, settings=AGUISettings()) as client:
+    async with client_for(make(), settings=AGUISettings()) as client:
         response = await client.post(
             "/agent",
             json=request().model_dump(mode="json", by_alias=True),
@@ -37,18 +46,15 @@ async def test_http_sse_history_replay_and_cors(setup):
         assert (
             response.headers["access-control-allow-origin"] == "http://localhost:3000"
         )
-        assert '"type":"RUN_FINISHED"' in response.text
-        assert "你好" in response.text
-        history = (await client.get("/threads/t1/history")).json()
-        assert history["messages"][-1]["content"] == "你好"
-        replay = await client.get("/threads/t1/runs/r1/events")
-        assert replay.text == response.text
-        cursor = int(response.text.split("id: ")[-1].splitlines()[0])
-        tail = await client.get(
-            "/threads/t1/runs/r1/events", headers={"Last-Event-ID": str(cursor)}
+        events = sse_events(response)
+        assert events[-1]["type"] == "RUN_FINISHED"
+        assert (
+            "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
+            == "你好"
         )
-        assert tail.text == ""
-        assert len(provider.requests) == 1
+        for path in ("/threads/t1/history", "/threads/t1/runs/r1/events"):
+            assert (await client.get(path)).status_code == 404
+        assert (await client.post("/threads/t1/runs/r1/cancel")).status_code == 404
 
 
 async def test_http_auth_validation_and_limits(setup):
@@ -57,32 +63,57 @@ async def test_http_auth_validation_and_limits(setup):
         make(), settings=AGUISettings(token="secret", max_body_bytes=1024)
     ) as client:
         assert (await client.post("/agent", json={})).status_code == 401
+        assert (
+            await client.post(
+                "/agent", json={}, headers={"Authorization": "Bearer wrong"}
+            )
+        ).status_code == 401
         auth = {"Authorization": "Bearer secret"}
         assert (await client.post("/agent", json={}, headers=auth)).status_code == 422
         assert (
             await client.post("/agent", content=b"x" * 1025, headers=auth)
         ).status_code == 413
-        assert (
-            await client.get("/threads/t/runs/missing/events", headers=auth)
-        ).status_code == 404
 
 
-async def test_custom_auth_scopes_history(setup):
+async def test_invalid_resume_is_an_agui_error_not_http_admission_error(setup):
+    _, make = setup
+    async with client_for(make()) as client:
+        data = request(
+            resume=[{"interruptId": "missing", "status": "resolved", "payload": True}]
+        )
+        response = await client.post(
+            "/agent", json=data.model_dump(mode="json", by_alias=True)
+        )
+        assert response.status_code == 200
+        events = sse_events(response)
+        assert events[-1]["type"] == "RUN_ERROR"
+        assert not any(e["type"] == "RUN_FINISHED" for e in events)
+
+
+async def test_custom_auth_isolates_pending_interrupts(setup):
     provider, make = setup
-    provider.reply("alice response")
+    adapter = make(
+        interrupts=(InterruptTool("approve", "Approval", {"type": "object"}),)
+    )
+    provider.reply(calls=[("a1", "approve", "{}")])
+    view, _ = await collect(adapter, request(), user="alice")
+    data = request(
+        (await view.history())["messages"],
+        run="resume",
+        resume=[{"interruptId": "a1", "status": "resolved", "payload": True}],
+    )
 
     async def authenticate(request):
         return request.headers.get("x-user", "")
 
-    async with client_for(make(), authenticate=authenticate) as client:
-        body = request().model_dump(mode="json", by_alias=True)
-        assert (
-            await client.post("/agent", json=body, headers={"x-user": "alice"})
-        ).status_code == 200
-        assert (
-            await client.get("/threads/t1/history", headers={"x-user": "bob"})
-        ).json()["messages"] == []
-        assert (await client.get("/threads/t1/history")).status_code == 401
+    async with client_for(adapter, authenticate=authenticate) as client:
+        body = data.model_dump(mode="json", by_alias=True)
+        response = await client.post("/agent", json=body, headers={"x-user": "bob"})
+        assert sse_events(response)[-1]["type"] == "RUN_ERROR"
+        assert (await client.post("/agent", json=body)).status_code == 401
+        provider.reply("approved")
+        response = await client.post("/agent", json=body, headers={"x-user": "alice"})
+        assert sse_events(response)[-1]["type"] == "RUN_FINISHED"
 
 
 async def test_plugin_registers_cli_and_channel(setup):

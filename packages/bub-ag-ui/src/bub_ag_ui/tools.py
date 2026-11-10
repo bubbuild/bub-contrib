@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -23,21 +24,24 @@ class InterruptTool:
     reason: str = "human_input"
 
 
-class ExternalCallsPending(BaseException):
-    """Control transfer, not a failed tool result or task cancellation.
-
-    Bub's executor waits for the entire parallel batch before propagating this.
-    Ordinary tool exceptions would instead be normalized into model-facing errors.
-    Only an admitted native tool handler can request this transfer: deny/replace
-    decisions never invoke the handler and therefore never create pending work.
-    """
-
-
 @dataclass
 class ExternalTools:
     definitions: list[ClientTool | InterruptTool]
     pending: list[dict[str, Any]] = field(default_factory=list)
-    context: ToolContext | None = None
+    futures: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    batch: dict[str, str] = field(default_factory=dict)
+    completed: set[str] = field(default_factory=set)
+    paused: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def check_pause(self) -> None:
+        if self.pending and self.batch.keys() <= self.completed | self.futures.keys():
+            self.paused.set()
+
+    def resolve(self, values: dict[str, Any]) -> None:
+        self.paused.clear()
+        self.pending.clear()
+        for call_id, value in values.items():
+            self.futures.pop(call_id).set_result(value)
 
     def validate(self, agent: BubAgent) -> None:
         names = {name.replace(".", "_") for name in agent.tools}
@@ -62,12 +66,18 @@ class ExternalTools:
             context=True,
             exposure="direct",
         )
-        def suspend(*, context: ToolContext, **arguments: Any) -> None:
+        async def suspend(*, context: ToolContext, **arguments: Any) -> Any:
             if context.state is not state:
                 raise ValueError(
                     "Frontend/interrupt tools belong to the owning AG-UI turn"
                 )
-            self.context = context
+            if (
+                self.batch.get(context.call_id, "").replace(".", "_")
+                != definition.name.replace(".", "_")
+                or context.command
+                or context.code_mode
+            ):
+                raise ValueError("External tools require a direct model tool call")
             call = {
                 "id": context.call_id,
                 "name": definition.name,
@@ -81,7 +91,10 @@ class ExternalTools:
                     response_schema=definition.response_schema,
                 )
             self.pending.append(call)
-            raise ExternalCallsPending()
+            future = asyncio.get_running_loop().create_future()
+            self.futures[context.call_id] = future
+            self.check_pause()
+            return await future
 
         # Client schemas are supplied at runtime, rather than by Python annotations.
         return replace(suspend, parameters=definition.parameters)

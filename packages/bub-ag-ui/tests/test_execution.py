@@ -1,4 +1,4 @@
-"""The AG-UI adapter participates in Bub's native hook/EventBus lifecycle."""
+"""Application extensions and other channels retain their observable behavior."""
 
 import asyncio
 from contextlib import aclosing
@@ -8,19 +8,17 @@ from bub import hookimpl
 from bub.builtin.agent import BubAgent
 from bub.channels.manager import ChannelManager
 from bub.channels.message import ChannelMessage
-from bub.core.events import StepStarted, ToolCallDecision
+from bub.core.events import ToolCallDecision
 from bub.core.tools import Tool
 from bub.streaming import AsyncStreamEvents, StreamEvent
-from bub_ag_ui.execution import install_execution_hooks
-from bub_ag_ui.plugin import AGUIChannel
+from bub_ag_ui.plugin import AGUIPlugin
 
 from .conftest import collect, request
 
 
-async def test_tools_bound_by_load_state_use_native_policy_and_output_hooks(setup):
+async def test_application_tool_policy_is_reflected_in_client_results(setup):
     provider, make = setup
     adapter = make()
-    saved, rendered = [], []
 
     class Hooks:
         @hookimpl
@@ -34,14 +32,6 @@ async def test_tools_bound_by_load_state_use_native_policy_and_output_hooks(setu
         def before_tool_call(self, call):
             return ToolCallDecision.replace("hook-result")
 
-        @hookimpl
-        def save_state(self, model_output):
-            saved.append(model_output)
-
-        @hookimpl
-        def render_outbound(self, model_output):
-            rendered.append(model_output)
-
     adapter.framework.plugin_manager.register(Hooks(), "observe-turn")
     provider.reply(calls=[("c1", "bound", "{}")])
     provider.reply("done")
@@ -50,9 +40,6 @@ async def test_tools_bound_by_load_state_use_native_policy_and_output_hooks(setu
     assert [e["content"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
         "hook-result"
     ]
-    assert saved == rendered == ["done"]
-    await collect(adapter, request())
-    assert saved == rendered == ["done"]
 
 
 @pytest.mark.parametrize("failure", ["save", "render", "dispatch"])
@@ -88,9 +75,8 @@ async def test_gateway_keeps_router_and_does_not_capture_other_channels(setup):
     provider, make = setup
     adapter = make(bind_router=False)
     framework = adapter.framework
-    channel = AGUIChannel(framework)
+    framework.plugin_manager.register(AGUIPlugin(framework), "ag-ui")
     manager = ChannelManager(framework, system_prompt=None)
-    manager._channels["ag-ui"] = channel
     framework.bind_channel_router(manager)
     # A second controller must not replace a gateway's router.
     second = make(bind_router=False)
@@ -121,16 +107,14 @@ async def test_concurrent_threads_keep_event_routes_separate(setup):
 
     class ModelHook:
         @hookimpl(tryfirst=True)
-        def run_model_stream(self, state):
+        def run_model_stream(self, prompt):
             async def source():
                 nonlocal count
                 count += 1
                 if count == 2:
                     both.set()
                 await asyncio.wait_for(both.wait(), 2)
-                yield StreamEvent(
-                    "text", {"delta": state["_ag_ui_inbound"].request.thread_id}
-                )
+                yield StreamEvent("text", {"delta": "".join(prompt)})
 
             return AsyncStreamEvents(source())
 
@@ -138,7 +122,16 @@ async def test_concurrent_threads_keep_event_routes_separate(setup):
     # framework stream routing. There is no global "current AG-UI run".
     adapter.framework.plugin_manager.register(ModelHook(), "custom-model")
     results = await asyncio.gather(
-        collect(adapter, request(thread="one")), collect(adapter, request(thread="two"))
+        *(
+            collect(
+                adapter,
+                request(
+                    [{"id": "u1", "role": "user", "content": label}],
+                    thread=label,
+                ),
+            )
+            for label in ("one", "two")
+        )
     )
     for thread_id, (thread, events) in zip(["one", "two"], results, strict=True):
         assert (await thread.history())["messages"][-1]["content"] == thread_id
@@ -152,7 +145,6 @@ async def test_installation_preserves_other_channel_scalar_provider(
     provider, make = setup
     adapter = make(bind_router=False)
     framework = adapter.framework
-    framework.plugin_manager.unregister(name="ag-ui.execution")
 
     class ScalarModel:
         @hookimpl
@@ -160,14 +152,10 @@ async def test_installation_preserves_other_channel_scalar_provider(
             return "selected scalar model"
 
     framework.plugin_manager.register(ScalarModel(), "scalar-model")
-    for index in range(2):
-        message = ChannelMessage(
-            session_id=f"other-{index}", channel="other", content="hi"
-        )
-        message._runtime_agent = BubAgent(framework, tools=[], skill_dirs=[])
-        result = await framework.process_inbound(message, stream_output=stream_output)
-        assert result.model_output == "selected scalar model"
-        install_execution_hooks(framework)
+    message = ChannelMessage(session_id="other", channel="other", content="hi")
+    message._runtime_agent = BubAgent(framework, tools=[], skill_dirs=[])
+    result = await framework.process_inbound(message, stream_output=stream_output)
+    assert result.model_output == "selected scalar model"
     assert provider.requests == []
 
 
@@ -186,7 +174,6 @@ async def test_external_calls_obey_native_policy(setup, action, interrupt):
         if interrupt
         else [{"name": "browser", "description": "", "parameters": schema}]
     )
-    finished = []
 
     class Guard:
         @hookimpl
@@ -197,23 +184,19 @@ async def test_external_calls_obey_native_policy(setup, action, interrupt):
                 return ToolCallDecision.replace("already handled")
             return ToolCallDecision.proceed({"value": 7})
 
-        @hookimpl
-        def after_tool_call(self, call, result):
-            finished.append(result)
-
     adapter.framework.plugin_manager.register(Guard(), "tool-policy")
     provider.reply(calls=[("f1", "browser", '{"value":1}')])
     if action != "proceed":
         provider.reply("handled without frontend execution")
-    thread, events = await collect(adapter, request(tools=tools))
+    _, events = await collect(adapter, request(tools=tools))
     assert events[-1]["type"] == "RUN_FINISHED"
     if action == "proceed":
-        assert len((await thread.history())["pending"]) == 1
-        assert (await thread.history())["pending"][0]["arguments"] == '{"value": 7}'
-        assert not finished  # suspended is not a fabricated completion
+        assert not any(e["type"] == "TOOL_CALL_RESULT" for e in events)
+        if interrupt:
+            assert events[-1]["outcome"]["interrupts"][0]["metadata"]["arguments"] == {
+                "value": 7
+            }
     else:
-        assert (await thread.history())["pending"] == []
-        assert len(finished) == 1
         results = [e["content"] for e in events if e["type"] == "TOOL_CALL_RESULT"]
         assert len(results) == 1
         assert (
@@ -229,18 +212,10 @@ async def test_custom_provider_delegating_native_recording_does_not_duplicate_hi
 
     class DelegatingProvider:
         @hookimpl(tryfirst=True)
-        def run_model_stream(self, state):
-            message = state["_ag_ui_inbound"]
-            agent = message._runtime_agent
-
-            async def source():
-                async with agent.session(message.model_tape, state=state) as tape:
-                    async for event in agent.run_once(
-                        None, tape=tape, model=agent.settings.chat_model()
-                    ):
-                        yield event
-
-            return AsyncStreamEvents(source())
+        async def run_model_stream(self, prompt, session_id, state):
+            return await state["_runtime_agent"].run_stream(
+                prompt=prompt, session_id=session_id, state=state
+            )
 
     adapter.framework.plugin_manager.register(DelegatingProvider(), "delegate")
     provider.reply("recorded by native agent")
@@ -310,88 +285,20 @@ async def test_custom_provider_output_is_displayed_without_model_tape_supplement
             run="r2",
         ),
     )
-    # Display history is a protocol concern, not a request to supplement the
-    # provider's model storage. The provider chose to emit without recording.
-    assert [
-        message["role"]
-        for message in provider.requests[-1]["messages"]
-        if message["role"] != "system"
-    ] == ["user", "user"]
-
-
-@pytest.mark.parametrize("failure", ["error", "cancel"])
-async def test_failed_custom_stream_preserves_provider_owned_context(setup, failure):
-    provider, make = setup
-    adapter = make()
-    provider.reply("recorded answer")
-    thread, _ = await collect(adapter, request(run="completed"))
-    entered = asyncio.Event()
-
-    class CustomProvider:
-        @hookimpl(tryfirst=True)
-        def run_model_stream(self):
-            async def source():
-                yield StreamEvent("text", {"delta": "display-only partial"})
-                yield StreamEvent(
-                    "tool_call",
-                    {"tool_calls": [{"id": "c1", "name": "lookup", "arguments": "{}"}]},
-                )
-                entered.set()
-                if failure == "cancel":
-                    await asyncio.Event().wait()
-                raise RuntimeError("custom provider failed")
-
-            return AsyncStreamEvents(source())
-
-    adapter.framework.plugin_manager.register(CustomProvider(), "custom")
-    data = request(
-        [
-            *(await thread.history())["messages"],
-            {"id": "u2", "role": "user", "content": "Run custom provider"},
-        ]
+    # Display-only provider output is not promoted into Bub's model context by
+    # the client echo. The provider remains responsible for native recording.
+    assert not any(
+        m.get("content") == "custom answer" for m in provider.requests[-1]["messages"]
     )
-    submission = await adapter.submit("alice", data)
-    await asyncio.wait_for(entered.wait(), 5)
-    if failure == "cancel":
-        assert await adapter.cancel("alice", "t1", "r1")
-    events = [r["event"] async for r in adapter.events(submission.thread, "r1")]
-    assert events[-1]["type"] == "RUN_ERROR"
-    assert sum(e["type"] in {"RUN_ERROR", "RUN_FINISHED"} for e in events) == 1
-    assert any(e.get("delta") == "display-only partial" for e in events)
-    assert not any(e["type"] == "TOOL_CALL_RESULT" for e in events)
-    _, replay = await collect(adapter, data)
-    assert replay == events
-    adapter.framework.plugin_manager.unregister(name="custom")
-
-    provider.reply("next answer")
-    _, next_events = await collect(
-        make(),
-        request(
-            [
-                *(await thread.history())["messages"],
-                {"id": "u3", "role": "user", "content": "Continue"},
-            ],
-            run="r2",
-        ),
+    assert not any(
+        m.get("tool_call_id") == "c1" for m in provider.requests[-1]["messages"]
     )
-    assert next_events[-1]["type"] == "RUN_FINISHED"
-    model_messages = provider.requests[-1]["messages"]
-    assert [m["content"] for m in model_messages if m["role"] == "assistant"] == [
-        "recorded answer"
-    ]
-    assert not any(m.get("tool_calls") or m["role"] == "tool" for m in model_messages)
-    assert [m["content"] for m in model_messages if m["role"] == "user"] == [
-        "Hello",
-        "Run custom provider",
-        "Continue",
-    ]
 
 
 @pytest.mark.parametrize("frontend", [False, True])
 async def test_child_run_events_do_not_escape_into_parent_turn(setup, frontend):
     """Subagents use run_stream on the same agent/EventBus, but a different tape."""
     provider, make = setup
-    observed_steps = []
 
     async def delegate(context):
         agent = context.state["_runtime_agent"]
@@ -416,12 +323,6 @@ async def test_child_run_events_do_not_escape_into_parent_turn(setup, frontend):
         ]
     )
 
-    class ObserveSteps:
-        @hookimpl
-        def load_state(self, message):
-            message._runtime_agent.events.on(StepStarted, observed_steps.append)
-
-    adapter.framework.plugin_manager.register(ObserveSteps(), "observe-child-steps")
     calls = [("delegate-call", "delegate", "{}")]
     client_tools = []
     if frontend:
@@ -438,18 +339,10 @@ async def test_child_run_events_do_not_escape_into_parent_turn(setup, frontend):
         provider.reply("parent answer")
     thread, events = await collect(adapter, request(tools=client_tools))
 
-    assert len({id(event.tape) for event in observed_steps}) == 2
-    expected_steps = ["1"] if frontend else ["1", "2"]
-    assert [
-        e["stepName"] for e in events if e["type"] == "STEP_STARTED"
-    ] == expected_steps
-    assert [
-        e["stepName"] for e in events if e["type"] == "STEP_FINISHED"
-    ] == expected_steps
     assert events[-1]["type"] == "RUN_FINISHED"
-    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
-        "delegate-call"
-    ]
+    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == (
+        [] if frontend else ["delegate-call"]
+    )
     assert not any(e.get("delta") == "child answer" for e in events)
 
     if frontend:
@@ -521,7 +414,6 @@ async def test_child_cannot_suspend_parent_external_tools(setup, interrupt):
     provider.reply("parent answer")
     thread, events = await collect(adapter, request(tools=tools))
     assert events[-1]["type"] == "RUN_FINISHED"
-    assert (await thread.history())["pending"] == []
     assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
         "delegate-call"
     ]
@@ -544,3 +436,24 @@ async def test_child_cannot_suspend_parent_external_tools(setup, interrupt):
     assert [m["tool_call_id"] for m in messages if m["role"] == "tool"] == [
         "delegate-call"
     ]
+
+
+async def test_output_processing_obeys_run_timeout(setup, advance_time):
+    provider, make = setup
+    adapter = make(max_run_seconds=600)
+    save_started = asyncio.Event()
+
+    class Output:
+        @hookimpl
+        async def save_state(self):
+            save_started.set()
+            await asyncio.Event().wait()
+
+    adapter.framework.plugin_manager.register(Output(), "blocked-save")
+    provider.reply("finished model")
+    pending = asyncio.create_task(collect(adapter, request()))
+    await save_started.wait()
+    advance_time(601)
+    _, events = await pending
+    assert events[-1]["type"] == "RUN_ERROR"
+    assert "timed out" in events[-1]["message"]

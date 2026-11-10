@@ -1,20 +1,21 @@
-"""A deterministic projection from Bub streams to AG-UI events and messages."""
+"""Typed stream events and their AG-UI observers."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection, Iterable
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
 import jsonpatch
-from ag_ui.core import Event
+from ag_ui.core import Event as AGUIEvent
+from bub.core.events import Event
 from bub.errors import BubError
-from bub.streaming import StreamEvent
 from pydantic import TypeAdapter
 
-EVENT = TypeAdapter(Event)
+EVENT = TypeAdapter(AGUIEvent)
 type Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -30,20 +31,17 @@ def result_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-class Projection:
-    """Full display history, deliberately independent of tape context anchors."""
+class MessageProjection:
+    """Current response messages for activity validation."""
 
-    def __init__(self) -> None:
-        self.messages: list[dict[str, Any]] = []
-        self.state: Any = {}
+    def __init__(self, messages: list[dict[str, Any]] | None = None) -> None:
+        self.messages = deepcopy(messages or [])
 
     def message(self, id: str) -> dict[str, Any]:
         return next(message for message in self.messages if message["id"] == id)
 
     def apply(self, event: dict[str, Any]) -> None:
         match event["type"]:
-            case "MESSAGES_SNAPSHOT":
-                self.messages = deepcopy(event["messages"])
             case "TEXT_MESSAGE_START":
                 self.messages.append(
                     {"id": event["messageId"], "role": event["role"], "content": ""}
@@ -79,10 +77,6 @@ class Projection:
                         "toolCallId": event["toolCallId"],
                     }
                 )
-            case "STATE_SNAPSHOT":
-                self.state = deepcopy(event["snapshot"])
-            case "STATE_DELTA":
-                self.state = jsonpatch.apply_patch(self.state, event["delta"])
             case "ACTIVITY_SNAPSHOT":
                 existing = next(
                     (m for m in self.messages if m["id"] == event["messageId"]), None
@@ -110,14 +104,18 @@ class Projection:
 class EventStream:
     """One run's wire state; a Bub final closes a step, never a run."""
 
-    def __init__(self, emit: Emit) -> None:
-        self.emit = emit
+    def __init__(self, emit: Emit, messages: list[dict[str, Any]]) -> None:
+        self._emit = emit
+        self._messages = MessageProjection(messages)
         self.message_id: str | None = None
         self.reasoning_id: str | None = None
-        self.calls: list[dict[str, Any]] = []
 
     async def send(self, type: str, **fields: Any) -> None:
-        await self.emit(wire_event(type, **fields))
+        await self.publish(wire_event(type, **fields))
+
+    async def publish(self, event: dict[str, Any]) -> None:
+        self._messages.apply(event)
+        await self._emit(event)
 
     async def text_start(self) -> str:
         if self.message_id is None:
@@ -139,67 +137,130 @@ class EventStream:
             await self.send("TEXT_MESSAGE_END", messageId=self.message_id)
             self.message_id = None
 
-    async def consume(self, event: StreamEvent) -> None:
-        data = event.data
-        match event.kind:
-            case "text":
-                if delta := data.get("delta"):
-                    await self.close_reasoning()
-                    await self.send(
-                        "TEXT_MESSAGE_CONTENT",
-                        messageId=await self.text_start(),
-                        delta=delta,
-                    )
-            case "reasoning":
-                if delta := data.get("delta"):
-                    if self.reasoning_id is None:
-                        self.reasoning_id = str(uuid4())
-                        await self.send("REASONING_START", messageId=self.reasoning_id)
-                        await self.send(
-                            "REASONING_MESSAGE_START",
-                            messageId=self.reasoning_id,
-                            role="reasoning",
-                        )
-                    await self.send(
-                        "REASONING_MESSAGE_CONTENT",
-                        messageId=self.reasoning_id,
-                        delta=delta,
-                    )
-            case "tool_call":
-                await self.close_reasoning()
-                parent = await self.text_start()
-                self.calls = data["tool_calls"]
-                for call in self.calls:
-                    await self.send(
-                        "TOOL_CALL_START",
-                        toolCallId=call["id"],
-                        toolCallName=call["name"],
-                        parentMessageId=parent,
-                    )
-                    args = call["arguments"]
-                    await self.send(
-                        "TOOL_CALL_ARGS",
-                        toolCallId=call["id"],
-                        delta=args
-                        if isinstance(args, str)
-                        else json.dumps(args, ensure_ascii=False),
-                    )
-                    await self.send("TOOL_CALL_END", toolCallId=call["id"])
-            case "tool_result":
-                ids = data.get("call_ids", [call["id"] for call in self.calls])
-                for call_id, result in zip(ids, data["tool_results"], strict=True):
-                    await self.send(
-                        "TOOL_CALL_RESULT",
-                        messageId=str(uuid4()),
-                        toolCallId=call_id,
-                        content=result_text(result),
-                        role="tool",
-                    )
-            case "usage":
-                await self.send("CUSTOM", name="bub.usage", value=data)
-            case "error":
-                raise RuntimeError(data.get("message", "Agent stream failed"))
-            case "final":
-                await self.close()
-                if not data.get("ok", True):
-                    raise RuntimeError("Agent step failed")
+
+@dataclass(kw_only=True)
+class StreamOutput(Event):
+    """A stream chunk published on the agent bus, scoped to its execution.
+
+    These are not native AgentEvents: lifecycle/recording observers must not
+    mistake a protocol stream chunk for another model or tool execution.
+    """
+
+    output: EventStream
+    data: dict[str, Any]
+
+
+class TextDelta(StreamOutput):
+    pass
+
+
+class ReasoningDelta(StreamOutput):
+    pass
+
+
+class ToolCalls(StreamOutput):
+    pass
+
+
+class ToolResults(StreamOutput):
+    pass
+
+
+class Usage(StreamOutput):
+    pass
+
+
+class StreamError(StreamOutput):
+    pass
+
+
+class StepFinal(StreamOutput):
+    pass
+
+
+async def text_delta(event: TextDelta) -> None:
+    if delta := event.data.get("delta"):
+        output = event.output
+        await output.close_reasoning()
+        await output.send(
+            "TEXT_MESSAGE_CONTENT", messageId=await output.text_start(), delta=delta
+        )
+
+
+async def reasoning_delta(event: ReasoningDelta) -> None:
+    if delta := event.data.get("delta"):
+        output = event.output
+        if output.reasoning_id is None:
+            output.reasoning_id = str(uuid4())
+            await output.send("REASONING_START", messageId=output.reasoning_id)
+            await output.send(
+                "REASONING_MESSAGE_START",
+                messageId=output.reasoning_id,
+                role="reasoning",
+            )
+        await output.send(
+            "REASONING_MESSAGE_CONTENT", messageId=output.reasoning_id, delta=delta
+        )
+
+
+async def emit_tool_calls(event: ToolCalls) -> None:
+    output = event.output
+    await output.close_reasoning()
+    parent = await output.text_start()
+    for call in event.data["tool_calls"]:
+        await output.send(
+            "TOOL_CALL_START",
+            toolCallId=call["id"],
+            toolCallName=call["name"],
+            parentMessageId=parent,
+        )
+        args = call["arguments"]
+        await output.send(
+            "TOOL_CALL_ARGS",
+            toolCallId=call["id"],
+            delta=args
+            if isinstance(args, str)
+            else json.dumps(args, ensure_ascii=False),
+        )
+        await output.send("TOOL_CALL_END", toolCallId=call["id"])
+
+
+async def emit_tool_results(
+    event: ToolResults, *, call_ids: Iterable[str] = (), supplied: Collection[str] = ()
+) -> None:
+    ids = event.data.get("call_ids", call_ids)
+    for call_id, result in zip(ids, event.data["tool_results"], strict=True):
+        if call_id in supplied:
+            continue
+        await event.output.send(
+            "TOOL_CALL_RESULT",
+            messageId=str(uuid4()),
+            toolCallId=call_id,
+            content=result_text(result),
+            role="tool",
+        )
+
+
+async def usage(event: Usage) -> None:
+    await event.output.send("CUSTOM", name="bub.usage", value=event.data)
+
+
+async def stream_error(event: StreamError) -> None:
+    raise RuntimeError(event.data.get("message", "Agent stream failed"))
+
+
+async def step_final(event: StepFinal) -> None:
+    await event.output.close()
+    if not event.data.get("ok", True):
+        raise RuntimeError("Agent step failed")
+
+
+STREAM_OBSERVERS = {
+    "text": (TextDelta, text_delta),
+    "reasoning": (ReasoningDelta, reasoning_delta),
+    "tool_call": (ToolCalls, emit_tool_calls),
+    "tool_result": (ToolResults, emit_tool_results),
+    "usage": (Usage, usage),
+    "error": (StreamError, stream_error),
+    "final": (StepFinal, step_final),
+}

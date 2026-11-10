@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections import deque
@@ -54,6 +55,20 @@ class Provider:
 
 
 @pytest.fixture
+async def advance_time(monkeypatch):
+    """Keep deadlines independent of wall time until the test advances the clock."""
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    monkeypatch.setattr(loop, "time", lambda: now)
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    return advance
+
+
+@pytest.fixture
 async def setup(monkeypatch, tmp_path):
     for key in list(os.environ):
         if key.startswith("BUB_"):
@@ -71,9 +86,11 @@ async def setup(monkeypatch, tmp_path):
         store = InMemoryTapeStore()
         adapters = []
 
-        def make(tools=(), **kwargs):
+        def make(tools=(), *, tape_store=None, **kwargs):
             def factory(*args, **options):
-                options.setdefault("tape_store", store)
+                options.setdefault(
+                    "tape_store", tape_store if tape_store is not None else store
+                )
                 return BubAgent(*args, tools=tools, skill_dirs=[], **options)
 
             adapter = AGUIAdapter(
@@ -100,9 +117,25 @@ def request(messages=None, *, run="r1", thread="t1", tools=None, **kwargs):
     )
 
 
+class ClientView:
+    """Test-side reducer, never an adapter history API."""
+
+    def __init__(self, projection):
+        self.projection = projection
+
+    async def history(self):
+        return {
+            "messages": self.projection.messages,
+        }
+
+
 async def collect(adapter, data, user="alice"):
-    submission = await adapter.submit(user, data)
-    thread = submission.thread
-    records = [record async for record in adapter.events(thread, data.run_id)]
-    events = [record["event"] for record in records]
-    return thread, events
+    from bub_ag_ui.events import MessageProjection
+
+    events = [event async for event in adapter.run(user, data)]
+    projection = MessageProjection(
+        [message.model_dump(mode="json", by_alias=True) for message in data.messages]
+    )
+    for event in events:
+        projection.apply(event)
+    return ClientView(projection), events

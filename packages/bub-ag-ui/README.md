@@ -1,200 +1,152 @@
 # bub-ag-ui
 
-Expose Bub agents through AG-UI HTTP/SSE, with streamed text, reasoning, tools,
-shared state, interrupts, and persistent display history.
+Connect a web frontend to Bub through AG-UI HTTP/SSE. Stream text, reasoning,
+tool calls, and shared state, with support for browser-side tools, human input,
+and conversation history.
 
-## Run
+## Start the server
 
-Install this package in the environment that runs Bub. In this workspace it is
-already a root dependency and registers the `ag-ui` channel and CLI command:
+Install this package in the environment that runs Bub. In this repository it is
+already a root dependency:
 
 ```sh
 uv sync
 uv run bub ag-ui --host 127.0.0.1 --port 28201
 ```
 
-Use your normal Bub model/provider configuration. Connect an AG-UI `HttpAgent` to
-`http://127.0.0.1:28201/agent`. For non-loopback listening, set `BUB_AG_UI_TOKEN`
-and send it as `Authorization: Bearer <token>`. For multi-user hosting, inject a
-trusted authentication callback into `create_app`; a shared token represents one
-principal, not multiple isolated users. Configure allowed browser origins with
-`BUB_AG_UI_ORIGINS` (a JSON array; defaults to `["http://localhost:3000"]`).
+The server uses your normal Bub model/provider configuration and tape store.
+History survives a server restart only when that store is persistent.
 
-The adapter also exposes authenticated `/threads/{thread_id}/history`,
-`/threads/{thread_id}/runs/{run_id}/events`, and
-`/threads/{thread_id}/runs/{run_id}/cancel` routes for history, replay, and
-cancellation. These are Bub extensions, not standard AG-UI endpoints. Use one
-adapter/controller per store/workspace; this is not a distributed multi-writer
-run scheduler.
+## Connect a frontend
 
-## Execution boundary
+Use an AG-UI client or a frontend integration that accepts an AG-UI endpoint.
+For a minimal browser client, install `@ag-ui/client` and send a message:
 
-AG-UI and ACP remain separate plugins, but use the same framework turn boundary:
+```ts
+import { HttpAgent } from "@ag-ui/client";
 
-```text
-HTTP RunAgentInput
-    -> AGUIAdapter: validate, admit, persist accepted input
-    -> framework.process_inbound(AGUIInboundMessage, stream_output=True)
-         -> load_state / build_prompt hooks
-         -> scoped AG-UI run_model_stream hook
-              -> public agent.session / native agent.run_once steps
-              -> EventBus: StepStarted / StepFinished
-              -> native LLM/tool hooks and protocol tool suspension
-         -> save_state / render_outbound / dispatch_outbound hooks
-    -> checkpoint pending work and commit RUN_FINISHED (or RUN_ERROR)
+const agent = new HttpAgent({
+  url: "http://127.0.0.1:28201/agent",
+  threadId: crypto.randomUUID(),
+  initialMessages: [
+    { id: crypto.randomUUID(), role: "user", content: "Hello, Bub!" },
+  ],
+});
+
+await agent.runAgent({ runId: crypto.randomUUID() });
+console.log(agent.messages);
 ```
 
-`execution.py` owns the scoped hooks and stream routing. `runtime.py` owns protocol
-admission, tape recovery, and cancellation. `runner.py` orchestrates the protocol
-turn using native `BubAgent.run_once` steps: Bub still owns model requests, tool
-policy hooks, and execution of each complete tool batch. It is not a replacement
-agent class or a claim that AG-UI uses the CLI's continuous run loop.
-The adapter does not override `Agent.start` or `BubAgent.run_stream`, patch Bub,
-or depend on `bub-acp-server`.
+Keep the `threadId` to continue or reload the same conversation. Use a new `runId`
+for each new user turn or tool continuation; reuse a run ID only when retrying
+that exact request. Your frontend is responsible for rendering streamed updates
+and handling any browser-side tools.
 
-Accepted AG-UI messages already live on the model tape. The execution hook runs
-against that history without appending the framework's descriptive prompt again.
-This also permits a result-only continuation without a synthetic user message.
-LLM request customization uses the native `before_llm_call` hook/EventBus path;
-`build_prompt` is not a second source of model history for this protocol.
-Frontend tools still suspend at the protocol boundary and resume in a later run.
-Frontend and interrupt tools belong to that AG-UI turn: nested native runs do not
-receive them in their tool scope, and direct calls from another turn fail as
-ordinary tool errors rather than suspending the parent. Child agents can return
-a request to the parent, which decides whether to call a frontend tool.
+### Authentication and browser origins
 
-Standalone hosting binds an AG-UI stream router. Gateway hosting uses
-`AGUIChannel.stream_events` and keeps the gateway router intact. When embedding
-in an existing gateway, use `create_app(..., channel_managed=True)`; an explicitly
-injected adapter must likewise be constructed with `bind_router=False`.
-`manage_framework` separately controls ownership of `framework.running()`.
-Routing is attached to each inbound message, not a global current-run variable.
+- Loopback access works without a token by default.
+- For non-loopback listening, set `BUB_AG_UI_TOKEN` and send
+  `Authorization: Bearer <token>` on requests. `HttpAgent` accepts a `headers`
+  option for this.
+- Set `BUB_AG_UI_ORIGINS` to a JSON array of allowed browser origins. The default
+  is `["http://localhost:3000"]`.
+- A shared token represents one identity, not separate users. For multi-user
+  hosting, supply a trusted `authenticate` callback to `create_app` that returns
+  a stable user identity. A client-chosen thread ID is not authentication.
 
-Framework save/render/dispatch hooks finish before protocol success is committed.
-Cancellation closes the native stream and merges its tape fork before protocol cleanup;
-step EventBus subscriptions are removed when the stream closes. Duplicate runs
-and partial frontend results that do not execute a model do not start a new
-framework turn.
+## Tools and human input
 
-The responsibilities have a single owner at each boundary:
-
-| Responsibility | Owner |
+| Tool type | What the frontend should expect |
 | --- | --- |
-| HTTP authentication, SSE encoding, disconnect policy | `http.py` |
-| Admission, active task, protocol terminal outcome, protocol recovery | `runtime.py` |
-| Framework integration and per-message stream routing | `execution.py` |
-| Native step orchestration and return-to-client boundary | `runner.py` |
-| Wire event adaptation and display reduction | `events.py` |
-| Durable protocol events and derived history | Mounted `AGUIHistory` sidecar |
-| Model exchange recording | The executing provider; native Bub steps use the native recorder |
+| Server tool | Bub executes it and continues the response without client action. |
+| Frontend tool | The run ends with a pending call. Execute it in the browser, then submit its result in a new run. |
+| Human-input interrupt | The run ends with an interrupt outcome. Show the decision UI, then submit a `resume` entry in a new run. |
 
-Step completion comes from the native EventBus; recovery only repairs boundaries
-left open by a failed or interrupted run. The routing layer does not independently
-close steps. Stream adaptation does not infer a provider's persistence policy:
-AG-UI does not listen for `ChatFinished` to detect missing records, buffer model
-output for a second writer, or supplement a third-party provider's model tape.
-A provider that delegates to the native agent retains native recording; a provider
-that only emits events is not silently given a persistence policy by AG-UI.
-This also applies to failure, cancellation, and restart: recovery closes open
-protocol boundaries, clears pending frontend work, and records `RUN_ERROR`. It
-neither synthesizes missing tool results nor rebuilds model context from display
-history. Partial output remains visible and replayable; the next model turn uses
-only context committed by the provider and explicitly accepted input. Providers
-own any repair needed for their partially committed model exchanges.
-Standalone and gateway hosting select different transport adapters but share the
-same per-message stream function and HTTP lifecycle implementation.
+**`RUN_FINISHED` means that run has ended, not necessarily that the agent has
+finished answering.** Check for pending tool calls or an interrupt outcome.
 
-## History, replay, and ownership
+Declare frontend tools in the request's `tools` list. Return each result as a
+message with `role: "tool"`, a new message `id`, the matching `toolCallId`, and
+its `content`. Send the tool definitions again on the continuation. You do not
+need to add a synthetic user message to make the agent continue.
 
-Stored messages are authoritative. Client-echoed history is not merged back or
-compared field by field; only edits to existing user messages can create an edit
-branch. New user input, pending tool results, and interrupt responses still pass
-admission checks. Tool name collisions are checked by `ExternalTools`, including
-again after hooks bind session tools. Before persisting application JSON patches,
-the sidecar checks that they apply; ordinary events do not trigger a trial replay
-of the entire history.
+Human-input tools are configured on the server with `InterruptTool`. Respond
+using `resume`, with the matching `interruptId`, a status, and the response
+payload. Resolved payloads must satisfy the interrupt's response schema, if any.
 
-History is an `ag-ui` sidecar registered through `provide_tape_sidecar`, just like
-Bub's spill storage. The canonical owner tape holds ordinary `ag_ui.admit`,
-`ag_ui.checkpoint`, and `ag_ui.event` entries on that sidecar. The history response
-is derived from those entries; there is no independent journal or persistent
-projection index. Protocol writes go directly to the canonical tape, not into the
-model's temporary fork, so subscribers see only durable output. Event followers
-read run metadata and new wire records without reconstructing display history.
-The pinned Bub `TapeQuery` has no entry-ID range query, so each follow read still
-scans the sidecar; removing that remaining cost requires native store/query
-support, not a parallel event journal in this plugin.
+Results can arrive in separate requests, but the agent waits until all pending
+calls are resolved before continuing. Resolve them before starting another user
+turn. Unknown or duplicate results are rejected. Tool names must not collide
+with server tools or each other; `web.search` and `web_search` count as the same
+model-facing name.
 
-SSE IDs are native sidecar entry IDs. They may have gaps because admission and
-checkpoint entries are not SSE events. Replay reads existing events and never
-runs tools or the model again. This follows the same separation as
-[Bub Walkman's snapshot/follow design](https://github.com/bubbuild/bub-walkman/blob/f3d842972de330f444536e9cea746e9ac61fc985/src/bub_walkman/sources.py):
-reading a tape is separate from owning a producer. Walkman itself is a viewer,
-not an agent execution scheduler; it is not a runtime dependency here.
+Browser tools and interrupts belong to the parent AG-UI turn. Child agents cannot
+directly use them; they can return a request to the parent agent to act on.
 
-A short, per-thread admission gate serializes duplicate detection and task
-creation. It is not held while the model runs. Active tasks determine execution
-ownership; replay subscribers hold no execution lock. Concurrent retries of the
-same request join the existing run, and only the response that admitted the run
-cancels it on disconnect. An independent run on a busy thread receives HTTP 409.
-Cancellation settles pending writes and native tape cleanup before another run
-can be admitted.
+## History, retries, and cancellation
 
-Bub's normal sidecar lifecycle applies: handoff retains display history, reset
-clears it unless `keep_sidecars=("ag-ui",)` is supplied, and fork resets take
-effect on merge. Reset only while the thread is idle. Resetting just the sidecar
-forgets display history and idempotency records, not the model tape. Cursors are
-valid only for the current sidecar lifetime; after a reset, reload history rather
-than reusing old cursors. Old run replay requests return not-found once their
-records are gone. No cross-process lease or multi-writer guarantee is provided.
+- **Reload a conversation:** fetch its history and restore your client's messages
+  and state. The response also includes pending calls, run status, and a replay
+  cursor. History restoration is a Bub extension; connecting a standard
+  `HttpAgent` alone does not automatically fetch it.
+- **Retry a request:** the same run ID and identical request join the existing run
+  or replay its saved events, without executing the model or tools again. Reusing
+  that ID for a different request returns HTTP `409`.
+- **Replay events:** use the events endpoint with `after=<cursor>` or a
+  `Last-Event-ID` header. Replay returns saved output and follows new output if
+  the run is still active; it does not restart execution. Treat SSE IDs as cursors,
+  not consecutive event counts.
+- **Disconnect:** closing the response that started a run cancels that run.
+  Closing a separate replay or duplicate-request connection does not cancel it.
+  Reconnecting can recover saved output, but does not resume cancelled work.
+- **Cancel explicitly:** use the cancel endpoint. Cancellation does not undo
+  side effects of tools that have already executed.
+- **Restart after an interrupted run:** the unfinished run is marked failed,
+  rather than automatically executed again. Partial output remains available,
+  but it does not imply a completed model exchange or successful tool result.
 
-Frontend and interrupt tools are ordinary `@tool` handlers with runtime-supplied
-JSON schemas. Native deny/replace policies prevent suspension; admitted handlers
-return control to the client only after the native parallel batch has settled.
+Stored history is authoritative: echoing modified assistant messages does not
+rewrite it. To edit or regenerate, send a new run whose message list ends at the
+existing user message being edited or retried. Bub uses that point as the start
+of a new context branch. Resolve pending tools before editing.
 
-## Execution API boundary
+Reset history only while the thread is idle. After a reset, reload history and
+discard old replay cursors. Clearing display history alone does not clear the
+model's conversation context; use a new thread for a separate conversation.
 
-`runner.py` uses the public `BubAgent.run_once` API for model calls, tool batches,
-and policy hooks. The outer loop still prepares tools and prompts, emits native
-lifecycle events, handles queued messages and context overflow, and stops at the
-frontend-tool boundary. These overlap with Bub's native run loop, but the current
-public `run_on(tape, prompt)` API does not expose a resume-from-recorded-input or
-external-tool suspension contract. Passing an empty prompt is not equivalent to
-`run_once(None)`; accepted input is already on the model tape.
+## HTTP endpoints and limits
 
-Replacing this loop requires those capabilities in Bub's public API. This package
-does not override the agent, call its private loop, or patch the installed dependency.
-History/replay, request idempotency, and edit branches are adapter service features,
-not requirements imposed by AG-UI or functionality supplied by its Python SDK.
-An explicit edit/regenerate request creates a new context branch from the selected
-server-side history; failure recovery never implicitly performs that operation.
+All routes use the same authentication.
 
-## SDK reuse and test scope
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/agent` | Submit an AG-UI `RunAgentInput`; receive SSE events. |
+| `GET` | `/threads/{thread_id}/history` | Restore messages, state, pending calls, run status, and cursor. |
+| `GET` | `/threads/{thread_id}/runs/{run_id}/events` | Replay or follow a run's events. |
+| `POST` | `/threads/{thread_id}/runs/{run_id}/cancel` | Cancel an active run; returns `{"cancelled": true}` if cancelled. |
 
-- `ag-ui-protocol` owns request/event models and validation; its `EventEncoder`
-  owns SSE encoding. The adapter does not maintain a second protocol schema.
-- Python tests cover Bub-specific behavior: execution hooks, persistence ownership,
-  pending tools, request isolation, replay, cancellation, and HTTP admission.
-- Socket tests use the published `@ag-ui/client` and assistant-ui against this
-  adapter with a deterministic model transport. They exercise the SDK pipeline,
-  reject compatibility warnings, and compare display history with the official
-  client's reducer. This is **interoperability testing**, not TCK certification.
+The `/threads/...` routes are Bub extensions, not standard AG-UI endpoints.
+An unknown run returns `404` on the replay and cancel routes.
 
-The upstream [conformance suite](https://github.com/ag-ui-protocol/ag-ui/blob/dbfbddb7b3b898dc120b90610c941173b982757f/spec/1.0/conformance/README.md)
-tests first-party **clients** and explicitly excludes producer correctness. It is
-not a server TCK that can be pointed at a Bub endpoint. Run it in an upstream
-checkout with its workspace dependencies installed, using its own runner:
+Only one run may execute on a thread at a time; another run receives `409` while
+that thread is busy. Run one adapter/controller per store/workspace; multiple
+server processes sharing it are not supported. Long histories and additional
+subscribers can increase event-reading overhead.
 
-```sh
-pnpm -C sdks/typescript/packages/client exec vitest run src/conformance
-```
+### Embedding and extensions
 
-That suite is not part of Bub CI and was not run for this adapter. We do not copy
-its fixtures, maintain a partial fixture runner, or count passing upstream client
-tests as evidence that Bub is conformant. Server behavior remains covered by the
-adapter's own regression and SDK interoperability tests above.
+Use `bub_ag_ui.http.create_app` to embed the endpoint. In an existing Bub gateway,
+set `channel_managed=True`; an explicitly supplied `AGUIAdapter` must also use
+`bind_router=False`. Set `manage_framework=False` if the host already manages
+`framework.running()`.
 
-## Test
+Bub's model configuration and native tool policies still apply. Client-supplied
+state and context are application data, not overrides for server configuration.
+If you supply a custom model provider, it remains responsible for recording its
+model conversation, including recovery from partial exchanges. Displayed output
+alone is not automatically converted into model history.
+
+## Development
 
 From the repository root, with Python 3.12+ and Node.js 22+:
 
@@ -205,7 +157,9 @@ npm ci --prefix packages/bub-ag-ui/tests/client
 npm test --prefix packages/bub-ag-ui/tests/client
 ```
 
-The socket tests launch a deterministic local Bub server and mock only its model
-provider. They do not require an API key or contact a model service. Set `PYTHON`
-to an alternative interpreter if it is not installed at the workspace's
-`.venv/bin/python`. Both test layers run in repository CI.
+Python tests cover execution, tools, history, isolation, and cancellation. Socket
+tests use the published `@ag-ui/client` and assistant-ui integration against a
+local server with a deterministic model provider. They need no model API key.
+Set `PYTHON` if the interpreter is not at the workspace's `.venv/bin/python`.
+Both test layers run in repository CI. These are regression and SDK
+interoperability tests, not TCK certification.

@@ -316,19 +316,23 @@ async def test_busy_request_cannot_take_over_or_cancel_owner(setup):
         await owner
 
 
-async def test_timeout_closes_native_execution_with_one_error(setup):
+async def test_timeout_closes_native_execution_with_one_error(setup, advance_time):
     provider, make = setup
-    closed = asyncio.Event()
+    entered, closed = asyncio.Event(), asyncio.Event()
 
     async def wait():
         try:
+            entered.set()
             await asyncio.Event().wait()
         finally:
             closed.set()
 
-    adapter = make([Tool.from_callable(wait)], max_run_seconds=0.05)
+    adapter = make([Tool.from_callable(wait)], max_run_seconds=600)
     provider.reply(calls=[("w", "wait", "{}")])
-    _, events = await collect(adapter, request())
+    pending = asyncio.create_task(collect(adapter, request()))
+    await entered.wait()
+    advance_time(601)
+    _, events = await pending
     assert closed.is_set()
     assert events[-1]["type"] == "RUN_ERROR"
     assert events[-1]["message"] == "Agent run timed out"
@@ -386,14 +390,14 @@ async def test_tool_results_after_restart_are_rejected(setup):
     assert len(provider.requests) == 1
 
 
-async def test_tool_results_after_timeout_are_rejected(setup):
+async def test_tool_results_after_timeout_are_rejected(setup, advance_time):
     provider, make = setup
-    adapter = make(max_run_seconds=0.05)
+    adapter = make(max_run_seconds=600)
     tools = [{"name": "browser", "description": "", "parameters": {}}]
     provider.reply(calls=[("f1", "browser", "{}")])
     _, paused = await collect(adapter, request(tools=tools))
     assert paused[-1]["type"] == "RUN_FINISHED"
-    await asyncio.sleep(0.1)
+    advance_time(601)
     _, expired = await collect(
         adapter,
         request(

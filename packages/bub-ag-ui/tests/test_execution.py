@@ -438,19 +438,22 @@ async def test_child_cannot_suspend_parent_external_tools(setup, interrupt):
     ]
 
 
-async def test_output_processing_obeys_run_timeout(setup):
-    import asyncio
-
+async def test_output_processing_obeys_run_timeout(setup, advance_time):
     provider, make = setup
-    adapter = make(max_run_seconds=0.05)
+    adapter = make(max_run_seconds=600)
+    save_started = asyncio.Event()
 
     class Output:
         @hookimpl
         async def save_state(self):
+            save_started.set()
             await asyncio.Event().wait()
 
     adapter.framework.plugin_manager.register(Output(), "blocked-save")
     provider.reply("finished model")
-    _, events = await asyncio.wait_for(collect(adapter, request()), 1)
+    pending = asyncio.create_task(collect(adapter, request()))
+    await save_started.wait()
+    advance_time(601)
+    _, events = await pending
     assert events[-1]["type"] == "RUN_ERROR"
     assert "timed out" in events[-1]["message"]

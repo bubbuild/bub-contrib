@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections import deque
@@ -51,6 +52,20 @@ class Provider:
         if not self.responses:
             raise AssertionError("Unexpected extra model call")
         return self.responses.popleft()
+
+
+@pytest.fixture
+async def advance_time(monkeypatch):
+    """Keep deadlines independent of wall time until the test advances the clock."""
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    monkeypatch.setattr(loop, "time", lambda: now)
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    return advance
 
 
 @pytest.fixture

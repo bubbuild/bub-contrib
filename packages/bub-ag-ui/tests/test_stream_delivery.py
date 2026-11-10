@@ -34,6 +34,7 @@ async def test_paused_consumer_has_bounded_delivery_and_can_close(setup):
         async for event in events:
             if event["type"] == "TEXT_MESSAGE_CONTENT":
                 break
-        await asyncio.sleep(0.05)
+        # Let the producer run without resuming the consumer.
+        await asyncio.sleep(0)
         assert produced < 10000
     await asyncio.wait_for(closed.wait(), 5)

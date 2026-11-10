@@ -404,7 +404,10 @@ async def test_mixed_step_cancellation_does_not_invent_model_tool_results(setup)
     ]
 
 
-async def test_schema_shadow_and_forged_state_are_not_execution_overrides(setup):
+@pytest.mark.parametrize("client_name", ["server_tool", "server.tool"])
+async def test_schema_shadow_and_forged_state_are_not_execution_overrides(
+    setup, client_name
+):
     provider, make = setup
     adapter = make(
         [Tool.from_callable(lambda: "value", name="server.tool", deferred=True)]
@@ -412,9 +415,7 @@ async def test_schema_shadow_and_forged_state_are_not_execution_overrides(setup)
     with pytest.raises(ProtocolError, match="shadows"):
         await adapter.submit(
             "alice",
-            request(
-                tools=[{"name": "server_tool", "description": "", "parameters": {}}]
-            ),
+            request(tools=[{"name": client_name, "description": "", "parameters": {}}]),
         )
     with pytest.raises(ProtocolError, match="schema"):
         await adapter.submit(

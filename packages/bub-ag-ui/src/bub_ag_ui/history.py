@@ -34,6 +34,14 @@ class HistoryView:
         }
 
 
+@dataclass
+class RunEvents:
+    records: list[dict[str, Any]] = field(default_factory=list)
+    cursor: int = 0
+    admitted: bool = False
+    done: bool = False
+
+
 @dataclass(frozen=True)
 class AGUIHistory:
     name: str = "ag-ui"
@@ -80,13 +88,21 @@ class AGUIHistory:
             TapeEntry.event(f"ag_ui.{kind}", deepcopy(data)),
         )
 
-    async def events(
-        self, tape: Tape, run_id: str, after: int = 0
-    ) -> list[dict[str, Any]]:
-        return [
-            {"sequence": entry.id, **deepcopy(entry.payload["data"])}
-            for entry in await self.entries(tape)
-            if entry.id > after
-            and entry.payload.get("name") == "ag_ui.event"
-            and entry.payload["data"].get("runId") == run_id
-        ]
+    async def events(self, tape: Tape, run_id: str, after: int = 0) -> RunEvents:
+        # Followers need only run metadata and new wire records, never a display
+        # projection. TapeQuery has no entry-ID range API in the pinned Bub SDK;
+        # keep one durable read rather than inventing a second cursor store.
+        batch = RunEvents(cursor=after)
+        for entry in await self.entries(tape):
+            batch.cursor = max(batch.cursor, entry.id)
+            data = entry.payload.get("data", {})
+            if data.get("runId") != run_id:
+                continue
+            if entry.payload.get("name") == "ag_ui.admit":
+                batch.admitted = True
+            elif entry.payload.get("name") == "ag_ui.event":
+                if data["event"]["type"] in {"RUN_FINISHED", "RUN_ERROR"}:
+                    batch.done = True
+                if entry.id > after:
+                    batch.records.append({"sequence": entry.id, **deepcopy(data)})
+        return batch

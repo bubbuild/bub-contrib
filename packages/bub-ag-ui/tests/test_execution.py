@@ -482,3 +482,65 @@ async def test_child_run_events_do_not_escape_into_parent_turn(setup, frontend):
     assert [m["content"] for m in messages if m["role"] == "tool"] == (
         ["child result", "browser result"] if frontend else ["child result"]
     )
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+async def test_child_cannot_suspend_parent_external_tools(setup, interrupt):
+    from bub_ag_ui.tools import InterruptTool
+
+    provider, make = setup
+
+    async def delegate(context):
+        agent = context.state["_runtime_agent"]
+        child = await agent.run_stream(
+            session_id="temp/child-external",
+            prompt="Child task",
+            state={**context.state, "session_id": "temp/child-external"},
+        )
+        async with aclosing(child):
+            async for _ in child:
+                pass
+        if child.error:
+            raise child.error
+        return "child result"
+
+    definition = {
+        "name": "browser",
+        "description": "",
+        "parameters": {"type": "object"},
+    }
+    tools = [] if interrupt else [definition]
+    adapter = make(
+        [Tool.from_callable(delegate, context=True)],
+        interrupts=(InterruptTool(**definition),) if interrupt else (),
+    )
+    provider.reply("Parent exchange", calls=[("delegate-call", "delegate", "{}")])
+    # Even a model hallucinating an unavailable parent tool must not suspend it.
+    provider.reply(calls=[("child-call", "browser", "{}")])
+    provider.reply("child answer")
+    provider.reply("parent answer")
+    thread, events = await collect(adapter, request(tools=tools))
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert (await thread.history())["pending"] == []
+    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
+        "delegate-call"
+    ]
+    assert "browser" in {t["function"]["name"] for t in provider.requests[0]["tools"]}
+    assert "browser" not in {
+        t["function"]["name"] for t in provider.requests[1]["tools"]
+    }
+    history = (await thread.history())["messages"]
+    provider.reply("next answer")
+    await collect(
+        adapter,
+        request(
+            [*history, {"id": "u2", "role": "user", "content": "Continue"}],
+            run="r2",
+            tools=tools,
+        ),
+    )
+    messages = provider.requests[-1]["messages"]
+    assert not any(m.get("content") == "Child task" for m in messages)
+    assert [m["tool_call_id"] for m in messages if m["role"] == "tool"] == [
+        "delegate-call"
+    ]

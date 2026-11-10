@@ -19,8 +19,9 @@ from ag_ui.core import RunAgentInput
 from bub import hookimpl
 from bub.builtin.agent import BubAgent
 from bub.builtin.settings import load_session_settings
+from bub.builtin.tools import ALLOWED_TOOLS_STATE_KEY
 from bub.channels.message import ChannelMessage
-from bub.core.events import StepFinished, StepStarted
+from bub.core.events import RunStarted, StepFinished, StepStarted
 from bub.envelope import Envelope, field_of
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
 from bub.turn import TurnState
@@ -107,7 +108,7 @@ class ExecutionHooks:
         if not isinstance(inbound, AGUIInboundMessage):
             return None
         agent = inbound._runtime_agent
-        inbound.external.bind(agent)
+        inbound.external.bind(agent, state)
         agent.system_prompt.add(protocol_context)
         stream_state = StreamState()
 
@@ -120,7 +121,18 @@ class ExecutionHooks:
             if event.state is state:
                 await inbound.events.send("STEP_FINISHED", stepName=str(event.step))
 
+        def scope_external_tools(event: RunStarted) -> None:
+            if event.state is state or not inbound.external.definitions:
+                return
+            # Child runs share agent.tools, not the parent's browser or resume
+            # channel. Keep their existing native tool restrictions as well.
+            allowed = event.state.get(ALLOWED_TOOLS_STATE_KEY)
+            names = set(agent.tools if allowed is None else allowed)
+            names.difference_update(tool.name for tool in inbound.external.definitions)
+            event.state[ALLOWED_TOOLS_STATE_KEY] = sorted(names)
+
         async def iterate() -> AsyncIterator[StreamEvent]:
+            agent.events.on(RunStarted, scope_external_tools)
             agent.events.on(StepStarted, step_started)
             agent.events.on(StepFinished, step_finished)
             try:
@@ -134,6 +146,7 @@ class ExecutionHooks:
                     async for event in source:
                         yield event
             finally:
+                agent.events.off(RunStarted, scope_external_tools)
                 agent.events.off(StepStarted, step_started)
                 agent.events.off(StepFinished, step_finished)
 

@@ -9,6 +9,7 @@ from typing import Any
 from ag_ui.core import Tool as ClientTool
 from bub.builtin.agent import BubAgent
 from bub.core.tools import Tool, ToolContext, tool
+from bub.turn import TurnState
 
 
 @dataclass(frozen=True)
@@ -41,19 +42,20 @@ class ExternalTools:
     def validate(self, agent: BubAgent) -> None:
         names = {name.replace(".", "_") for name in agent.tools}
         for definition in self.definitions:
-            if definition.name in names:
+            name = definition.name.replace(".", "_")
+            if name in names:
                 raise ValueError(
-                    f"Client/interrupt tool shadows a server tool: {definition.name}"
+                    f"Client/interrupt tool shadows an existing tool: {definition.name}"
                 )
-            names.add(definition.name)
+            names.add(name)
 
-    def bind(self, agent: BubAgent) -> None:
+    def bind(self, agent: BubAgent, state: TurnState) -> None:
         # Repeat validation after load_state: plugins may bind session tools there.
         self.validate(agent)
         for definition in self.definitions:
-            agent.tools[definition.name] = self._tool(definition)
+            agent.tools[definition.name] = self._tool(definition, state)
 
-    def _tool(self, definition: ClientTool | InterruptTool) -> Tool:
+    def _tool(self, definition: ClientTool | InterruptTool, state: TurnState) -> Tool:
         @tool(
             name=definition.name,
             description=definition.description,
@@ -61,6 +63,10 @@ class ExternalTools:
             exposure="direct",
         )
         def suspend(*, context: ToolContext, **arguments: Any) -> None:
+            if context.state is not state:
+                raise ValueError(
+                    "Frontend/interrupt tools belong to the owning AG-UI turn"
+                )
             self.context = context
             call = {
                 "id": context.call_id,

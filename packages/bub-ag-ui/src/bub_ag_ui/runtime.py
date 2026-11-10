@@ -24,7 +24,7 @@ from bub_ag_ui.execution import (
     StreamRouter,
     install_execution_hooks,
 )
-from bub_ag_ui.history import AGUIHistory, HistoryView
+from bub_ag_ui.history import AGUIHistory, HistoryView, RunEvents
 from bub_ag_ui.lifecycle import committed
 from bub_ag_ui.state import SharedState
 from bub_ag_ui.tools import ExternalTools, InterruptTool
@@ -105,7 +105,7 @@ class Thread:
     async def history(self) -> dict[str, Any]:
         return (await self.read()).as_dict()
 
-    async def events(self, run_id: str, after: int = 0) -> list[dict[str, Any]]:
+    async def events(self, run_id: str, after: int = 0) -> RunEvents:
         return await self.sidecar.events(self.tape, run_id, after)
 
     async def append(self, kind: str, **data: Any) -> None:
@@ -210,7 +210,7 @@ class AGUIAdapter:
     async def _close_abandoned(self, thread: Thread, run_id: str) -> None:
         opened: dict[tuple[str, str], str] = {}
         steps: set[str] = set()
-        for record in await thread.events(run_id):
+        for record in (await thread.events(run_id)).records:
             event = record["event"]
             kind = event["type"]
             if kind == "STEP_STARTED":
@@ -590,18 +590,18 @@ class AGUIAdapter:
         cursor = after
         while True:
             async with thread.changed:
-                records = await thread.events(run_id, cursor)
-                view = await thread.read()
-                cursor = view.cursor
-                if run_id not in view.runs:
+                batch = await thread.events(run_id, cursor)
+                cursor = batch.cursor
+                if not batch.admitted:
                     raise ProtocolError(
                         "Run history was reset; reload thread history", 409
                     )
-                done = view.runs[run_id]["done"] or thread.tape.name not in self._runs
-                if not records and not done:
+                running = self._runs.get(thread.tape.name)
+                done = batch.done or running is None or running.run_id != run_id
+                if not batch.records and not done:
                     await thread.changed.wait()
                     continue
-            for record in records:
+            for record in batch.records:
                 yield record
             if done:
                 return

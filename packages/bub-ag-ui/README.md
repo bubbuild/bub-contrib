@@ -58,6 +58,10 @@ This also permits a result-only continuation without a synthetic user message.
 LLM request customization uses the native `before_llm_call` hook/EventBus path;
 `build_prompt` is not a second source of model history for this protocol.
 Frontend tools still suspend at the protocol boundary and resume in a later run.
+Frontend and interrupt tools belong to that AG-UI turn: nested native runs do not
+receive them in their tool scope, and direct calls from another turn fail as
+ordinary tool errors rather than suspending the parent. Child agents can return
+a request to the parent, which decides whether to call a frontend tool.
 
 Standalone hosting binds an AG-UI stream router. Gateway hosting uses
 `AGUIChannel.stream_events` and keeps the gateway router intact. When embedding
@@ -115,7 +119,11 @@ Bub's spill storage. The canonical owner tape holds ordinary `ag_ui.admit`,
 `ag_ui.checkpoint`, and `ag_ui.event` entries on that sidecar. The history response
 is derived from those entries; there is no independent journal or persistent
 projection index. Protocol writes go directly to the canonical tape, not into the
-model's temporary fork, so subscribers see only durable output.
+model's temporary fork, so subscribers see only durable output. Event followers
+read run metadata and new wire records without reconstructing display history.
+The pinned Bub `TapeQuery` has no entry-ID range query, so each follow read still
+scans the sidecar; removing that remaining cost requires native store/query
+support, not a parallel event journal in this plugin.
 
 SSE IDs are native sidecar entry IDs. They may have gaps because admission and
 checkpoint entries are not SSE events. Replay reads existing events and never

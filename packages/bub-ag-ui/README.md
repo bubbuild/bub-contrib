@@ -136,6 +136,14 @@ handoff.
   Reconnecting does not restart interrupted work. Retry policy belongs to the
   application; consider tool side effects before submitting work again.
 
+The pinned Bub API still requires a small step bridge for result-only continuation
+and returning control to frontend tools. Native `run_once` prepares and executes
+each model/tool step; native steering and subagent-result hooks remain active.
+The adapter does not implement its own context-overflow handoff/retry policy:
+uncaught context overflow produces `RUN_ERROR`. Native context-budget hooks and
+explicit handoff still apply. It does not synthesize Bub full-run lifecycle events;
+AG-UI run completion is owned by the request boundary.
+
 ## Embedding and development
 
 Use `bub_ag_ui.http.create_app` to embed the endpoint. In an existing Bub gateway,

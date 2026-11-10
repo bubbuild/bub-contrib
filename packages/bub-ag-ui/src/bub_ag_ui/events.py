@@ -30,12 +30,11 @@ def result_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-class RunProjection:
-    """Current response messages/state for validation and interrupt snapshots."""
+class MessageProjection:
+    """Current response messages for activity validation and interrupt snapshots."""
 
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
-        self.state: Any = {}
 
     def message(self, id: str) -> dict[str, Any]:
         return next(message for message in self.messages if message["id"] == id)
@@ -79,10 +78,6 @@ class RunProjection:
                         "toolCallId": event["toolCallId"],
                     }
                 )
-            case "STATE_SNAPSHOT":
-                self.state = deepcopy(event["snapshot"])
-            case "STATE_DELTA":
-                self.state = jsonpatch.apply_patch(self.state, event["delta"])
             case "ACTIVITY_SNAPSHOT":
                 existing = next(
                     (m for m in self.messages if m["id"] == event["messageId"]), None
@@ -111,13 +106,21 @@ class EventStream:
     """One run's wire state; a Bub final closes a step, never a run."""
 
     def __init__(self, emit: Emit) -> None:
-        self.emit = emit
+        self._emit = emit
+        self._messages = MessageProjection()
         self.message_id: str | None = None
         self.reasoning_id: str | None = None
         self.calls: list[dict[str, Any]] = []
 
     async def send(self, type: str, **fields: Any) -> None:
-        await self.emit(wire_event(type, **fields))
+        await self.publish(wire_event(type, **fields))
+
+    async def publish(self, event: dict[str, Any]) -> None:
+        self._messages.apply(event)
+        await self._emit(event)
+
+    async def snapshot(self) -> None:
+        await self.send("MESSAGES_SNAPSHOT", messages=self._messages.messages)
 
     async def text_start(self) -> str:
         if self.message_id is None:

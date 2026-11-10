@@ -112,7 +112,6 @@ class ClientView:
     async def history(self):
         return {
             "messages": self.projection.messages,
-            "state": self.projection.state,
             "pending": self.pending,
         }
 
@@ -120,10 +119,10 @@ class ClientView:
 async def collect(adapter, data, user="alice"):
     from bub.core.tape import session_tape_name
     from bub_ag_ui.continuation import Continuation
-    from bub_ag_ui.events import RunProjection
+    from bub_ag_ui.events import MessageProjection
 
     events = [event async for event in adapter.run(user, data)]
-    projection = RunProjection()
+    projection = MessageProjection()
     for event in events:
         projection.apply(event)
     tape = adapter._storage_agent.tape(

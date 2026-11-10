@@ -3,13 +3,13 @@ from copy import deepcopy
 
 import pytest
 from ag_ui.core import ActivityDeltaEvent, ActivitySnapshotEvent
-from bub_ag_ui.events import RunProjection
+from bub_ag_ui.events import MessageProjection
 from bub_ag_ui.state import SharedState
 from jsonpatch import JsonPatchConflict
 
 
 async def test_invalid_activity_patch_does_not_change_response():
-    projection = RunProjection()
+    projection = MessageProjection()
 
     async def emit(event):
         projection.apply(event)
@@ -55,3 +55,28 @@ async def test_concurrent_state_patches_are_serialized():
     )
     assert state.value == {"items": list(range(10))}
     assert len(events) == 10
+
+
+async def test_shared_state_patch_has_one_owner(monkeypatch):
+    import jsonpatch
+    from bub_ag_ui.events import EventStream
+
+    events, applied = [], []
+    apply = jsonpatch.apply_patch
+
+    def counted(value, operations, **kwargs):
+        applied.append(operations)
+        return apply(value, operations, **kwargs)
+
+    monkeypatch.setattr(jsonpatch, "apply_patch", counted)
+
+    async def emit(event):
+        events.append(event)
+
+    stream = EventStream(emit)
+    state = SharedState({"count": 0}, stream.publish)
+    await state.set(state.value)
+    await state.patch([{"op": "replace", "path": "/count", "value": 1}])
+    assert state.value == {"count": 1}
+    assert len(applied) == 1
+    assert events[-1]["type"] == "STATE_DELTA"

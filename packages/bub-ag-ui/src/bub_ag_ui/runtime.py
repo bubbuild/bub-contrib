@@ -7,7 +7,6 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,7 @@ from bub.builtin.agent import BubAgent
 from bub.core.tape import Tape, TapeEntry, session_tape_name, to_message
 
 from bub_ag_ui.continuation import Continuation
-from bub_ag_ui.events import EventStream, RunProjection, result_text
+from bub_ag_ui.events import EventStream, result_text
 from bub_ag_ui.execution import (
     AGUIInboundMessage,
     StreamRouter,
@@ -38,7 +37,7 @@ class ProtocolError(Exception):
 
 def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
     role = message["role"]
-    if role not in {"user", "assistant", "tool"}:
+    if role not in {"user", "tool"}:
         return None
     content = message.get("content", "")
     if isinstance(content, list):
@@ -63,8 +62,6 @@ def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
                 raise ProtocolError(f"Bub cannot consume {part['type']} input", 422)
         content = parts
     result = {"role": role, "content": content}
-    if role == "assistant" and message.get("toolCalls"):
-        result["tool_calls"] = deepcopy(message["toolCalls"])
     if role == "tool":
         result["tool_call_id"] = message["toolCallId"]
         if message.get("error"):
@@ -183,15 +180,7 @@ class AGUIAdapter:
             self._tasks.discard(producer)
 
     async def _execute(self, principal: str, request: RunAgentInput, emit: Any) -> None:
-        # This projection lives only for this response: patches are validated and
-        # an interrupt can publish the full resume context before RUN_FINISHED.
-        projection = RunProjection()
-
-        async def publish(event: dict[str, Any]) -> None:
-            projection.apply(event)
-            await emit(event)
-
-        stream = EventStream(publish)
+        stream = EventStream(emit)
         session_id = self.session_id(principal, request.thread_id)
         acquired = False
         try:
@@ -241,7 +230,7 @@ class AGUIAdapter:
                     raise ProtocolError(str(exc)) from exc
                 await stream.send("MESSAGES_SNAPSHOT", messages=messages)
                 shared = SharedState(
-                    request.state if request.state is not None else {}, publish
+                    request.state if request.state is not None else {}, stream.publish
                 )
                 await shared.set(shared.value)
                 if not repeated:
@@ -305,9 +294,7 @@ class AGUIAdapter:
                 ]
                 fields: dict[str, Any] = {}
                 if interrupts:
-                    await stream.send(
-                        "MESSAGES_SNAPSHOT", messages=deepcopy(projection.messages)
-                    )
+                    await stream.snapshot()
                     await shared.set(shared.value)
                     fields["outcome"] = {"type": "interrupt", "interrupts": interrupts}
                 await stream.send(

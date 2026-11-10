@@ -8,8 +8,14 @@ from typing import Any
 
 from ag_ui.core import Tool as ClientTool
 from bub.builtin.agent import BubAgent
+from bub.core.events import ChatFinished, LLMCallFinished, ToolCallFinished
+from bub.core.tape import Tape, TapeEntry
 from bub.core.tools import Tool, ToolContext, tool
+from bub.errors import BubError
+from bub.streaming import StreamEvent
 from bub.turn import TurnState
+
+from bub_ag_ui.events import result_text
 
 
 @dataclass(frozen=True)
@@ -85,3 +91,65 @@ class ExternalTools:
 
         # Client schemas are supplied at runtime, rather than by Python annotations.
         return replace(suspend, parameters=definition.parameters)
+
+    async def record_pause(
+        self,
+        agent: BubAgent,
+        tape: Tape,
+        completed: LLMCallFinished | None,
+        results: dict[str, ToolCallFinished],
+        system_prompt: str | None,
+        reasoning: list[str],
+    ) -> StreamEvent | None:
+        """Record only the exchange interrupted by an admitted external call.
+
+        Normal exchanges are recorded by run_once. Its tool executor settles
+        the whole batch before propagating our control transfer, so completed
+        backend results are available here without fabricating pending results.
+        """
+        if completed is None or self.context is None:
+            raise RuntimeError("External call without a model exchange")
+        request, response = completed.request, completed.result
+        await agent.events.emit(
+            ChatFinished(
+                state=tape.context.state,
+                tape=tape,
+                run_id=request.run_id,
+                model=request.model,
+                system_prompt=system_prompt,
+                new_messages=self.context.step_messages or [],
+                response_text=response.text,
+                tool_calls=response.tool_calls,
+                usage=response.usage,
+                assistant_fields={"reasoning": "".join(reasoning)} if reasoning else {},
+            )
+        )
+        ids, values = [], []
+        for call in response.tool_calls:
+            if outcome := results.get(call["id"]):
+                result = outcome.result
+                value = result.result
+                if result.error is not None:
+                    value = (
+                        BubError(result.error.kind, result_text(value))
+                        if value is not None and isinstance(result.error, BubError)
+                        else result.error
+                    )
+                ids.append(call["id"])
+                values.append(value)
+                await tape.store.append(
+                    tape.name,
+                    TapeEntry.message(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": result_text(value),
+                        },
+                        run_id=request.run_id,
+                    ),
+                )
+        return (
+            StreamEvent("tool_result", {"call_ids": ids, "tool_results": values})
+            if values
+            else None
+        )

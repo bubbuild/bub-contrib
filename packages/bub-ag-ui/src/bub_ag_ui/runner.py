@@ -44,11 +44,16 @@ async def run_steps(
     completed: LLMCallFinished | None = None
     results: dict[str, ToolCallFinished] = {}
 
+    # A BubAgent also runs its subagents; their EventBus completions must not
+    # replace this turn's pending model exchange or tool results.
     def llm_finished(event: LLMCallFinished) -> None:
         nonlocal completed
-        completed = event
+        if event.state is state:
+            completed = event
 
     def tool_finished(event: ToolCallFinished) -> None:
+        if event.state is not state:
+            return
         if event.call.context and event.call.context.call_id:
             results[event.call.context.call_id] = event
 

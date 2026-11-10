@@ -185,3 +185,18 @@ test("activity replacement and patches produce the same history as the official 
   const history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
   assert.deepEqual(history.messages, a.messages);
 });
+
+
+test("native child steps do not collide with the parent's AG-UI steps", async () => {
+  const a = agent("subagent");
+  const events = [];
+  await a.runAgent({}, {onEvent: ({event}) => events.push(event)});
+  assert.deepEqual(events.filter(e => e.type === "STEP_STARTED").map(e => e.stepName), ["1", "2"]);
+  assert.deepEqual(events.filter(e => e.type === "STEP_FINISHED").map(e => e.stepName), ["1", "2"]);
+  assert.equal(events.at(-1).type, "RUN_FINISHED");
+  assert.equal(a.messages.at(-1).content, "Answer: subagent");
+  assert.equal(a.messages.filter(m => m.role === "tool").length, 1);
+  assert.equal(a.messages.find(m => m.role === "tool").content, "child result");
+  const history = await (await fetch(`${base}/threads/${a.threadId}/history`)).json();
+  assert.deepEqual(history.messages, a.messages);
+});

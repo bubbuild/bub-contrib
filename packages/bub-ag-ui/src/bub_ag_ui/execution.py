@@ -111,11 +111,14 @@ class ExecutionHooks:
         agent.system_prompt.add(protocol_context)
         stream_state = StreamState()
 
+        # Subagents share the agent/EventBus, but each run owns its turn state.
         async def step_started(event: StepStarted) -> None:
-            await inbound.events.send("STEP_STARTED", stepName=str(event.step))
+            if event.state is state:
+                await inbound.events.send("STEP_STARTED", stepName=str(event.step))
 
         async def step_finished(event: StepFinished) -> None:
-            await inbound.events.send("STEP_FINISHED", stepName=str(event.step))
+            if event.state is state:
+                await inbound.events.send("STEP_FINISHED", stepName=str(event.step))
 
         async def iterate() -> AsyncIterator[StreamEvent]:
             agent.events.on(StepStarted, step_started)

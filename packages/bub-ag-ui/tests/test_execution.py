@@ -1,13 +1,14 @@
 """The AG-UI adapter participates in Bub's native hook/EventBus lifecycle."""
 
 import asyncio
+from contextlib import aclosing
 
 import pytest
 from bub import hookimpl
 from bub.builtin.agent import BubAgent
 from bub.channels.manager import ChannelManager
 from bub.channels.message import ChannelMessage
-from bub.core.events import ToolCallDecision
+from bub.core.events import StepStarted, ToolCallDecision
 from bub.core.tools import Tool
 from bub.streaming import AsyncStreamEvents, StreamEvent
 from bub_ag_ui.execution import install_execution_hooks
@@ -384,3 +385,100 @@ async def test_failed_custom_stream_preserves_provider_owned_context(setup, fail
         "Run custom provider",
         "Continue",
     ]
+
+
+@pytest.mark.parametrize("frontend", [False, True])
+async def test_child_run_events_do_not_escape_into_parent_turn(setup, frontend):
+    """Subagents use run_stream on the same agent/EventBus, but a different tape."""
+    provider, make = setup
+    observed_steps = []
+
+    async def delegate(context):
+        agent = context.state["_runtime_agent"]
+        child = await agent.run_stream(
+            session_id="temp/ag-ui-child",
+            prompt="Child task",
+            state={**context.state, "session_id": "temp/ag-ui-child"},
+            allowed_tools=["child_clock"],
+            allowed_skills=[],
+        )
+        async with aclosing(child):
+            async for _ in child:
+                pass
+        if child.error:
+            raise child.error
+        return "child result"
+
+    adapter = make(
+        [
+            Tool.from_callable(delegate, context=True),
+            Tool.from_callable(lambda: "child clock", name="child_clock"),
+        ]
+    )
+
+    class ObserveSteps:
+        @hookimpl
+        def load_state(self, message):
+            message._runtime_agent.events.on(StepStarted, observed_steps.append)
+
+    adapter.framework.plugin_manager.register(ObserveSteps(), "observe-child-steps")
+    calls = [("delegate-call", "delegate", "{}")]
+    client_tools = []
+    if frontend:
+        calls.append(("frontend-call", "browser", "{}"))
+        client_tools = [
+            {"name": "browser", "description": "", "parameters": {"type": "object"}}
+        ]
+    provider.reply("Parent exchange", calls=calls)
+    # Reuse a parent call ID on the child tape: turn identity, not IDs or step
+    # numbers, decides which native completion belongs to the parent exchange.
+    provider.reply(calls=[("frontend-call", "child_clock", "{}")])
+    provider.reply("child answer")
+    if not frontend:
+        provider.reply("parent answer")
+    thread, events = await collect(adapter, request(tools=client_tools))
+
+    assert len({id(event.tape) for event in observed_steps}) == 2
+    expected_steps = ["1"] if frontend else ["1", "2"]
+    assert [
+        e["stepName"] for e in events if e["type"] == "STEP_STARTED"
+    ] == expected_steps
+    assert [
+        e["stepName"] for e in events if e["type"] == "STEP_FINISHED"
+    ] == expected_steps
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert [e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"] == [
+        "delegate-call"
+    ]
+    assert not any(e.get("delta") == "child answer" for e in events)
+
+    if frontend:
+        history = (await thread.history())["messages"]
+        provider.reply("parent answer")
+        _, resumed = await collect(
+            adapter,
+            request(
+                [
+                    *history,
+                    {
+                        "id": "browser-result",
+                        "role": "tool",
+                        "toolCallId": "frontend-call",
+                        "content": "browser result",
+                    },
+                ],
+                run="r2",
+                tools=client_tools,
+            ),
+        )
+        assert resumed[-1]["type"] == "RUN_FINISHED"
+
+    messages = provider.requests[-1]["messages"]
+    parent_exchange = next(m for m in messages if m.get("tool_calls"))
+    assert parent_exchange["content"] == "Parent exchange"
+    assert [call["id"] for call in parent_exchange["tool_calls"]] == [
+        c[0] for c in calls
+    ]
+    assert [m["content"] for m in messages if m["role"] == "tool"] == (
+        ["child result", "browser result"] if frontend else ["child result"]
+    )

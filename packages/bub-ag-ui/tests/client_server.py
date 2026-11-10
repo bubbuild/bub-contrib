@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from contextlib import aclosing
 
 import httpx2
 import republic
@@ -40,6 +41,7 @@ async def main(port):
             "state": "update",
             "activity": "activity",
             "cancel": "wait",
+            "subagent": "delegate",
         }.get(prompt)
         if tool and messages[-1]["role"] == "user":
             delta = {
@@ -105,6 +107,22 @@ async def main(port):
         )
         return "activity updated"
 
+    async def delegate(context):
+        # Native subagents share this agent's EventBus with the parent run.
+        child = await context.state["_runtime_agent"].run_stream(
+            session_id="temp/client-child",
+            prompt="nested child",
+            state={**context.state, "session_id": "temp/client-child"},
+            allowed_tools=[],
+            allowed_skills=[],
+        )
+        async with aclosing(child):
+            async for _ in child:
+                pass
+        if child.error:
+            raise child.error
+        return "child result"
+
     async def wait():
         await asyncio.sleep(60)
 
@@ -121,6 +139,7 @@ async def main(port):
             Tool.from_callable(update, context=True),
             Tool.from_callable(activity, context=True),
             Tool.from_callable(wait),
+            Tool.from_callable(delegate, context=True),
         ]
 
         def factory(*args, **kwargs):

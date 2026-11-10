@@ -39,6 +39,19 @@ jobs:
       - name: Run tests
         run: uv run --frozen --group test pytest
 
+      - name: Set up Node.js for AG-UI interoperability tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/bub-ag-ui/tests/client/package-lock.json
+
+      - name: Install AG-UI test clients
+        run: npm ci --prefix packages/bub-ag-ui/tests/client
+
+      - name: Run AG-UI SDK interoperability tests
+        run: npm test --prefix packages/bub-ag-ui/tests/client
+
   landing-feedback:
     name: Landing review
     needs: [tests]

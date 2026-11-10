@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "bub[app]",
     "bub-acp-server",
+    "bub-ag-ui",
     "bub-agent-plugins",
     "bub-codex",
     "bub-context-budget",
@@ -45,6 +46,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 bub = { git = "https://github.com/bubbuild/bub.git", branch = "main" }
 bub-acp-server = { workspace = true }
+bub-ag-ui = { workspace = true }
 bub-agent-plugins = { workspace = true }
 bub-codex = { workspace = true }
 bub-context-budget = { workspace = true }

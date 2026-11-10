@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test protocol.test.mjs"
+  },
+  "dependencies": {
+    "@ag-ui/client": "1.0.4",
+    "@assistant-ui/react-ag-ui": "0.1.2",
+    "react": "19.3.1",
+    "react-test-renderer": "19.3.1"
+  }
+}

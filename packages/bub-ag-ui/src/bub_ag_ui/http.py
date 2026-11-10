@@ -123,8 +123,8 @@ def create_app(
     return CORSMiddleware(
         app,
         allow_origins=settings.origins,
-        allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "Authorization", "Last-Event-ID"],
+        allow_methods=["POST"],
+        allow_headers=["Content-Type", "Authorization"],
         expose_headers=["Content-Type"],
     )
 

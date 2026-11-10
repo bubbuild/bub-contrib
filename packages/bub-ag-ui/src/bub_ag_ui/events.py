@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -13,7 +13,6 @@ import jsonpatch
 from ag_ui.core import Event as AGUIEvent
 from bub.core.events import Event
 from bub.errors import BubError
-from bub.streaming import StreamEvent
 from pydantic import TypeAdapter
 
 EVENT = TypeAdapter(AGUIEvent)
@@ -152,7 +151,6 @@ class StreamOutput(Event):
     mistake a protocol stream chunk for another model or tool execution.
     """
 
-    owner: object
     output: EventStream
     data: dict[str, Any]
 
@@ -210,7 +208,7 @@ async def reasoning_delta(event: ReasoningDelta) -> None:
         )
 
 
-async def tool_calls(event: ToolCalls) -> None:
+async def emit_tool_calls(event: ToolCalls) -> None:
     output = event.output
     await output.close_reasoning()
     parent = await output.text_start()
@@ -232,10 +230,13 @@ async def tool_calls(event: ToolCalls) -> None:
         await output.send("TOOL_CALL_END", toolCallId=call["id"])
 
 
-async def tool_results(event: ToolResults) -> None:
-    for call_id, result in zip(
-        event.data["call_ids"], event.data["tool_results"], strict=True
-    ):
+async def emit_tool_results(
+    event: ToolResults, *, call_ids: Iterable[str] = (), supplied: Collection[str] = ()
+) -> None:
+    ids = event.data.get("call_ids", call_ids)
+    for call_id, result in zip(ids, event.data["tool_results"], strict=True):
+        if call_id in supplied:
+            continue
         await event.output.send(
             "TOOL_CALL_RESULT",
             messageId=str(uuid4()),
@@ -262,21 +263,9 @@ async def step_final(event: StepFinal) -> None:
 STREAM_OBSERVERS = {
     "text": (TextDelta, text_delta),
     "reasoning": (ReasoningDelta, reasoning_delta),
-    "tool_call": (ToolCalls, tool_calls),
-    "tool_result": (ToolResults, tool_results),
+    "tool_call": (ToolCalls, emit_tool_calls),
+    "tool_result": (ToolResults, emit_tool_results),
     "usage": (Usage, usage),
     "error": (StreamError, stream_error),
     "final": (StepFinal, step_final),
 }
-
-
-def stream_event(
-    event: StreamEvent, owner: object, output: EventStream | None
-) -> StreamOutput:
-    """Bridge only: preserve the native chunk; leave adaptation to bus observers."""
-    if output is None:
-        raise RuntimeError(
-            "Native execution produced output without an attached request"
-        )
-    event_type, _ = STREAM_OBSERVERS[event.kind]
-    return event_type(owner=owner, output=output, data=event.data)

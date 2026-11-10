@@ -38,10 +38,8 @@ class ProtocolError(Exception):
         self.status = status
 
 
-def model_message(message: dict[str, Any]) -> dict[str, Any] | None:
+def model_message(message: dict[str, Any]) -> dict[str, Any]:
     role = message["role"]
-    if role not in {"user", "tool"}:
-        return None
     content = message.get("content", "")
     if isinstance(content, list):
         parts = []
@@ -90,10 +88,6 @@ async def new_inputs(
     for entry in await tape.query().kinds("event").all():
         if entry.payload.get("name") == "ag_ui.inputs":
             known.update(entry.payload["data"])
-    # Read receipts written by older versions without rewriting native messages.
-    for entry in await tape.query().kinds("message").all():
-        if message_id := entry.meta.get("ag_ui_message_id"):
-            known[message_id] = input_digest(entry.payload)
     additions = []
     for message in messages:
         if message["role"] != "user":
@@ -326,15 +320,15 @@ class AGUIAdapter:
                     shared = execution.inbound.shared
                     await shared.set(request.state if request.state is not None else {})
                     execution.supplied = set(values)
-                    await committed(continuation.save(tape))
+                    if request.resume:
+                        await committed(continuation.save(tape))
                     external.resolve(values)
                 else:
 
                     async def publish(event: dict[str, Any]) -> None:
-                        if execution is None:
-                            await stream.publish(event)
-                        else:
-                            await execution.publish(event)
+                        output = stream if execution is None else execution.stream
+                        if output is not None:
+                            await output.publish(event)
 
                     shared = SharedState(
                         request.state if request.state is not None else {}, publish
@@ -358,12 +352,11 @@ class AGUIAdapter:
                         model_tape=tape.name,
                         workspace=self.workspace,
                         shared=shared,
-                        events=stream,
                         external=external,
                         prompt=prompt,
                         execution=None,
                     )
-                    execution = NativeExecution(inbound, receipts)
+                    execution = NativeExecution(inbound, receipts, stream)
                     inbound.execution = execution
                     self._start(session_id, execution)
                 waiter = asyncio.create_task(external.paused.wait())

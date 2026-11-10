@@ -36,7 +36,8 @@ from bub_ag_ui.events import (
     EventStream,
     ToolCalls,
     ToolResults,
-    stream_event,
+    emit_tool_calls,
+    emit_tool_results,
 )
 from bub_ag_ui.lifecycle import committed
 from bub_ag_ui.state import SharedState
@@ -50,7 +51,6 @@ class AGUIInboundMessage(ChannelMessage):
     model_tape: str
     workspace: Path
     shared: SharedState
-    events: EventStream
     external: ExternalTools
     prompt: list[Any]
     execution: Any
@@ -67,8 +67,14 @@ def stream_events(
     async def iterate() -> AsyncIterator[StreamEvent]:
         execution = message.execution
         async for event in stream:
+            output = execution.stream
+            if output is None:
+                raise RuntimeError(
+                    "Native execution produced output without an attached request"
+                )
+            event_type, _ = STREAM_OBSERVERS[event.kind]
             await message._runtime_agent.events.emit(
-                stream_event(event, execution, execution.stream)
+                event_type(output=output, data=event.data)
             )
             yield event
         if error := getattr(stream, "error", None):
@@ -89,34 +95,32 @@ class NativeExecution:
     response does not end, restart, or reconstruct the native execution.
     """
 
-    def __init__(self, inbound: AGUIInboundMessage, accepted: dict[str, Any]) -> None:
+    def __init__(
+        self, inbound: AGUIInboundMessage, accepted: dict[str, Any], stream: EventStream
+    ) -> None:
         self.task: asyncio.Task[None]
         self.timeout: asyncio.Timeout | None = None
         self.finishing = False
         self.deadline: float | None = None
         self.inbound = inbound
-        self.stream: EventStream | None = inbound.events
+        self.stream: EventStream | None = stream
         self.accepted = accepted
         self.unrecorded = dict(accepted)
         self.queued: list[list[Any]] = []
         self.queued_receipts: dict[str, str] = {}
         self.state: TurnState | None = None
-        self.calls: list[dict[str, Any]] = []
         self.supplied: set[str] = set()
         self.subscriptions: list[
             tuple[type[Event], Callable[..., Awaitable[None]]]
         ] = []
-        # Execution bookkeeping precedes wire observers on the same typed event.
-        for event_type, observer in (
-            (ToolCalls, self.tool_calls),
-            (ToolResults, self.tool_results),
-            *STREAM_OBSERVERS.values(),
-        ):
-            self.subscribe(event_type, observer, lambda event: event.owner is self)
-
-    async def publish(self, event: dict[str, Any]) -> None:
-        if self.stream is not None:
-            await self.stream.publish(event)
+        observers = dict(STREAM_OBSERVERS.values()) | {
+            ToolCalls: self.tool_calls,
+            ToolResults: self.tool_results,
+        }
+        for event_type, observer in observers.items():
+            self.subscribe(
+                event_type, observer, lambda event: event.output is self.stream
+            )
 
     def subscribe(
         self,
@@ -201,22 +205,15 @@ class NativeExecution:
             self.unrecorded.clear()
 
     async def tool_calls(self, event: ToolCalls) -> None:
-        self.calls = event.data["tool_calls"]
-        self.inbound.external.batch = {call["id"]: call["name"] for call in self.calls}
-        self.inbound.external.completed.clear()
+        external = self.inbound.external
+        external.batch = {call["id"]: call["name"] for call in event.data["tool_calls"]}
+        external.completed.clear()
+        await emit_tool_calls(event)
 
     async def tool_results(self, event: ToolResults) -> None:
-        ids = event.data.get("call_ids", [call["id"] for call in self.calls])
-        results = [
-            (key, value)
-            for key, value in zip(ids, event.data["tool_results"], strict=True)
-            if key not in self.supplied
-        ]
-        # Alter the protocol envelope only, not the native stream or recorder.
-        event.data = {
-            "call_ids": [key for key, _ in results],
-            "tool_results": [value for _, value in results],
-        }
+        await emit_tool_results(
+            event, call_ids=self.inbound.external.batch, supplied=self.supplied
+        )
         self.supplied.clear()
 
     def unbind(self) -> None:
@@ -236,7 +233,6 @@ class ExecutionHooks:
         )
         return {
             **settings,
-            "_ag_ui_inbound": message,
             "_runtime_agent": message._runtime_agent,
             "_runtime_workspace": str(message.workspace),
             "ag_ui_context": [

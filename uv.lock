@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -13,6 +13,7 @@ resolution-markers = [
 [manifest]
 members = [
     "bub-acp-server",
+    "bub-ag-ui",
     "bub-agent-plugins",
     "bub-codex",
     "bub-context-budget",
@@ -44,6 +45,18 @@ members = [
     "bub-wechat",
     "bub-wecom",
     "tape-dataset-opendal",
+]
+
+[[package]]
+name = "ag-ui-protocol"
+version = "0.1.22"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/f7/9bf788e7d3608725d022a248a58427040f4f930ab87ddb54bd29ee4d9a51/ag_ui_protocol-0.1.22.tar.gz", hash = "sha256:d21f265284a50d9fc87ad7bcbd58f737b4b16eef7b5375f13a6e925117b52046", size = 18110, upload-time = "2026-08-31T18:20:04.334Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/6c/af3d577e68c9474c99600e65b2c6283772aae187edca6f0f2f5cbd9f565a/ag_ui_protocol-0.1.22-py3-none-any.whl", hash = "sha256:fca13ee7820f8f53e869c19e09ddd75826c1799b27c2adb6f2e567295433c704", size = 22068, upload-time = "2026-08-31T18:20:03.43Z" },
 ]
 
 [[package]]
@@ -420,8 +433,8 @@ wheels = [
 
 [[package]]
 name = "bub"
-version = "0.6.1.dev9+gd14de719d"
-source = { git = "https://github.com/bubbuild/bub.git?branch=main#d14de719da57640cf2f80658217d94d94a5b7c42" }
+version = "0.6.2.dev2+g7b9569055"
+source = { git = "https://github.com/bubbuild/bub.git?branch=main#7b95690550544e95588d19920864fbcb71826d59" }
 dependencies = [
     { name = "loguru" },
     { name = "pydantic" },
@@ -488,6 +501,35 @@ provides-extras = ["http"]
 dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
+]
+
+[[package]]
+name = "bub-ag-ui"
+version = "0.1.0"
+source = { editable = "packages/bub-ag-ui" }
+dependencies = [
+    { name = "ag-ui-protocol" },
+    { name = "bub", extra = ["app"] },
+    { name = "hypercorn" },
+    { name = "jsonpatch" },
+    { name = "jsonschema" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "starlette" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ag-ui-protocol", specifier = ">=0.1.22,<0.2" },
+    { name = "bub", extras = ["app"], git = "https://github.com/bubbuild/bub.git?branch=main" },
+    { name = "hypercorn", specifier = ">=0.17,<0.19" },
+    { name = "jsonpatch", specifier = ">=1.33" },
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pydantic-settings" },
+    { name = "starlette", specifier = ">=0.47,<2" },
+    { name = "typer" },
 ]
 
 [[package]]
@@ -576,6 +618,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "bub", extra = ["app"] },
     { name = "bub-acp-server" },
+    { name = "bub-ag-ui" },
     { name = "bub-agent-plugins" },
     { name = "bub-codex" },
     { name = "bub-context-budget" },
@@ -623,6 +666,7 @@ test = [
 requires-dist = [
     { name = "bub", extras = ["app"], git = "https://github.com/bubbuild/bub.git?branch=main" },
     { name = "bub-acp-server", editable = "packages/bub-acp-server" },
+    { name = "bub-ag-ui", editable = "packages/bub-ag-ui" },
     { name = "bub-agent-plugins", editable = "packages/bub-agent-plugins" },
     { name = "bub-codex", editable = "packages/bub-codex" },
     { name = "bub-context-budget", editable = "packages/bub-context-budget" },
@@ -2328,6 +2372,27 @@ wheels = [
 ]
 
 [[package]]
+name = "jsonpatch"
+version = "1.45"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jsonpointer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/21/dd/3c9d553b1d7203fc483df0f3b72d01fd8fe247d48ea6fcb4df4b3854477f/jsonpatch-1.45.tar.gz", hash = "sha256:f0975a88d0b26b6ebbcdfc4620483cb56c249115833d51c426cae305b96519ad", size = 75437, upload-time = "2026-11-09T12:24:21.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/39/0f310705b987df6a46d76356606537d8e24b59e20aa8c3c0a3830eb26a43/jsonpatch-1.45-py3-none-any.whl", hash = "sha256:e170131ff8c5b01216dfe35f034613209ee1fd012abbd849a9791f9139e44cf9", size = 25605, upload-time = "2026-11-09T12:24:20.712Z" },
+]
+
+[[package]]
+name = "jsonpointer"
+version = "3.10"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/93/f6/d1109cbb2c7cb692b432071802028052ba8d275c613c1a1cce427bc62c97/jsonpointer-3.10.tar.gz", hash = "sha256:69349c0e738c93e9efa501397091f49ad302ae686293effd05d7755c06f88ef0", size = 19950, upload-time = "2026-11-06T11:39:07.229Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/66/25cbb926e981a849d1cfcd36817fba6bfa5e9b6a2944c41230fe83ff25d2/jsonpointer-3.10-py3-none-any.whl", hash = "sha256:3b08b9e5239f1b683e31c9561c350d75ce3fa8cdd407130ca8491fdb0c9e56f3", size = 10376, upload-time = "2026-11-06T11:39:06.069Z" },
+]
+
+[[package]]
 name = "jsonref"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4013,8 +4078,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [

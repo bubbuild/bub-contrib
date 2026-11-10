@@ -1,0 +1,24 @@
+[project]
+name = "bub-ag-ui"
+version = "0.1.0"
+description = "Expose Bub agents through the AG-UI protocol"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ag-ui-protocol>=0.1.22,<0.2",
+    "bub[app]>=0.6.1,<0.7",
+    "hypercorn>=0.17,<0.19",
+    "jsonpatch>=1.33",
+    "jsonschema>=4.23",
+    "pydantic>=2",
+    "pydantic-settings",
+    "starlette>=0.47,<2",
+    "typer",
+]
+
+[project.entry-points.bub]
+ag-ui = "bub_ag_ui.plugin:AGUIPlugin"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"

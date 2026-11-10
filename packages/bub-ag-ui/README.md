@@ -153,7 +153,9 @@ Execution uses the framework's native `BubAgent.run_stream` path. Bub owns the
 model loop, step limits, steering, subagent delivery, automatic overflow handoff,
 and conversation recording. The adapter wraps the stream to translate events and
 attach client tool results; it does not run its own model-step loop or fabricate
-user messages. An AG-UI run ends at an HTTP request boundary, while one native
+user messages. Native lifecycle events and typed stream chunks are handled by
+scoped observers on the agent's EventBus. The stream bridge publishes chunks
+without changing the source stream; observers are removed when execution ends. An AG-UI run ends at an HTTP request boundary, while one native
 turn may span several requests. Optional AG-UI `STEP_*` events are not emitted;
 Bub's native step/run events remain available to server hooks.
 

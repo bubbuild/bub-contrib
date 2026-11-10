@@ -1,11 +1,8 @@
 """External tools share native names, but not native child-turn ownership."""
 
-import asyncio
-
 import pytest
-from ag_ui.core import Tool as ClientTool
-from bub.core.tools import Tool, ToolContext
-from bub_ag_ui.tools import ExternalTools, InterruptTool
+from bub.core.tools import Tool
+from bub_ag_ui.tools import InterruptTool
 
 from .conftest import collect, request
 
@@ -43,29 +40,3 @@ async def test_external_definitions_cannot_share_model_alias(setup, interrupt):
     _, events = await collect(adapter, request(tools=tools))
     assert events[-1]["type"] == "RUN_ERROR"
     assert "shadows" in events[-1]["message"]
-
-
-@pytest.mark.parametrize("interrupt", [False, True])
-async def test_direct_foreign_tool_call_cannot_modify_parent_pending(setup, interrupt):
-    _, make = setup
-    agent = make()._storage_agent
-    state = {"session_id": "parent"}
-    definition = {"name": "browser", "description": "", "parameters": {}}
-    external = ExternalTools(
-        [(InterruptTool if interrupt else ClientTool)(**definition)]
-    )
-    external.bind(agent, state)
-    parent = ToolContext(tape=agent.tape("parent"), state=state, call_id="parent-call")
-    external.batch = {"parent-call": "browser"}
-    waiting = asyncio.create_task(agent.tools["browser"].run(context=parent))
-    await asyncio.wait_for(external.paused.wait(), 1)
-    assert not waiting.done()
-    # A shallow state copy retains all inherited values, not turn ownership.
-    child = ToolContext(
-        tape=agent.tape("child"), state=state.copy(), call_id="child-call"
-    )
-    with pytest.raises(ValueError, match="owning AG-UI turn"):
-        await agent.tools["browser"].run(context=child)
-    assert [call["id"] for call in external.pending] == ["parent-call"]
-    external.resolve({"parent-call": "accepted"})
-    assert await waiting == "accepted"

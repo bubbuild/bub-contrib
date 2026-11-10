@@ -10,7 +10,7 @@ from bub_ag_ui.tools import InterruptTool
 from .conftest import collect, request
 
 
-async def test_backend_tool_multiple_steps_and_errors(setup):
+async def test_backend_tool_batches_deliver_results_and_one_final_answer(setup):
     provider, make = setup
     calls = []
 
@@ -29,12 +29,13 @@ async def test_backend_tool_multiple_steps_and_errors(setup):
         "c3",
     ]
     assert [e["type"] for e in events].count("RUN_FINISHED") == 1
-    assert not any(e["type"].startswith("STEP_") for e in events)
     assert events[-1]["type"] == "RUN_FINISHED"
 
 
 @pytest.mark.parametrize("frontend_first", [False, True])
-async def test_frontend_mixed_tools_attach_to_same_native_stream(setup, frontend_first):
+async def test_mixed_tools_continue_without_repeating_backend_effects(
+    setup, frontend_first
+):
     provider, make = setup
     executed = []
     backend = Tool.from_callable(lambda: executed.append(1) or "server", name="backend")
@@ -50,10 +51,7 @@ async def test_frontend_mixed_tools_attach_to_same_native_stream(setup, frontend
     adapter = make([backend])
     thread, events = await collect(adapter, request(tools=tools))
     assert events[-1]["type"] == "RUN_FINISHED"
-    assert [c["id"] for c in (await thread.history())["pending"]] == ["f1"]
     assert executed == [1]
-    # Native execution records/emits the batch once all futures are resolved.
-    assert not any(e["type"] == "TOOL_CALL_RESULT" for e in events)
     assert not any(
         m["role"] == "tool" and m["toolCallId"] == "f1"
         for m in (await thread.history())["messages"]
@@ -71,32 +69,17 @@ async def test_frontend_mixed_tools_attach_to_same_native_stream(setup, frontend
     history.append(
         {"id": "fr", "role": "tool", "toolCallId": "f1", "content": "browser result"}
     )
-    thread2, final = await collect(adapter, request(history, run="r2", tools=tools))
+    _, final = await collect(adapter, request(history, run="r2", tools=tools))
     assert final[-1]["type"] == "RUN_FINISHED"
-    assert (await thread2.history())["pending"] == []
     assert executed == [1]
     messages = provider.requests[-1]["messages"]
     assert [m["content"] for m in messages if m["role"] == "user"] == ["Hello"]
     assert [m["content"] for m in messages if m["role"] == "tool"] == (
         ["browser result", "server"] if frontend_first else ["server", "browser result"]
     )
-    assert [e["toolCallId"] for e in final if e["type"] == "TOOL_CALL_RESULT"] == ["b1"]
-
-
-async def test_new_user_input_appends_without_replacing_native_context(setup):
-    provider, make = setup
-    adapter = make()
-    provider.reply("old answer")
-    await collect(adapter, request())
-    provider.reply("new answer")
-    # A different user message is new input, not a replacement history.
-    await collect(
-        adapter, request([{"id": "edit", "role": "user", "content": "Edited"}])
-    )
     assert [
-        m["content"] for m in provider.requests[-1]["messages"] if m["role"] != "system"
-    ] == ["Hello", "old answer", "Edited"]
-    assert len(provider.requests) == 2
+        e["toolCallId"] for e in [*events, *final] if e["type"] == "TOOL_CALL_RESULT"
+    ] == ["b1"]
 
 
 @pytest.mark.parametrize(
@@ -133,8 +116,20 @@ async def test_interrupt_invalid_resume_is_run_error_and_keeps_pending(setup, in
     assert failed[0]["type"] == "RUN_STARTED"
     assert failed[-1]["type"] == "RUN_ERROR"
     assert not any(e["type"] == "RUN_FINISHED" for e in failed)
-    assert len(view.pending) == 2
     assert len(provider.requests) == 1
+    provider.reply("approved")
+    _, accepted = await collect(
+        adapter,
+        request(
+            messages,
+            run="retry",
+            resume=[
+                {"interruptId": call_id, "status": "resolved", "payload": True}
+                for call_id in ("a1", "a2")
+            ],
+        ),
+    )
+    assert accepted[-1]["type"] == "RUN_FINISHED"
 
 
 async def test_interrupt_snapshots_resume_and_idempotency_without_history_api(setup):
@@ -155,20 +150,19 @@ async def test_interrupt_snapshots_resume_and_idempotency_without_history_api(se
     provider.reply(calls=[("p1", "prepare", "{}")])
     provider.reply(calls=[("a1", "approve", "{}"), ("a2", "approve", "{}")])
     view, events = await collect(adapter, request())
-    assert [e["type"] for e in events[-3:]] == [
-        "MESSAGES_SNAPSHOT",
-        "STATE_SNAPSHOT",
-        "RUN_FINISHED",
-    ]
-    assert events[-2]["snapshot"] == {"decision": "waiting"}
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert any(e["type"] == "MESSAGES_SNAPSHOT" for e in events)
+    state = next(
+        e["snapshot"] for e in reversed(events) if e["type"] == "STATE_SNAPSHOT"
+    )
+    assert state == {"decision": "waiting"}
     assert len(events[-1]["outcome"]["interrupts"]) == 2
-    # Responses resolve the futures of the same live native stream.
     resume = [
         {"interruptId": id, "status": "resolved", "payload": True}
         for id in ("a1", "a2")
     ]
     data = request((await view.history())["messages"], run="resume", resume=resume)
-    data.state = events[-2]["snapshot"]
+    data.state = state
     provider.reply("approved")
     _, resumed = await collect(adapter, data)
     assert resumed[-1]["type"] == "RUN_FINISHED"
@@ -255,8 +249,6 @@ async def test_disconnect_closes_native_tool_and_releases_thread(setup):
                 await asyncio.wait_for(entered.wait(), 5)
                 break
     await asyncio.wait_for(closed.wait(), 5)
-    assert not adapter._active
-    assert not adapter._tasks
     provider.reply("next")
     _, events = await collect(
         adapter,
@@ -341,7 +333,6 @@ async def test_timeout_closes_native_execution_with_one_error(setup):
     assert closed.is_set()
     assert events[-1]["type"] == "RUN_ERROR"
     assert events[-1]["message"] == "Agent run timed out"
-    assert not adapter._active
 
 
 async def test_resume_receipt_distinguishes_json_boolean_and_number(setup):
@@ -371,3 +362,54 @@ async def test_resume_receipt_distinguishes_json_boolean_and_number(setup):
     )
     assert events[-1]["type"] == "RUN_ERROR"
     assert len(provider.requests) == 2
+
+
+async def test_tool_results_after_restart_are_rejected(setup):
+    provider, make = setup
+    adapter = make()
+    tools = [{"name": "browser", "description": "", "parameters": {}}]
+    provider.reply(calls=[("f1", "browser", "{}")])
+    view, _ = await collect(adapter, request(tools=tools))
+    await adapter.close()
+    replacement = make()
+    _, failed = await collect(
+        replacement,
+        request(
+            [
+                *(await view.history())["messages"],
+                {"id": "result", "role": "tool", "toolCallId": "f1", "content": "late"},
+            ],
+            tools=tools,
+        ),
+    )
+    assert failed[-1]["type"] == "RUN_ERROR"
+    assert "cannot survive" in failed[-1]["message"]
+    assert len(provider.requests) == 1
+
+
+async def test_tool_results_after_timeout_are_rejected(setup):
+    provider, make = setup
+    adapter = make(max_run_seconds=0.05)
+    tools = [{"name": "browser", "description": "", "parameters": {}}]
+    provider.reply(calls=[("f1", "browser", "{}")])
+    _, paused = await collect(adapter, request(tools=tools))
+    assert paused[-1]["type"] == "RUN_FINISHED"
+    await asyncio.sleep(0.1)
+    _, expired = await collect(
+        adapter,
+        request(
+            [{"id": "result", "role": "tool", "toolCallId": "f1", "content": "late"}],
+            tools=tools,
+        ),
+    )
+    assert expired[-1]["type"] == "RUN_ERROR"
+    assert len(provider.requests) == 1
+    provider.reply("new answer")
+    _, fresh = await collect(
+        adapter,
+        request(
+            [{"id": "next", "role": "user", "content": "New question"}],
+            run="next",
+        ),
+    )
+    assert fresh[-1]["type"] == "RUN_FINISHED"

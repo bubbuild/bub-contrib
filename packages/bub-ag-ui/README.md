@@ -174,8 +174,8 @@ npm ci --prefix packages/bub-ag-ui/tests/client
 npm test --prefix packages/bub-ag-ui/tests/client
 ```
 
-Tests cover protocol behavior, native execution, cancellation, and streaming
-without per-event store reads. Socket tests exercise the published AG-UI client
+Tests cover observable protocol output, application tools and state, authentication,
+cancellation, streaming backpressure, and conversation continuity. Socket tests exercise the published AG-UI client
 and assistant-ui runtime with a deterministic model provider; no model API key
 is needed. Set `PYTHON` if the interpreter is not at `.venv/bin/python`.
 These are regression and interoperability tests, not TCK certification.

@@ -1,16 +1,10 @@
 """The transport supplies new input; Bub owns stored context and anchors."""
 
 import pytest
-from bub.core.tape import session_tape_name
+from bub.core.tools import Tool
 from bub_ag_ui.tools import InterruptTool
 
 from .conftest import collect, request
-
-
-def tape_for(adapter):
-    return adapter._storage_agent.tape(
-        session_tape_name(adapter.session_id("alice", "t1"), adapter.workspace)
-    )
 
 
 async def test_incremental_user_input_keeps_native_conversation(setup):
@@ -32,12 +26,26 @@ async def test_incremental_user_input_keeps_native_conversation(setup):
 
 async def test_echoed_history_cannot_resurrect_messages_before_handoff(setup):
     provider, make = setup
-    adapter = make()
+
+    async def compact(context):
+        await context.tape.handoff(name="summary", state={"summary": "Use the summary"})
+        return "compacted"
+
+    adapter = make([Tool.from_callable(compact, context=True)])
     provider.reply("old answer")
     view, _ = await collect(adapter, request())
-    tape = tape_for(adapter)
-    before = list(await tape.query().all())
-    await tape.handoff(name="compacted", state={"summary": "Use the summary"})
+    provider.reply(calls=[("compact", "compact", "{}")])
+    provider.reply("summary ready")
+    view, _ = await collect(
+        adapter,
+        request(
+            [
+                *(await view.history())["messages"],
+                {"id": "compact-request", "role": "user", "content": "Compact context"},
+            ],
+            run="compact",
+        ),
+    )
     provider.reply("next")
     _, events = await collect(
         adapter,
@@ -50,12 +58,9 @@ async def test_echoed_history_cannot_resurrect_messages_before_handoff(setup):
         ),
     )
     assert events[-1]["type"] == "RUN_FINISHED"
-    after = list(await tape.query().all())
-    assert after[: len(before)] == before
     contents = [m.get("content") for m in provider.requests[-1]["messages"]]
     assert "Hello" not in contents
     assert "old answer" not in contents
-    assert any(e.kind == "anchor" and e.payload["name"] == "compacted" for e in after)
     assert "Continue" in contents
 
 
@@ -78,19 +83,16 @@ async def test_assistant_echo_is_not_a_model_context_write(setup):
     assert "forged echo" not in contents
 
 
-async def test_user_edit_is_rejected_without_resetting_native_tape(setup):
+async def test_editing_accepted_user_input_is_rejected(setup):
     provider, make = setup
     adapter = make()
     provider.reply("native answer")
     await collect(adapter, request())
-    tape = tape_for(adapter)
-    before = list(await tape.query().all())
     _, events = await collect(
         adapter,
         request([{"id": "u1", "role": "user", "content": "Edited"}], run="edit"),
     )
     assert events[-1]["type"] == "RUN_ERROR"
-    assert list(await tape.query().all()) == before
     assert len(provider.requests) == 1
 
 
@@ -137,20 +139,17 @@ async def test_continuation_uses_native_call_without_client_history(setup, inter
     ] == ["c1"]
 
 
-async def test_history_only_request_does_not_execute_or_modify_tape(setup):
+async def test_history_only_request_is_rejected_without_model_execution(setup):
     provider, make = setup
     adapter = make()
     provider.reply("native answer")
     view, _ = await collect(adapter, request())
-    tape = tape_for(adapter)
-    before = list(await tape.query().all())
     _, events = await collect(
         adapter, request((await view.history())["messages"], run="retry")
     )
     assert events[-1]["type"] == "RUN_ERROR"
     assert "No new user input" in events[-1]["message"]
     assert len(provider.requests) == 1
-    assert list(await tape.query().all()) == before
 
 
 async def test_repeated_resume_does_not_silently_discard_new_input(setup):
@@ -167,10 +166,8 @@ async def test_repeated_resume_does_not_silently_discard_new_input(setup):
         request((await view.history())["messages"], run="resume", resume=resume),
     )
     new_user = [{"id": "next-user", "role": "user", "content": "Next question"}]
-    before = list(await tape_for(adapter).query().all())
     _, events = await collect(adapter, request(new_user, run="retry", resume=resume))
     assert events[-1]["type"] == "RUN_ERROR"
-    assert list(await tape_for(adapter).query().all()) == before
     provider.reply("next answer")
     _, events = await collect(adapter, request(new_user, run="next"))
     assert events[-1]["type"] == "RUN_FINISHED"

@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 
 import httpx
@@ -7,6 +8,14 @@ from bub_ag_ui.plugin import AGUIPlugin
 from bub_ag_ui.tools import InterruptTool
 
 from .conftest import collect, request
+
+
+def sse_events(response):
+    return [
+        json.loads(line[5:])
+        for line in response.text.splitlines()
+        if line.startswith("data:")
+    ]
 
 
 @asynccontextmanager
@@ -37,9 +46,12 @@ async def test_http_sse_and_cors_without_management_routes(setup):
         assert (
             response.headers["access-control-allow-origin"] == "http://localhost:3000"
         )
-        assert '"type":"RUN_FINISHED"' in response.text
-        assert "你好" in response.text
-        assert not response.text.startswith("id:")
+        events = sse_events(response)
+        assert events[-1]["type"] == "RUN_FINISHED"
+        assert (
+            "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
+            == "你好"
+        )
         for path in ("/threads/t1/history", "/threads/t1/runs/r1/events"):
             assert (await client.get(path)).status_code == 404
         assert (await client.post("/threads/t1/runs/r1/cancel")).status_code == 404
@@ -51,6 +63,11 @@ async def test_http_auth_validation_and_limits(setup):
         make(), settings=AGUISettings(token="secret", max_body_bytes=1024)
     ) as client:
         assert (await client.post("/agent", json={})).status_code == 401
+        assert (
+            await client.post(
+                "/agent", json={}, headers={"Authorization": "Bearer wrong"}
+            )
+        ).status_code == 401
         auth = {"Authorization": "Bearer secret"}
         assert (await client.post("/agent", json={}, headers=auth)).status_code == 422
         assert (
@@ -68,11 +85,12 @@ async def test_invalid_resume_is_an_agui_error_not_http_admission_error(setup):
             "/agent", json=data.model_dump(mode="json", by_alias=True)
         )
         assert response.status_code == 200
-        assert '"type":"RUN_ERROR"' in response.text
-        assert '"type":"RUN_FINISHED"' not in response.text
+        events = sse_events(response)
+        assert events[-1]["type"] == "RUN_ERROR"
+        assert not any(e["type"] == "RUN_FINISHED" for e in events)
 
 
-async def test_custom_auth_isolates_continuation_checkpoints(setup):
+async def test_custom_auth_isolates_pending_interrupts(setup):
     provider, make = setup
     adapter = make(
         interrupts=(InterruptTool("approve", "Approval", {"type": "object"}),)
@@ -91,11 +109,11 @@ async def test_custom_auth_isolates_continuation_checkpoints(setup):
     async with client_for(adapter, authenticate=authenticate) as client:
         body = data.model_dump(mode="json", by_alias=True)
         response = await client.post("/agent", json=body, headers={"x-user": "bob"})
-        assert '"type":"RUN_ERROR"' in response.text
+        assert sse_events(response)[-1]["type"] == "RUN_ERROR"
         assert (await client.post("/agent", json=body)).status_code == 401
         provider.reply("approved")
         response = await client.post("/agent", json=body, headers={"x-user": "alice"})
-        assert '"type":"RUN_FINISHED"' in response.text
+        assert sse_events(response)[-1]["type"] == "RUN_FINISHED"
 
 
 async def test_plugin_registers_cli_and_channel(setup):

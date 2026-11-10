@@ -105,14 +105,12 @@ def request(messages=None, *, run="r1", thread="t1", tools=None, **kwargs):
 class ClientView:
     """Test-side reducer, never an adapter history API."""
 
-    def __init__(self, projection, pending):
+    def __init__(self, projection):
         self.projection = projection
-        self.pending = pending
 
     async def history(self):
         return {
             "messages": self.projection.messages,
-            "pending": self.pending,
         }
 
 
@@ -123,6 +121,4 @@ async def collect(adapter, data, user="alice"):
     projection = MessageProjection()
     for event in events:
         projection.apply(event)
-    live = adapter._turns.get(adapter.session_id(user, data.thread_id))
-    pending = list(live.inbound.external.pending) if live else []
-    return ClientView(projection, pending), events
+    return ClientView(projection), events

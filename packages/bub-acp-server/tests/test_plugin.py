@@ -1342,3 +1342,44 @@ async def test_prompt_sends_complete_output_when_stream_has_no_text_chunks() -> 
 
     assert client.updates[0][1].content.text == "late text"
     assert len(client.updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_reasoning_effort_is_not_forwarded(tmp_path: Path) -> None:
+    framework = ConfigFramework()
+    client = FakeClient()
+    agent = BubACPAgent(framework)
+    agent.on_connect(client)
+    created = await agent.new_session(cwd=str(tmp_path))
+    await agent.set_config_option(
+        config_id="reasoning_effort",
+        session_id=created.session_id,
+        value="auto",
+    )
+
+    await agent.prompt(
+        [TextContentBlock(type="text", text="hello")],
+        session_id=created.session_id,
+    )
+
+    assert "_runtime_reasoning_effort" not in framework.messages[0].context
+
+
+def test_save_sessions_tolerates_concurrent_store_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = BubACPAgent(FakeFramework())
+    agent._session_store_path = tmp_path / "acp-sessions.json"
+    agent._sessions["s1"] = agent_module.ACPSession(session_id="s1", cwd=tmp_path)
+
+    def failing_replace(self: Path, target: Path) -> Path:
+        raise FileNotFoundError(str(self))
+
+    monkeypatch.setattr(Path, "replace", failing_replace)
+    agent._save_sessions()  # must not raise
+    assert not list(tmp_path.glob("*.tmp"))
+    monkeypatch.undo()
+
+    agent._save_sessions()
+    data = json.loads((tmp_path / "acp-sessions.json").read_text(encoding="utf-8"))
+    assert [item["session_id"] for item in data] == ["s1"]

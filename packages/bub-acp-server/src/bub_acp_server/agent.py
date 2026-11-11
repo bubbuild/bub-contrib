@@ -5,6 +5,7 @@ import base64
 import contextlib
 import json
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -953,7 +954,8 @@ class BubACPAgent:
         context: dict[str, str] = {}
         if model := session.runtime.get("model"):
             context["_runtime_model"] = model
-        if reasoning_effort := session.runtime.get(REASONING_EFFORT_CONFIG_ID):
+        reasoning_effort = session.runtime.get(REASONING_EFFORT_CONFIG_ID)
+        if reasoning_effort and reasoning_effort != "auto":
             context["_runtime_reasoning_effort"] = reasoning_effort
         context["_runtime_workspace"] = str(session.cwd)
         inbound = ACPInboundMessage(
@@ -1408,11 +1410,14 @@ class BubACPAgent:
     def _save_sessions(self) -> None:
         self._session_store_path.parent.mkdir(parents=True, exist_ok=True)
         payload = [session.to_json() for session in self._sessions.values()]
-        temp_path = self._session_store_path.with_suffix(".json.tmp")
+        temp_path = self._session_store_path.with_suffix(f".json.{os.getpid()}.tmp")
         temp_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
         )
-        temp_path.replace(self._session_store_path)
+        try:
+            temp_path.replace(self._session_store_path)
+        except FileNotFoundError:
+            temp_path.unlink(missing_ok=True)
 
     async def _attach_session_history(self, session: ACPSession) -> None:
         router = self._require_stream_router()

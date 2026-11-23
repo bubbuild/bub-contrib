@@ -87,6 +87,10 @@ test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.21.0",
     "fakeredis>=2.20.0",
+    # fakeredis 2.40.0 reads redis-py's `@deprecated_args` wrapper through
+    # `__closure__`, which redis 8.2.0 no longer exposes. Hold redis at 8.1.x
+    # for the test group until fakeredis supports 8.2.
+    "redis<8.2",
 ]
 
 [tool.pytest.ini_options]

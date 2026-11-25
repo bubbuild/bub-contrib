@@ -85,6 +85,13 @@ that enters `framework.running()` (`bub gateway`, `bub chat`, `bub run`, `bub ac
 the configured servers. Discovery runs in the background; the first turn waits for it before binding
 tools. Servers that fail to connect are reported by the `mcp` tool and do not stop Bub.
 
+## Stdio server logs
+
+Stdio server stderr is appended to `$BUB_HOME/logs/mcp/stderr.log` (default:
+`~/.bub/logs/mcp/stderr.log`) instead of the terminal. Stdio servers using FastMCP
+`tools`, `include_tags`, or `exclude_tags` retain their existing stderr behavior.
+The log is not rotated and may contain sensitive data.
+
 ## Embedding
 
 Other Bub plugins can reuse the MCP connection and tool bridge with a read-only configuration:

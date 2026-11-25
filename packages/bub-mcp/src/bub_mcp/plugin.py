@@ -18,6 +18,8 @@ from bub import hookimpl, tool
 from bub.core.tools import Tool, ToolContext
 from bub.envelope import Envelope, field_of
 from bub.turn import TurnState
+from fastmcp.client.transports import StdioTransport
+from fastmcp.mcp_config import MCPConfig, StdioMCPServer
 from loguru import logger
 
 from bub_mcp.config import MCPSettings
@@ -35,11 +37,23 @@ type ResultMode = Literal["text", "structured", "wrapped"]
 def _create_fastmcp_client(
     config: dict[str, Any], *, init_timeout_seconds: float | None
 ) -> fastmcp.Client[Any]:
+    parsed = MCPConfig.from_dict(config)
+    server = next(iter(parsed.mcpServers.values()), None)
+    # The exact type leaves FastMCP's transform and tag-filter subclasses alone.
+    if len(parsed.mcpServers) != 1 or type(server) is not StdioMCPServer:
+        return fastmcp.Client(parsed, init_timeout=init_timeout_seconds)
 
-    kwargs: dict[str, Any] = {}
-    if init_timeout_seconds is not None:
-        kwargs["init_timeout"] = init_timeout_seconds
-    return fastmcp.Client(config, **kwargs)
+    log_file = bub.home / "logs" / "mcp" / "stderr.log"
+    log_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    transport = StdioTransport(
+        command=server.command,
+        args=server.args,
+        env=server.env,
+        cwd=server.cwd,
+        keep_alive=server.keep_alive,
+        log_file=log_file,
+    )
+    return fastmcp.Client(transport, init_timeout=init_timeout_seconds)
 
 
 def _tool_name(server_name: str, remote_name: str) -> str:

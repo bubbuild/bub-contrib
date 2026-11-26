@@ -273,6 +273,11 @@ The generic `{"steering": {"supported": true}}` field on the initialize response
 is not Lody-namespaced and stays unconditional, so clients using the original
 Codex steering route can still detect it.
 
+The Lody behavior is implemented in `bub_acp_server.lody` as an extension that
+`BubACPAgent` drives through generic hooks, and it is installed by default.
+Embedders can pass `BubACPAgent(framework, extensions=())` to run a plain ACP
+agent without it.
+
 A Lody client sees the complete set:
 
 ```json

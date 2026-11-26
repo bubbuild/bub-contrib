@@ -14,7 +14,12 @@ from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
 from bub.turn import TurnResult
 
-from bub_acp_server.agent import BubACPAgent, _clean_title, is_lody_client
+from bub_acp_server.agent import BubACPAgent
+from bub_acp_server.lody import LodyExtension, _clean_title, is_lody_client
+
+
+def lody_of(agent: BubACPAgent) -> LodyExtension:
+    return next(e for e in agent.extensions if isinstance(e, LodyExtension))
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +158,7 @@ async def test_session_titles_are_advertised_only_to_lody_clients() -> None:
         agent = BubACPAgent(FakeFramework())
         response = await agent.initialize(protocol_version=1, client_info=client_info)
         assert response.agent_capabilities is not None
-        assert agent._lody_client is expected
+        assert lody_of(agent).lody_client is expected
         if not expected:
             # Nothing Lody-namespaced goes to a non-Lody client, including
             # capabilities that are otherwise negotiated per-connection.
@@ -187,12 +192,12 @@ async def test_non_lody_clients_never_generate_titles(
 ) -> None:
     calls: list[str] = []
 
-    async def generate(self: BubACPAgent, session: Any, request: str) -> str:
+    async def generate(self: LodyExtension, session: Any, request: str) -> str:
         del self, session
         calls.append(request)
         return "Unexpected"
 
-    monkeypatch.setattr(BubACPAgent, "_generate_session_title", generate)
+    monkeypatch.setattr(LodyExtension, "_generate_session_title", generate)
     client = FakeClient()
     agent = BubACPAgent(FakeFramework())
     agent.on_connect(client)
@@ -223,12 +228,12 @@ async def test_first_prompt_publishes_and_persists_a_generated_title(
 ) -> None:
     seen: list[str] = []
 
-    async def generate(self: BubACPAgent, session: Any, request: str) -> str:
+    async def generate(self: LodyExtension, session: Any, request: str) -> str:
         del self, session
         seen.append(request)
         return '"Fix the login redirect."'
 
-    monkeypatch.setattr(BubACPAgent, "_generate_session_title", generate)
+    monkeypatch.setattr(LodyExtension, "_generate_session_title", generate)
     framework = FakeFramework()
     client = FakeClient()
     agent = BubACPAgent(framework)
@@ -258,12 +263,12 @@ async def test_titles_are_generated_once_per_session(
 ) -> None:
     calls: list[str] = []
 
-    async def generate(self: BubACPAgent, session: Any, request: str) -> str:
+    async def generate(self: LodyExtension, session: Any, request: str) -> str:
         del self, session
         calls.append(request)
         return "One title"
 
-    monkeypatch.setattr(BubACPAgent, "_generate_session_title", generate)
+    monkeypatch.setattr(LodyExtension, "_generate_session_title", generate)
     client = FakeClient()
     agent = BubACPAgent(FakeFramework())
     agent.on_connect(client)
@@ -286,12 +291,12 @@ async def test_loaded_sessions_keep_their_title(
 ) -> None:
     calls: list[str] = []
 
-    async def generate(self: BubACPAgent, session: Any, request: str) -> str:
+    async def generate(self: LodyExtension, session: Any, request: str) -> str:
         del self, session
         calls.append(request)
         return "Regenerated"
 
-    monkeypatch.setattr(BubACPAgent, "_generate_session_title", generate)
+    monkeypatch.setattr(LodyExtension, "_generate_session_title", generate)
     client = FakeClient()
     agent = BubACPAgent(FakeFramework())
     agent.on_connect(client)
@@ -317,11 +322,11 @@ async def test_loaded_sessions_keep_their_title(
 async def test_title_generation_failure_pushes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def generate(self: BubACPAgent, session: Any, request: str) -> str:
+    async def generate(self: LodyExtension, session: Any, request: str) -> str:
         del self, session, request
         raise RuntimeError("model unavailable")
 
-    monkeypatch.setattr(BubACPAgent, "_generate_session_title", generate)
+    monkeypatch.setattr(LodyExtension, "_generate_session_title", generate)
     client = FakeClient()
     agent = BubACPAgent(FakeFramework())
     agent.on_connect(client)
@@ -345,11 +350,11 @@ async def test_title_generation_failure_pushes_nothing(
 async def test_empty_generation_pushes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def generate(self: BubACPAgent, session: Any, request: str) -> str:
+    async def generate(self: LodyExtension, session: Any, request: str) -> str:
         del self, session, request
         return "   "
 
-    monkeypatch.setattr(BubACPAgent, "_generate_session_title", generate)
+    monkeypatch.setattr(LodyExtension, "_generate_session_title", generate)
     client = FakeClient()
     agent = BubACPAgent(FakeFramework())
     agent.on_connect(client)
@@ -379,7 +384,9 @@ async def test_generate_session_title_uses_a_lean_throwaway_run(
     stub = TitleStreamAgent()
     agent._runtime_agents[session.session_id] = stub
 
-    title = await agent._generate_session_title(session, "fix the login redirect")
+    title = await lody_of(agent)._generate_session_title(
+        session, "fix the login redirect"
+    )
 
     assert title == "Fix login redirect"
     call = stub.calls[0]
@@ -398,7 +405,7 @@ async def test_missing_runtime_agent_skips_generation() -> None:
     agent = BubACPAgent(FakeFramework())
     session = await make_session(agent)
 
-    assert await agent._generate_session_title(session, "hello") == ""
+    assert await lody_of(agent)._generate_session_title(session, "hello") == ""
 
 
 @pytest.mark.parametrize(

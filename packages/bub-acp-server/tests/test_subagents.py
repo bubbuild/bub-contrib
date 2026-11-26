@@ -24,6 +24,7 @@ from bub.model_selection import ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
 
 from bub_acp_server.agent import BubACPAgent
+from bub_acp_server.lody import LodyExtension
 from bub_acp_server.subagents import (
     LODY_SUBAGENT_EVENT_METHOD,
     client_supports_subagent_events,
@@ -31,6 +32,10 @@ from bub_acp_server.subagents import (
 
 BUILTIN_TOOLS = {tool.name: tool for tool in builtin_tools.TOOLS}
 PARENT_CALL_ID = "call-parent"
+
+
+def lody_of(agent: BubACPAgent) -> LodyExtension:
+    return next(e for e in agent.extensions if isinstance(e, LodyExtension))
 
 
 @pytest.fixture(autouse=True)
@@ -573,7 +578,7 @@ async def test_subagent_output_request_returns_the_tail() -> None:
 async def test_only_the_newest_finished_runs_are_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("bub_acp_server.agent.MAX_FINISHED_SUBAGENT_RUNS", 2)
+    monkeypatch.setattr("bub_acp_server.lody.MAX_FINISHED_SUBAGENT_RUNS", 2)
     client = FakeClient()
     agent, session, runtime = await connect(client)
     for index in range(3):
@@ -588,7 +593,7 @@ async def test_only_the_newest_finished_runs_are_kept(
     )
 
     assert [task["taskId"] for task in listed["tasks"]] == run_ids[1:]
-    assert len(agent._subagent_task_runs) == 2
+    assert len(lody_of(agent)._subagent_task_runs) == 2
     with pytest.raises(RequestError):
         await agent.ext_method(
             "lody/subagents/output",
@@ -600,7 +605,7 @@ async def test_only_the_newest_finished_runs_are_kept(
 async def test_a_run_that_finishes_last_is_kept_even_if_it_started_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("bub_acp_server.agent.MAX_FINISHED_SUBAGENT_RUNS", 2)
+    monkeypatch.setattr("bub_acp_server.lody.MAX_FINISHED_SUBAGENT_RUNS", 2)
     client = FakeClient()
     agent, session, runtime = await connect(client)
     long_child = StubAgent(child_events(), block=True)

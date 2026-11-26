@@ -11,7 +11,7 @@ from weakref import WeakSet
 
 import bub
 from acp.http.asgi import create_asgi_app
-from acp.interfaces import Client
+from acp.experimental import AgentProtocolRouter
 from bub.channels import Interface
 from bub.channels.message import ChannelMessage
 from bub.streaming import StreamEvent
@@ -19,7 +19,13 @@ from hypercorn.asyncio import serve
 from hypercorn.config import Config
 from loguru import logger
 
-from bub_acp_server.agent import ACPSession, BubACPAgent, active_stream_router
+from bub_acp_server.agent import (
+    ACPAgentBase,
+    ACPSession,
+    BubACPAgent,
+    active_stream_router,
+)
+from bub_acp_server.agent_v2 import BubACPV2Agent
 from bub_acp_server.config import ACPServerSettings
 from bub_mcp.plugin import MCPChannel
 from bub_acp_server.steering import ACPSteeringInbox
@@ -29,20 +35,25 @@ if TYPE_CHECKING:
 
 
 def create_http_app(
-    framework: BubFramework, *, channel_managed: bool = False
+    framework: BubFramework, *, channel_managed: bool = False, v2: bool = False
 ) -> Callable:
-    """Create a /acp endpoint; the caller owns framework.running()."""
+    """Create a /acp endpoint; the caller owns framework.running().
+
+    With ``v2`` the endpoint speaks the experimental ACP protocol v2 instead of v1.
+    """
     prompt_lock = asyncio.Lock()
     sessions: dict[str, ACPSession] | None = None
-    agents: WeakSet[BubACPAgent] = WeakSet()
+    agents: WeakSet[ACPAgentBase] = WeakSet()
     mcp_channels: dict[str, MCPChannel] = {}
     prompt_runs = {}
     closing_sessions: set[str] = set()
 
-    def agent_factory(client: Client) -> BubACPAgent:
+    def agent_factory(client: object) -> ACPAgentBase:
         nonlocal sessions
+        del client  # The SDK passes the connection to on_connect as well.
         inbox = framework.get_steering_inbox()
-        agent = BubACPAgent(
+        agent_type = BubACPV2Agent if v2 else BubACPAgent
+        agent = agent_type(
             framework,
             steering_inbox=inbox if isinstance(inbox, ACPSteeringInbox) else None,
             prompt_lock=prompt_lock,
@@ -56,7 +67,9 @@ def create_http_app(
         agents.add(agent)
         return agent
 
-    sdk_app = create_asgi_app(agent_factory)
+    sdk_app = create_asgi_app(
+        AgentProtocolRouter(v2=agent_factory) if v2 else agent_factory
+    )
 
     async def cleanup() -> None:
         await asyncio.gather(*(agent.shutdown() for agent in list(agents)))
@@ -156,6 +169,7 @@ async def run_acp_http(
     keyfile: Path | None = None,
     channel_managed: bool = False,
     shutdown_trigger: Callable[[], Awaitable[None]] | None = None,
+    v2: bool = False,
 ) -> None:
     config = Config()
     config.bind = [f"{host}:{port}"]
@@ -164,7 +178,7 @@ async def run_acp_http(
         config.keyfile = str(keyfile) if keyfile is not None else None
     async with nullcontext() if channel_managed else framework.running():
         await serve(
-            create_http_app(framework, channel_managed=channel_managed),
+            create_http_app(framework, channel_managed=channel_managed, v2=v2),
             config,
             shutdown_trigger=shutdown_trigger,
         )

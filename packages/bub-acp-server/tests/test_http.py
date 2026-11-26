@@ -740,10 +740,15 @@ async def test_http_runner_owns_framework_lifetime(
     assert not running
 
 
+@pytest.mark.parametrize("v2", [False, True])
 @pytest.mark.parametrize("port", [None, 9000])
 @pytest.mark.parametrize("transport", ["http", "websocket"])
 def test_cli_selects_web_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: int | None, transport: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    port: int | None,
+    transport: str,
+    v2: bool,
 ) -> None:
     calls = []
 
@@ -761,11 +766,18 @@ def test_cli_selects_web_transport(
     result = CliRunner().invoke(
         app,
         ["acp", "--transport", transport]
-        + (["--port", str(port)] if port is not None else []),
+        + (["--port", str(port)] if port is not None else [])
+        + (["--v2"] if v2 else []),
     )
     assert result.exit_code == 0, result.output
     assert calls == [
-        {"host": "127.0.0.1", "port": port or 28200, "certfile": None, "keyfile": None}
+        {
+            "host": "127.0.0.1",
+            "port": port or 28200,
+            "certfile": None,
+            "keyfile": None,
+            "v2": v2,
+        }
     ]
 
 
@@ -803,7 +815,13 @@ def test_cli_web_tls_options(
     if tls_files == "both":
         assert result.exit_code == 0, result.output
         assert calls == [
-            {"host": "localhost", "port": 29200, "certfile": cert, "keyfile": key}
+            {
+                "host": "localhost",
+                "port": 29200,
+                "certfile": cert,
+                "keyfile": key,
+                "v2": False,
+            }
         ]
     else:
         assert result.exit_code == 2

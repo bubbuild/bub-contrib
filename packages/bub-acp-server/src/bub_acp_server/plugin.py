@@ -18,12 +18,13 @@ from bub_acp_server.agent import (
     BubACPAgent,
     run_acp_agent,
 )
+from bub_acp_server.agent_v2 import BubACPV2Agent, run_acp_v2_agent
 from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
     from bub.framework import BubFramework
 
-__all__ = ["ACPServerPlugin", "BubACPAgent", "run_acp_agent"]
+__all__ = ["ACPServerPlugin", "BubACPAgent", "BubACPV2Agent", "run_acp_agent"]
 
 
 class Transport(str, Enum):
@@ -101,6 +102,9 @@ class ACPServerPlugin:
             keyfile: Path | None = typer.Option(
                 None, exists=True, dir_okay=False, help="TLS private key."
             ),
+            v2: bool = typer.Option(
+                False, "--v2", help="Speak the experimental ACP protocol v2."
+            ),
         ) -> None:
             if command == "serve":
                 typer.echo(
@@ -121,7 +125,10 @@ class ACPServerPlugin:
                     raise typer.BadParameter(
                         "Listen and TLS options require --transport http or websocket"
                     )
-                asyncio.run(run_acp_agent(self.framework))
+                if v2:
+                    asyncio.run(run_acp_v2_agent(self.framework))
+                else:
+                    asyncio.run(run_acp_agent(self.framework))
                 return
             if (certfile is None) != (keyfile is None):
                 raise typer.BadParameter(
@@ -141,5 +148,6 @@ class ACPServerPlugin:
                     port=port,
                     certfile=certfile,
                     keyfile=keyfile,
+                    v2=v2,
                 )
             )

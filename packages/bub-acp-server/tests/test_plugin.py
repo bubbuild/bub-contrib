@@ -264,9 +264,8 @@ def test_cli_without_http_extra(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unstable", [False, True])
-async def test_initialize_advertises_session_capabilities(unstable: bool) -> None:
-    agent = BubACPAgent(FakeFramework(), use_unstable_protocol=unstable)
+async def test_initialize_advertises_session_capabilities() -> None:
+    agent = BubACPAgent(FakeFramework())
     response = await agent.initialize(protocol_version=1)
 
     assert response.protocol_version == 1
@@ -276,12 +275,8 @@ async def test_initialize_advertises_session_capabilities(unstable: bool) -> Non
     assert response.agent_capabilities.session_capabilities is not None
     assert response.agent_capabilities.session_capabilities.list is not None
     assert response.agent_capabilities.session_capabilities.delete is not None
-    assert (
-        response.agent_capabilities.session_capabilities.close is not None
-    ) is unstable
-    assert (
-        response.agent_capabilities.session_capabilities.resume is not None
-    ) is unstable
+    assert response.agent_capabilities.session_capabilities.close is not None
+    assert response.agent_capabilities.session_capabilities.resume is not None
     assert response.agent_capabilities.load_session is True
     assert response.agent_capabilities.prompt_capabilities is not None
     assert response.agent_capabilities.prompt_capabilities.image is True

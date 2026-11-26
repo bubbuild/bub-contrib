@@ -507,7 +507,6 @@ class BubACPAgent:
         prompt_runs: dict[str, deque[ACPPromptRun]] | None = None,
         closing_sessions: set[str] | None = None,
         bind_router: bool = True,
-        use_unstable_protocol: bool = True,
     ) -> None:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
@@ -519,7 +518,6 @@ class BubACPAgent:
         self._client: Client | None = None
         self._stream_router: ACPStreamRouter | None = None
         self._bind_router = bind_router
-        self._use_unstable_protocol = use_unstable_protocol
         self._session_store_path = bub.home.expanduser() / "acp-sessions.json"
         self._sessions = self._load_sessions() if sessions is None else sessions
         self._prompt_lock = prompt_lock if prompt_lock is not None else asyncio.Lock()
@@ -590,13 +588,9 @@ class BubACPAgent:
                 ),
                 session_capabilities=SessionCapabilities(
                     delete=SessionDeleteCapabilities(),
-                    close=SessionCloseCapabilities()
-                    if self._use_unstable_protocol
-                    else None,
+                    close=SessionCloseCapabilities(),
                     list=SessionListCapabilities(),
-                    resume=SessionResumeCapabilities()
-                    if self._use_unstable_protocol
-                    else None,
+                    resume=SessionResumeCapabilities(),
                 ),
             ),
         )
@@ -1622,7 +1616,7 @@ class BubACPAgent:
 async def run_acp_agent(
     framework: BubFramework, *, use_unstable_protocol: bool = True
 ) -> None:
-    agent = BubACPAgent(framework, use_unstable_protocol=use_unstable_protocol)
+    agent = BubACPAgent(framework)
     async with framework.running():
         get_steering_inbox = getattr(framework, "get_steering_inbox", None)
         if callable(get_steering_inbox):

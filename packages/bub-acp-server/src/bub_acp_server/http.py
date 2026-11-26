@@ -51,8 +51,6 @@ def create_http_app(
             prompt_runs=prompt_runs,
             closing_sessions=closing_sessions,
             bind_router=not channel_managed,
-            # Match the SDK web adapter's stable-only protocol routes.
-            use_unstable_protocol=False,
         )
         sessions = agent._sessions
         agents.add(agent)

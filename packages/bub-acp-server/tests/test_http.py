@@ -266,12 +266,18 @@ async def test_delete_session_from_another_connection(tmp_path, monkeypatch, tra
                     initialized = await connection.initialize(protocol_version=1)
                     capabilities = initialized.agent_capabilities.session_capabilities
                     assert capabilities.delete is not None
-                    assert capabilities.close is None
+                    assert capabilities.close is not None
+                    assert capabilities.resume is not None
                 session = await one.new_session(cwd=str(tmp_path))
                 other = await one.new_session(cwd=str(tmp_path))
                 await two.delete_session(session.session_id)
                 await two.delete_session(session.session_id)
                 await two.delete_session("never-existed")
+                closing = await one.new_session(cwd=str(tmp_path))
+                await two.resume_session(
+                    cwd=str(tmp_path), session_id=closing.session_id
+                )
+                await two.close_session(closing.session_id)
                 assert [s.session_id for s in (await one.list_sessions()).sessions] == [
                     other.session_id
                 ]
@@ -317,15 +323,7 @@ async def test_http_connections_keep_tools_and_streams_isolated(
                         client_capabilities=ClientCapabilities(terminal=True),
                     )
                     assert initialized.agent_capabilities.load_session is True
-                    assert (
-                        initialized.agent_capabilities.session_capabilities.resume
-                        is None
-                    )
                     session1 = await one.new_session(cwd=str(tmp_path))
-                    assert (
-                        initialized.agent_capabilities.session_capabilities.close
-                        is None
-                    )
                     await one.load_session(
                         cwd=str(tmp_path), session_id=session1.session_id
                     )
@@ -529,9 +527,6 @@ async def test_websocket_load_and_tool_callbacks(
                     client_capabilities=ClientCapabilities(terminal=True),
                 )
                 assert initialized.agent_capabilities.load_session is True
-                assert (
-                    initialized.agent_capabilities.session_capabilities.resume is None
-                )
                 session = await connection.new_session(cwd=str(tmp_path))
                 assert (
                     await connection.prompt(

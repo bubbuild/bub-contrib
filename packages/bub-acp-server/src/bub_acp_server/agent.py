@@ -327,9 +327,11 @@ class ACPStreamRouter:
 
         state.reported_usage = snapshot
         await self._client.session_update(
-            session_id,
-            UsageUpdate(session_update="usage_update", size=size, used=used),
+            session_id, self._usage_update(size=size, used=used)
         )
+
+    def _usage_update(self, *, size: int, used: int) -> object:
+        return UsageUpdate(session_update="usage_update", size=size, used=used)
 
     async def _send_agent_text(self, session_id: str, text: str) -> None:
         if not text:
@@ -482,12 +484,20 @@ def default_extensions() -> tuple[ACPExtensionFactory, ...]:
     return (LodyExtension,)
 
 
-class BubACPAgent:
+class ACPAgentBase:
+    """Protocol-independent session, MCP, history and turn state.
+
+    Subclasses own the protocol surface: they set ``_client`` and
+    ``_stream_router`` on connect and implement ``_execute_prompt``.
+    """
+
+    _client: Any
+    _stream_router: Any
+
     def __init__(
         self,
         framework: BubFramework,
         *,
-        client_tools: ACPClientToolRuntime | None = None,
         steering_inbox: ACPSteeringInbox | None = None,
         prompt_lock: asyncio.Lock | None = None,
         sessions: dict[str, ACPSession] | None = None,
@@ -495,17 +505,15 @@ class BubACPAgent:
         prompt_runs: dict[str, deque[ACPPromptRun]] | None = None,
         closing_sessions: set[str] | None = None,
         bind_router: bool = True,
-        extensions: Sequence[ACPExtensionFactory] | None = None,
     ) -> None:
         self.framework = framework
         self.settings = bub.ensure_config(ACPServerSettings)
-        self.client_tools = client_tools or ACPClientToolRuntime()
         self._runtime_agents: dict[str, BubAgent] = {}
         self._mcp_channels = mcp_channels if mcp_channels is not None else {}
         self._mcp_connect_tasks: set[asyncio.Task[MCPChannel | None]] = set()
         self._closed = False
-        self._client: Client | None = None
-        self._stream_router: ACPStreamRouter | None = None
+        self._client = None
+        self._stream_router = None
         self._bind_router = bind_router
         self._session_store_path = bub.home.expanduser() / "acp-sessions.json"
         self._sessions = self._load_sessions() if sessions is None else sessions
@@ -513,161 +521,40 @@ class BubACPAgent:
         self._steering_inbox = steering_inbox or ACPSteeringInbox()
         self._prompt_runs = prompt_runs if prompt_runs is not None else {}
         self._steering_locks: dict[str, asyncio.Lock] = {}
-        self._background_tasks: set[asyncio.Task[PromptResponse]] = set()
-        self.extensions: tuple[ACPExtension, ...] = tuple(
-            factory(self)
-            for factory in (default_extensions() if extensions is None else extensions)
-        )
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         self._closing_sessions = (
             closing_sessions if closing_sessions is not None else set()
         )
 
+    # Protocol hooks.
+
+    async def _execute_prompt(
+        self,
+        prompt: list[ACPPromptBlock],
+        session: ACPSession,
+        run: ACPPromptRun,
+    ) -> Any:
+        raise NotImplementedError
+
+    async def _send_final_text(self, session_id: str, text: str) -> None:
+        """Send a turn's output when the stream carried no text."""
+        raise NotImplementedError
+
+    def _configure_runtime_agent(
+        self, runtime_agent: BubAgent, session: ACPSession
+    ) -> None:
+        """Customize the Bub agent created for ``session``."""
+
+    async def _session_ended(self, session_id: str) -> None:
+        """Release protocol-specific state for a closed or deleted session."""
+
+    def _mcp_server_configs(
+        self, servers: Sequence[object] | None, cwd: Path
+    ) -> dict[str, dict[str, Any]]:
+        return server_configs(servers, cwd)  # type: ignore[arg-type]
+
     def set_steering_inbox(self, steering_inbox: ACPSteeringInbox) -> None:
         self._steering_inbox = steering_inbox
-
-    def on_connect(self, conn: Client) -> None:
-        self._client = conn
-        self.client_tools.connect(conn)
-        self._stream_router = ACPStreamRouter(
-            conn, context_window_size=self.settings.context_window_size
-        )
-        self.client_tools.set_terminal_observer(self._stream_router.attach_terminal)
-
-    async def initialize(
-        self,
-        protocol_version: int,
-        client_capabilities: ClientCapabilities | None = None,
-        client_info: Implementation | None = None,
-        **kwargs: Any,
-    ) -> InitializeResponse:
-        import importlib.metadata
-
-        try:
-            bub_version = importlib.metadata.version("bub")
-        except importlib.metadata.PackageNotFoundError:
-            bub_version = "0.0.0"
-        del kwargs
-        self.client_tools.set_capabilities(client_capabilities)
-        capability_meta: dict[str, object] = {}
-        for extension in self.extensions:
-            capability_meta.update(
-                extension.initialize(client_capabilities, client_info) or {}
-            )
-        return InitializeResponse(
-            protocol_version=protocol_version,
-            agent_info=Implementation(name="bub", title="Bub", version=bub_version),
-            field_meta={"steering": {"supported": True}},
-            agent_capabilities=AgentCapabilities(
-                load_session=True,
-                mcp_capabilities=McpCapabilities(http=True, sse=True),
-                prompt_capabilities=PromptCapabilities(image=True),
-                field_meta=capability_meta or None,
-                session_capabilities=SessionCapabilities(
-                    delete=SessionDeleteCapabilities(),
-                    close=SessionCloseCapabilities(),
-                    list=SessionListCapabilities(),
-                    resume=SessionResumeCapabilities(),
-                ),
-            ),
-        )
-
-    async def new_session(
-        self,
-        cwd: str,
-        additional_directories: list[str] | None = None,
-        mcp_servers: list[ACPMcpServer] | None = None,
-        **kwargs: Any,
-    ) -> NewSessionResponse:
-        del kwargs
-        session = self._load_or_adopt_session(
-            session_id=uuid4().hex,
-            cwd=cwd,
-            additional_directories=additional_directories,
-        )
-        try:
-            await self._replace_session_mcp(session, mcp_servers)
-        except BaseException:
-            self._sessions.pop(session.session_id, None)
-            self._save_sessions()
-            raise
-        return NewSessionResponse(
-            session_id=session.session_id,
-            config_options=await self._session_config_options(session),
-        )
-
-    async def load_session(
-        self,
-        cwd: str,
-        session_id: str,
-        additional_directories: list[str] | None = None,
-        mcp_servers: list[ACPMcpServer] | None = None,
-        **kwargs: Any,
-    ) -> LoadSessionResponse:
-        del kwargs
-        async with self._prompt_lock:
-            session = self._load_or_adopt_session(
-                session_id=session_id,
-                cwd=cwd,
-                additional_directories=additional_directories,
-            )
-            await self._replace_session_mcp(session, mcp_servers)
-            await self._attach_session_history(session)
-            return LoadSessionResponse(
-                config_options=await self._session_config_options(session)
-            )
-
-    async def resume_session(
-        self,
-        cwd: str,
-        session_id: str,
-        additional_directories: list[str] | None = None,
-        mcp_servers: list[ACPMcpServer] | None = None,
-        **kwargs: Any,
-    ) -> ResumeSessionResponse:
-        del kwargs
-        async with self._prompt_lock:
-            session = self._load_or_adopt_session(
-                session_id=session_id,
-                cwd=cwd,
-                additional_directories=additional_directories,
-            )
-            await self._replace_session_mcp(session, mcp_servers)
-            return ResumeSessionResponse(
-                config_options=await self._session_config_options(session)
-            )
-
-    async def list_sessions(
-        self,
-        additional_directories: list[str] | None = None,
-        cursor: str | None = None,
-        cwd: str | None = None,
-        **kwargs: Any,
-    ) -> ListSessionsResponse:
-        del additional_directories, cursor, cwd, kwargs
-        sessions_on_disk = self._load_sessions()
-        self._sessions.clear()
-        self._sessions.update(sessions_on_disk)
-        sessions = sorted(
-            self._sessions.values(),
-            key=lambda item: item.updated_at or "",
-            reverse=True,
-        )
-        return ListSessionsResponse(sessions=[session.info() for session in sessions])
-
-    async def delete_session(
-        self, session_id: str, **kwargs: Any
-    ) -> DeleteSessionResponse:
-        """Remove the session, its tape, and its active runtime resources."""
-        del kwargs
-        await self._end_session(session_id, delete_tape=True)
-        return DeleteSessionResponse()
-
-    async def close_session(
-        self, session_id: str, **kwargs: Any
-    ) -> CloseSessionResponse | None:
-        del kwargs
-        await self._end_session(session_id, delete_tape=False)
-        return CloseSessionResponse()
 
     async def _end_session(self, session_id: str, *, delete_tape: bool) -> None:
         if session_id in self._closing_sessions:
@@ -691,8 +578,7 @@ class BubACPAgent:
             if channel is not None:
                 await channel.stop()
             self._runtime_agents.pop(session_id, None)
-            for extension in self.extensions:
-                await extension.session_ended(session_id)
+            await self._session_ended(session_id)
             if delete_tape and session is not None:
                 tape = self._session_tape(session)
                 if tape is not None:
@@ -714,98 +600,6 @@ class BubACPAgent:
         finally:
             self._steering_locks.pop(session_id, None)
             self._closing_sessions.discard(session_id)
-
-    async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        del kwargs
-        # session/cancel is a notification: stop every pending prompt and let
-        # each one answer its own request with stopReason "cancelled".
-        current = asyncio.current_task()
-        for run in list(self._prompt_runs.get(session_id, ())):
-            # A repeated cancel must not add a cancellation the run cannot absorb.
-            if run.cancel_requested:
-                continue
-            run.cancel_requested = True
-            if run.task is not None and run.task is not current and not run.task.done():
-                run.task.cancel()
-        await self.framework.quit_via_channel_router(session_id)
-
-    async def set_config_option(
-        self,
-        config_id: str,
-        session_id: str,
-        value: str | bool,
-        **kwargs: Any,
-    ) -> SetSessionConfigOptionResponse:
-        del kwargs
-        session = self._sessions.get(session_id) or self._adopt_session(session_id)
-        session.touch()
-        config_options = await self._set_session_config_option(
-            session, config_id, value
-        )
-        self._save_sessions()
-        return SetSessionConfigOptionResponse(config_options=config_options)
-
-    async def prompt(
-        self,
-        prompt: list[ACPPromptBlock],
-        session_id: str,
-        **kwargs: Any,
-    ) -> PromptResponse:
-        del kwargs
-        session = self._sessions.get(session_id) or self._adopt_session(session_id)
-        session.touch()
-        self._save_sessions()
-        run = self._register_prompt_run(session_id)
-        run.task = asyncio.current_task()
-        return await self._execute_prompt(prompt, session, run)
-
-    async def ext_method(
-        self, method: str, params: dict[str, Any]
-    ) -> dict[str, object]:
-        for extension in self.extensions:
-            if extension.handles(method):
-                return await extension.ext_method(method, params)
-        applied_method = _STEERING_APPLIED_METHODS.get(method)
-        if applied_method is None:
-            raise RequestError.method_not_found(f"_{method}")
-
-        try:
-            session_id, prompt, steer_id = self._parse_steering_params(params)
-            outcome = await self._execute_or_queue_steering(session_id, prompt)
-            if steer_id is not None:
-                await self._require_client().ext_notification(
-                    applied_method,
-                    {"sessionId": session_id, "steerId": steer_id},
-                )
-                return {"outcome": "injected"}
-            return outcome
-        except RequestError:
-            raise
-        except Exception:
-            logger.exception("Steering request failed")
-            return {"outcome": "failed"}
-
-    def _parse_steering_params(
-        self, params: Mapping[str, object]
-    ) -> tuple[str, list[ACPPromptBlock], str | None]:
-        session_id = params.get("sessionId")
-        raw_prompt = params.get("prompt")
-        raw_steer_id = params.get("steerId")
-        if not isinstance(session_id, str) or not session_id:
-            raise RequestError.invalid_params({"field": "sessionId"})
-        if not isinstance(raw_prompt, list) or not raw_prompt:
-            raise RequestError.invalid_params({"field": "prompt"})
-        if raw_steer_id is not None and (
-            not isinstance(raw_steer_id, str) or not raw_steer_id
-        ):
-            raise RequestError.invalid_params({"field": "steerId"})
-        try:
-            prompt = _PROMPT_ADAPTER.validate_python(raw_prompt)
-        except ValidationError as error:
-            raise RequestError.invalid_params(
-                {"field": "prompt", "details": error.errors(include_url=False)}
-            ) from error
-        return session_id, prompt, raw_steer_id
 
     async def _execute_or_queue_steering(
         self, session_id: str, prompt: list[ACPPromptBlock]
@@ -870,53 +664,24 @@ class BubACPAgent:
             {"sessionId": session.session_id, "reason": "turn did not start"}
         )
 
-    def _on_background_prompt_done(self, task: asyncio.Task[PromptResponse]) -> None:
-        self._background_tasks.discard(task)
-        if task.cancelled():
-            return
-        error = task.exception()
-        if error is not None:
-            logger.error(
-                "Steering-started prompt failed",
-                exc_info=(type(error), error, error.__traceback__),
-            )
+    def _cancel_prompt_runs(self, session_id: str) -> None:
+        """Cancel every pending turn; each one reports its own cancellation."""
+        current = asyncio.current_task()
+        for run in list(self._prompt_runs.get(session_id, ())):
+            # A repeated cancel must not add a cancellation the run cannot absorb.
+            if run.cancel_requested:
+                continue
+            run.cancel_requested = True
+            if run.task is not None and run.task is not current and not run.task.done():
+                run.task.cancel()
 
-    async def _execute_prompt(
+    async def _run_turn(
         self,
         prompt: list[ACPPromptBlock],
         session: ACPSession,
         run: ACPPromptRun,
-    ) -> PromptResponse:
-        try:
-            response = await self._run_prompt(prompt, session, run)
-        except asyncio.CancelledError:
-            task = asyncio.current_task()
-            # Only session/cancel turns into a response; close and shutdown still cancel.
-            if not run.cancel_requested or task is None or task.uncancel() > 0:
-                raise
-            return PromptResponse(stop_reason="cancelled")
-        else:
-            if not run.cancel_requested:
-                return response
-            # The turn swallowed the cancellation; clear it before the response is sent.
-            task = asyncio.current_task()
-            if task is not None and task.cancelling():
-                task.uncancel()
-            return PromptResponse(stop_reason="cancelled", usage=response.usage)
-        finally:
-            self._complete_prompt_run(run)
-            for extension in self.extensions:
-                extension.turn_finished(prompt, session)
-
-    async def _run_prompt(
-        self,
-        prompt: list[ACPPromptBlock],
-        session: ACPSession,
-        run: ACPPromptRun,
-    ) -> PromptResponse:
-        client = self._require_client()
-        if self.settings.send_user_message_updates:
-            await self._send_user_message_updates(prompt, session.session_id)
+    ) -> ACPStreamState | None:
+        """Run one Bub turn, streaming it through the connection's router."""
         async with self._prompt_lock:
             if run.task is not None and (
                 session.session_id in self._closing_sessions
@@ -940,16 +705,19 @@ class BubACPAgent:
             if result.model_output and not (
                 stream_state is not None and stream_state.sent_text
             ):
-                await client.session_update(
-                    session.session_id,
-                    AgentMessageChunk(
-                        content=TextContentBlock(text=result.model_output)
-                    ),
-                )
-        return PromptResponse(
-            stop_reason="end_turn",
-            usage=stream_state.prompt_usage() if stream_state else None,
-        )
+                await self._send_final_text(session.session_id, result.model_output)
+        return stream_state
+
+    def _on_background_prompt_done(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Steering-started prompt failed",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def _build_inbound(
         self, prompt: list[ACPPromptBlock], session: ACPSession
@@ -977,9 +745,7 @@ class BubACPAgent:
             from bub.builtin.agent import BubAgent
 
             runtime_agent = BubAgent(self.framework)
-            runtime_agent.tools.update(build_client_tools(self.client_tools))
-            for extension in self.extensions:
-                extension.runtime_agent_created(runtime_agent, session)
+            self._configure_runtime_agent(runtime_agent, session)
             self._runtime_agents[session.session_id] = runtime_agent
         # Bub's builtin load_state uses this instance for recovery and execution.
         inbound._runtime_agent = runtime_agent
@@ -987,11 +753,11 @@ class BubACPAgent:
         return inbound
 
     async def _replace_session_mcp(
-        self, session: ACPSession, servers: list[ACPMcpServer] | None
+        self, session: ACPSession, servers: Sequence[object] | None
     ) -> None:
         if self._closed:
             raise RequestError.invalid_request({"reason": "Agent is shutting down"})
-        configs = server_configs(servers, session.cwd)
+        configs = self._mcp_server_configs(servers, session.cwd)
         task = asyncio.create_task(connect_session_mcp(configs))
         self._mcp_connect_tasks.add(task)
         try:
@@ -1243,6 +1009,321 @@ class BubACPAgent:
         selected_option.current_value = value
         return config_options
 
+
+class BubACPAgent(ACPAgentBase):
+    def __init__(
+        self,
+        framework: BubFramework,
+        *,
+        client_tools: ACPClientToolRuntime | None = None,
+        steering_inbox: ACPSteeringInbox | None = None,
+        prompt_lock: asyncio.Lock | None = None,
+        sessions: dict[str, ACPSession] | None = None,
+        mcp_channels: dict[str, MCPChannel] | None = None,
+        prompt_runs: dict[str, deque[ACPPromptRun]] | None = None,
+        closing_sessions: set[str] | None = None,
+        bind_router: bool = True,
+        extensions: Sequence[ACPExtensionFactory] | None = None,
+    ) -> None:
+        super().__init__(
+            framework,
+            steering_inbox=steering_inbox,
+            prompt_lock=prompt_lock,
+            sessions=sessions,
+            mcp_channels=mcp_channels,
+            prompt_runs=prompt_runs,
+            closing_sessions=closing_sessions,
+            bind_router=bind_router,
+        )
+        self._client: Client | None = None
+        self._stream_router: ACPStreamRouter | None = None
+        self.client_tools = client_tools or ACPClientToolRuntime()
+        self.extensions: tuple[ACPExtension, ...] = tuple(
+            factory(self)
+            for factory in (default_extensions() if extensions is None else extensions)
+        )
+
+    def _configure_runtime_agent(
+        self, runtime_agent: BubAgent, session: ACPSession
+    ) -> None:
+        runtime_agent.tools.update(build_client_tools(self.client_tools))
+        for extension in self.extensions:
+            extension.runtime_agent_created(runtime_agent, session)
+
+    async def _session_ended(self, session_id: str) -> None:
+        for extension in self.extensions:
+            await extension.session_ended(session_id)
+
+    async def _send_final_text(self, session_id: str, text: str) -> None:
+        await self._require_client().session_update(
+            session_id, AgentMessageChunk(content=TextContentBlock(text=text))
+        )
+
+    def on_connect(self, conn: Client) -> None:
+        self._client = conn
+        self.client_tools.connect(conn)
+        self._stream_router = ACPStreamRouter(
+            conn, context_window_size=self.settings.context_window_size
+        )
+        self.client_tools.set_terminal_observer(self._stream_router.attach_terminal)
+
+    async def initialize(
+        self,
+        protocol_version: int,
+        client_capabilities: ClientCapabilities | None = None,
+        client_info: Implementation | None = None,
+        **kwargs: Any,
+    ) -> InitializeResponse:
+        del kwargs
+        self.client_tools.set_capabilities(client_capabilities)
+        capability_meta: dict[str, object] = {}
+        for extension in self.extensions:
+            capability_meta.update(
+                extension.initialize(client_capabilities, client_info) or {}
+            )
+        return InitializeResponse(
+            protocol_version=protocol_version,
+            agent_info=Implementation(name="bub", title="Bub", version=_bub_version()),
+            field_meta={"steering": {"supported": True}},
+            agent_capabilities=AgentCapabilities(
+                load_session=True,
+                mcp_capabilities=McpCapabilities(http=True, sse=True),
+                prompt_capabilities=PromptCapabilities(image=True),
+                field_meta=capability_meta or None,
+                session_capabilities=SessionCapabilities(
+                    delete=SessionDeleteCapabilities(),
+                    close=SessionCloseCapabilities(),
+                    list=SessionListCapabilities(),
+                    resume=SessionResumeCapabilities(),
+                ),
+            ),
+        )
+
+    async def new_session(
+        self,
+        cwd: str,
+        additional_directories: list[str] | None = None,
+        mcp_servers: list[ACPMcpServer] | None = None,
+        **kwargs: Any,
+    ) -> NewSessionResponse:
+        del kwargs
+        session = self._load_or_adopt_session(
+            session_id=uuid4().hex,
+            cwd=cwd,
+            additional_directories=additional_directories,
+        )
+        try:
+            await self._replace_session_mcp(session, mcp_servers)
+        except BaseException:
+            self._sessions.pop(session.session_id, None)
+            self._save_sessions()
+            raise
+        return NewSessionResponse(
+            session_id=session.session_id,
+            config_options=await self._session_config_options(session),
+        )
+
+    async def load_session(
+        self,
+        cwd: str,
+        session_id: str,
+        additional_directories: list[str] | None = None,
+        mcp_servers: list[ACPMcpServer] | None = None,
+        **kwargs: Any,
+    ) -> LoadSessionResponse:
+        del kwargs
+        async with self._prompt_lock:
+            session = self._load_or_adopt_session(
+                session_id=session_id,
+                cwd=cwd,
+                additional_directories=additional_directories,
+            )
+            await self._replace_session_mcp(session, mcp_servers)
+            await self._attach_session_history(session)
+            return LoadSessionResponse(
+                config_options=await self._session_config_options(session)
+            )
+
+    async def resume_session(
+        self,
+        cwd: str,
+        session_id: str,
+        additional_directories: list[str] | None = None,
+        mcp_servers: list[ACPMcpServer] | None = None,
+        **kwargs: Any,
+    ) -> ResumeSessionResponse:
+        del kwargs
+        async with self._prompt_lock:
+            session = self._load_or_adopt_session(
+                session_id=session_id,
+                cwd=cwd,
+                additional_directories=additional_directories,
+            )
+            await self._replace_session_mcp(session, mcp_servers)
+            return ResumeSessionResponse(
+                config_options=await self._session_config_options(session)
+            )
+
+    async def list_sessions(
+        self,
+        additional_directories: list[str] | None = None,
+        cursor: str | None = None,
+        cwd: str | None = None,
+        **kwargs: Any,
+    ) -> ListSessionsResponse:
+        del additional_directories, cursor, cwd, kwargs
+        sessions_on_disk = self._load_sessions()
+        self._sessions.clear()
+        self._sessions.update(sessions_on_disk)
+        sessions = sorted(
+            self._sessions.values(),
+            key=lambda item: item.updated_at or "",
+            reverse=True,
+        )
+        return ListSessionsResponse(sessions=[session.info() for session in sessions])
+
+    async def delete_session(
+        self, session_id: str, **kwargs: Any
+    ) -> DeleteSessionResponse:
+        """Remove the session, its tape, and its active runtime resources."""
+        del kwargs
+        await self._end_session(session_id, delete_tape=True)
+        return DeleteSessionResponse()
+
+    async def close_session(
+        self, session_id: str, **kwargs: Any
+    ) -> CloseSessionResponse | None:
+        del kwargs
+        await self._end_session(session_id, delete_tape=False)
+        return CloseSessionResponse()
+
+    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        del kwargs
+        # session/cancel is a notification: stop every pending prompt and let
+        # each one answer its own request with stopReason "cancelled".
+        self._cancel_prompt_runs(session_id)
+        await self.framework.quit_via_channel_router(session_id)
+
+    async def set_config_option(
+        self,
+        config_id: str,
+        session_id: str,
+        value: str | bool,
+        **kwargs: Any,
+    ) -> SetSessionConfigOptionResponse:
+        del kwargs
+        session = self._sessions.get(session_id) or self._adopt_session(session_id)
+        session.touch()
+        config_options = await self._set_session_config_option(
+            session, config_id, value
+        )
+        self._save_sessions()
+        return SetSessionConfigOptionResponse(config_options=config_options)
+
+    async def prompt(
+        self,
+        prompt: list[ACPPromptBlock],
+        session_id: str,
+        **kwargs: Any,
+    ) -> PromptResponse:
+        del kwargs
+        session = self._sessions.get(session_id) or self._adopt_session(session_id)
+        session.touch()
+        self._save_sessions()
+        run = self._register_prompt_run(session_id)
+        run.task = asyncio.current_task()
+        return await self._execute_prompt(prompt, session, run)
+
+    async def ext_method(
+        self, method: str, params: dict[str, Any]
+    ) -> dict[str, object]:
+        for extension in self.extensions:
+            if extension.handles(method):
+                return await extension.ext_method(method, params)
+        applied_method = _STEERING_APPLIED_METHODS.get(method)
+        if applied_method is None:
+            raise RequestError.method_not_found(f"_{method}")
+
+        try:
+            session_id, prompt, steer_id = self._parse_steering_params(params)
+            outcome = await self._execute_or_queue_steering(session_id, prompt)
+            if steer_id is not None:
+                await self._require_client().ext_notification(
+                    applied_method,
+                    {"sessionId": session_id, "steerId": steer_id},
+                )
+                return {"outcome": "injected"}
+            return outcome
+        except RequestError:
+            raise
+        except Exception:
+            logger.exception("Steering request failed")
+            return {"outcome": "failed"}
+
+    def _parse_steering_params(
+        self, params: Mapping[str, object]
+    ) -> tuple[str, list[ACPPromptBlock], str | None]:
+        session_id = params.get("sessionId")
+        raw_prompt = params.get("prompt")
+        raw_steer_id = params.get("steerId")
+        if not isinstance(session_id, str) or not session_id:
+            raise RequestError.invalid_params({"field": "sessionId"})
+        if not isinstance(raw_prompt, list) or not raw_prompt:
+            raise RequestError.invalid_params({"field": "prompt"})
+        if raw_steer_id is not None and (
+            not isinstance(raw_steer_id, str) or not raw_steer_id
+        ):
+            raise RequestError.invalid_params({"field": "steerId"})
+        try:
+            prompt = _PROMPT_ADAPTER.validate_python(raw_prompt)
+        except ValidationError as error:
+            raise RequestError.invalid_params(
+                {"field": "prompt", "details": error.errors(include_url=False)}
+            ) from error
+        return session_id, prompt, raw_steer_id
+
+    async def _execute_prompt(
+        self,
+        prompt: list[ACPPromptBlock],
+        session: ACPSession,
+        run: ACPPromptRun,
+    ) -> PromptResponse:
+        try:
+            response = await self._run_prompt(prompt, session, run)
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            # Only session/cancel turns into a response; close and shutdown still cancel.
+            if not run.cancel_requested or task is None or task.uncancel() > 0:
+                raise
+            return PromptResponse(stop_reason="cancelled")
+        else:
+            if not run.cancel_requested:
+                return response
+            # The turn swallowed the cancellation; clear it before the response is sent.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                task.uncancel()
+            return PromptResponse(stop_reason="cancelled", usage=response.usage)
+        finally:
+            self._complete_prompt_run(run)
+            for extension in self.extensions:
+                extension.turn_finished(prompt, session)
+
+    async def _run_prompt(
+        self,
+        prompt: list[ACPPromptBlock],
+        session: ACPSession,
+        run: ACPPromptRun,
+    ) -> PromptResponse:
+        self._require_client()
+        if self.settings.send_user_message_updates:
+            await self._send_user_message_updates(prompt, session.session_id)
+        stream_state = await self._run_turn(prompt, session, run)
+        return PromptResponse(
+            stop_reason="end_turn",
+            usage=stream_state.prompt_usage() if stream_state else None,
+        )
+
     async def _send_user_message_updates(
         self, prompt: list[ACPPromptBlock], session_id: str
     ) -> None:
@@ -1257,15 +1338,30 @@ async def run_acp_agent(
 ) -> None:
     agent = BubACPAgent(framework)
     async with framework.running():
-        get_steering_inbox = getattr(framework, "get_steering_inbox", None)
-        if callable(get_steering_inbox):
-            steering_inbox = get_steering_inbox()
-            if isinstance(steering_inbox, ACPSteeringInbox):
-                agent.set_steering_inbox(steering_inbox)
+        if (steering_inbox := framework_steering_inbox(framework)) is not None:
+            agent.set_steering_inbox(steering_inbox)
         try:
             await run_agent(agent, use_unstable_protocol=use_unstable_protocol)
         finally:
             await agent.shutdown()
+
+
+def _bub_version() -> str:
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version("bub")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.0.0"
+
+
+def framework_steering_inbox(framework: BubFramework) -> ACPSteeringInbox | None:
+    get_steering_inbox = getattr(framework, "get_steering_inbox", None)
+    if callable(get_steering_inbox):
+        steering_inbox = get_steering_inbox()
+        if isinstance(steering_inbox, ACPSteeringInbox):
+            return steering_inbox
+    return None
 
 
 def _message_chat_id(message: Envelope) -> str:

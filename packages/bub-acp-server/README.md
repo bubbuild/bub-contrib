@@ -20,6 +20,7 @@ Expose Bub as an Agent Client Protocol agent.
 - Streamed subagent execution events through `_lody/subagents/event`
 - Subagent task lifecycle on the starting tool call, plus `_lody/subagents/list|cancel|output`
 - Automatic session titles pushed as `session_info_update`
+- Experimental ACP protocol v2 via `bub acp --v2` (see [ACP protocol v2](#acp-protocol-v2-experimental))
 
 ## Installation
 
@@ -253,6 +254,38 @@ transport = await create_websocket_stream("ws://127.0.0.1:28200/acp")
 ```
 
 Initialization, session loading, prompts and tool callbacks work over the socket; `connection.close()` closes it. WebSocket does not require HTTP/2. Like HTTP, it adds no authentication.
+
+## ACP protocol v2 (experimental)
+
+`bub acp --v2` serves the draft [ACP protocol v2](https://agentclientprotocol.github.io/python-sdk/experimental-v2/)
+through `BubACPV2Agent`, which runs alongside the v1 `BubACPAgent` and shares its session store,
+tapes, model and reasoning-effort options, and session MCP handling. The flag also applies to
+`--transport http` and `--transport websocket`; the gateway channel keeps serving v1. A v2
+endpoint only accepts v2 clients.
+
+```bash
+bub acp --v2
+bub acp --v2 --transport http --port 28200
+```
+
+How v2 differs from v1:
+
+- `session/prompt` returns a `messageId` as soon as the message joins the conversation and echoes
+  it as a `user_message` update. The turn reports `state_update` `running`, then `idle` with
+  `stopReason` (`end_turn` or `cancelled`) and the turn's token `usage`. A failed turn sends an
+  error `notice` and `idle` without a stop reason.
+- A prompt sent while a turn runs is injected into that turn at the next model step, like the v1
+  steering extension. If the turn ends first, the prompt starts the next turn.
+- `session/cancel` stops active turns; each one reports `idle` with `stopReason: "cancelled"`.
+- There is no `session/load`. `session/resume` with `replayFrom: {"type": "start"}` replays tape
+  history as v1 load does. Replayed messages get new message IDs.
+- Agent text, thoughts and replayed user text are message chunks with message IDs; text after a
+  tool call starts a new message. Tool calls use `tool_call_update`. `tape.handoff` is reported as a
+  `compaction_update` instead of a tool call.
+- V2 has no client filesystem or terminal methods, so turns use Bub's own `bash` and `fs.*` tools.
+- Session MCP servers support stdio and HTTP. V2 has no SSE transport, and ACP-routed MCP servers
+  are rejected.
+- The Lody extensions (steering, subagents, session titles) are v1 only.
 
 ## Lody extension capabilities
 

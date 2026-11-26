@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,44 @@ def server_configs(
                 "transport": "http" if isinstance(server, HttpMcpServer) else "sse",
                 "url": server.url,
                 "headers": {item.name: item.value for item in server.headers},
+            }
+        else:
+            raise RequestError.invalid_params(
+                {"field": "mcpServers", "reason": "Unsupported MCP transport"}
+            )
+    return configs
+
+
+def server_configs_v2(
+    servers: Sequence[object] | None, cwd: Path
+) -> dict[str, dict[str, Any]]:
+    """Map ACP v2 session MCP servers; v2 has no SSE and no ACP-routed support here."""
+    from acp.experimental.v2 import schema as v2
+
+    configs: dict[str, dict[str, Any]] = {}
+    for server in servers or []:
+        name = getattr(server, "name", "")
+        name = name.strip() if isinstance(name, str) else ""
+        if not name or name in configs:
+            raise RequestError.invalid_params(
+                {
+                    "field": "mcpServers",
+                    "reason": "Server names must be nonempty and unique",
+                }
+            )
+        if isinstance(server, v2.StdioMcpServer):
+            configs[name] = {
+                "transport": "stdio",
+                "command": server.command,
+                "args": list(server.args or []),
+                "env": {item.name: item.value for item in server.env or []},
+                "cwd": str(cwd),
+            }
+        elif isinstance(server, v2.HttpMcpServer):
+            configs[name] = {
+                "transport": "http",
+                "url": str(server.url),
+                "headers": {item.name: item.value for item in server.headers or []},
             }
         else:
             raise RequestError.invalid_params(

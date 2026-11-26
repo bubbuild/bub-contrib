@@ -9,7 +9,8 @@ from typing import Any, cast
 
 import pytest
 import typer
-from acp.schema import TextContentBlock
+from acp.exceptions import RequestError
+from acp.schema import Implementation, TextContentBlock
 from bub.errors import BubError, ErrorKind
 from bub.model_selection import ModelChoice, ModelOptions
 from bub.streaming import AsyncStreamEvents, StreamEvent, StreamState
@@ -284,6 +285,22 @@ async def test_initialize_advertises_session_capabilities() -> None:
     # capability is reported at all.
     assert response.agent_capabilities.field_meta is None
     assert response.field_meta == {"steering": {"supported": True}}
+
+
+@pytest.mark.asyncio
+async def test_agent_without_extensions_has_no_lody_surface() -> None:
+    agent = BubACPAgent(FakeFramework(), extensions=())
+    response = await agent.initialize(
+        protocol_version=1,
+        client_info=Implementation(name="lody", title="Lody", version="1"),
+    )
+
+    assert agent.extensions == ()
+    assert response.agent_capabilities is not None
+    assert response.agent_capabilities.field_meta is None
+    with pytest.raises(RequestError) as error:
+        await agent.ext_method("lody/subagents/list", {"sessionId": "s1"})
+    assert error.value.code == -32601
 
 
 @pytest.mark.asyncio

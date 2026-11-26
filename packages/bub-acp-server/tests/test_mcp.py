@@ -23,6 +23,7 @@ from bub.framework import BubFramework
 from bub_mcp import plugin as mcp_plugin
 
 from bub_acp_server.agent import BubACPAgent
+from bub_acp_server.lody import LodyExtension
 from bub_acp_server.mcp import server_configs
 from bub_acp_server.plugin import ACPServerPlugin
 
@@ -219,7 +220,7 @@ async def test_model_receives_only_current_session_mcp_tools(
     agent = make_agent(framework)
     # Automatic session titles issue their own model call; this test asserts on
     # the tool surface of prompt turns only.
-    monkeypatch.setattr(agent, "_schedule_session_title", lambda *a, **k: None)
+    monkeypatch.setattr(LodyExtension, "_schedule_session_title", lambda *a, **k: None)
     first = await agent.new_session(
         cwd=str(tmp_path), mcp_servers=[stdio("first", "first")]
     )

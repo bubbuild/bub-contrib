@@ -228,11 +228,11 @@ to display the UI; tool-execution permission dialogs are a separate mechanism.
 
 Each connection has its own client capabilities and stream router. ACP prompts are serialized across connections and share session metadata so one connection cannot overwrite another's newly created sessions. In gateway mode, the gateway router remains bound; the ACP channel routes each turn's output to its client. Client-backed tools are scoped to ACP turns, and concurrent non-ACP turns continue using the original tools.
 
-The dependency is pinned to **agent-client-protocol 1.0.0rc2**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading and listing, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.0.0rc2 or an equivalent implementation of load request/response correlation, including sessions with empty history.
+The dependency is pinned to **agent-client-protocol 1.1.0**. HTTP uses `BubACPAgent` directly and supports initialization, new sessions, session loading, resuming, listing, closing and deletion, config options, prompts, tool callbacks, and steering. Session stream registration and history replay are handled natively by the SDK, without a local compatibility adapter. Clients should also use SDK 1.1.0 or an equivalent implementation of load request/response correlation, including sessions with empty history.
 
 After initializing a new connection, load an existing session with `await connection.load_session(cwd="/path/to/workspace", session_id="existing-session-id")`, then continue with `connection.prompt(...)`. Keep the same Bub home and tape store when restarting the server to retain metadata and history.
 
-HTTP does not advertise session resume/close because the SDK web adapter still does not enable those unstable routes. Stdio enables them by default. `connection.close()` terminates the HTTP connection with `DELETE`; automatic SSE reconnection is not provided by the SDK.
+Session resume/close are stable in ACP and are advertised over every transport. `connection.close()` terminates the HTTP connection with `DELETE`; automatic SSE reconnection is not provided by the SDK.
 
 ### WebSocket
 
@@ -252,7 +252,7 @@ from acp.ws import create_websocket_stream
 transport = await create_websocket_stream("ws://127.0.0.1:28200/acp")
 ```
 
-Initialization, session loading, prompts and tool callbacks work over the socket; `connection.close()` closes it. WebSocket does not require HTTP/2. Like HTTP, it does not advertise the SDK's disabled unstable resume/close routes and adds no authentication.
+Initialization, session loading, prompts and tool callbacks work over the socket; `connection.close()` closes it. WebSocket does not require HTTP/2. Like HTTP, it adds no authentication.
 
 ## Lody extension capabilities
 

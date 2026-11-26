@@ -48,15 +48,15 @@ members = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "1.0.0rc2"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/ac/53520d32dd6afb8cef77bf2b731f9eb451d4a8dffbf0df104a1148724eed/agent_client_protocol-1.0.0rc2.tar.gz", hash = "sha256:c83b875efd036a95273d582daf02b29a509024d0232a2afd6187ce8d5564277d", size = 175309, upload-time = "2026-09-21T09:18:20.165Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/36/d3b373c96fbfe5dd76ad70b25826b2017cf5ffe61df2a19d85e5947c0d0c/agent_client_protocol-1.1.0.tar.gz", hash = "sha256:1ef6932a0d95aed6bed4fc9680ce78f3d552780b7fe4704722a177a1ea445040", size = 204148, upload-time = "2026-11-26T00:49:55.969Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/65/fefe1b5d234cb04e2e7e4fe3214865dfd01ced621a01eb00b58d26becfca/agent_client_protocol-1.0.0rc2-py3-none-any.whl", hash = "sha256:bd12a0b726c895353a6f7cf7b23d62d5f64191974a1cfadb83fe27ccdd8a0124", size = 125687, upload-time = "2026-09-21T09:18:18.997Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/d1/2566083a7bd351a19a68c767974167271c4cdb754443c3137fe14653deb2/agent_client_protocol-1.1.0-py3-none-any.whl", hash = "sha256:41c0860f28eee5dcc32c1e22d451008eb8280872dad5f938360a252021e52fd1", size = 134977, upload-time = "2026-11-26T00:49:54.504Z" },
 ]
 
 [package.optional-dependencies]
@@ -472,7 +472,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-client-protocol", specifier = "==1.0.0rc2" },
+    { name = "agent-client-protocol", specifier = "==1.1.0" },
     { name = "agent-client-protocol", extras = ["http"], marker = "extra == 'http'" },
     { name = "bub", extras = ["app"], git = "https://github.com/bubbuild/bub.git?branch=main" },
     { name = "bub-mcp", editable = "packages/bub-mcp" },

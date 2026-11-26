@@ -86,7 +86,9 @@ def test_bootstrap_code_expires(env) -> None:
 def test_failed_attempts_lock_the_sender(env) -> None:
     registry, config, _, clock = env
     code = registry.bootstrap_code()
-    replies = [registry.handle(",qq.claim WRONGCODE1", STRANGER) for _ in range(MAX_FAILURES)]
+    replies = [
+        registry.handle(",qq.claim WRONGCODE1", STRANGER) for _ in range(MAX_FAILURES)
+    ]
     # Told once, on the attempt that locks; then nothing, so the bot cannot
     # be made to flood the chat. A valid code does not help while locked.
     assert replies[:-1] == ["配对码无效或已过期。"] * (MAX_FAILURES - 1)
@@ -103,13 +105,17 @@ def test_group_identity_registration(env) -> None:
     registry, config, store, clock = env
     registry.handle(f",qq.claim {registry.bootstrap_code()}", OWNER_C2C)
 
-    assert registry.handle(",qq.claim group", STRANGER) == "只有管理员可以生成群登记码。"
+    assert (
+        registry.handle(",qq.claim group", STRANGER) == "只有管理员可以生成群登记码。"
+    )
     assert "单聊" in registry.handle(",qq.claim group", OWNER_IN_GROUP)
 
     reply = registry.handle(",qq.claim group", OWNER_C2C)
     group_code = reply.split("：", 1)[1].split("\n", 1)[0]
     assert "群里发送" in registry.handle(f",qq.claim {group_code}", OWNER_C2C)
-    assert registry.handle(f",qq.claim {group_code}", OWNER_IN_GROUP).startswith("已登记")
+    assert registry.handle(f",qq.claim {group_code}", OWNER_IN_GROUP).startswith(
+        "已登记"
+    )
     assert "group:g1:m-owner" in store.admins()
     assert is_admin(config, OWNER_IN_GROUP)
     # Registration in one group does not cover another group.
@@ -133,7 +139,9 @@ def test_admins_list_and_remove(tmp_path: Path) -> None:
     listing = registry.handle(",qq.admins", admin)
     assert "c2c:u-config（配置）" in listing and "group:g1:m-owner（已登记）" in listing
     assert "请修改配置" in registry.handle(",qq.admins remove c2c:u-config", admin)
-    assert registry.handle(",qq.admins remove group:g1:m-owner", admin).startswith("已移除")
+    assert registry.handle(",qq.admins remove group:g1:m-owner", admin).startswith(
+        "已移除"
+    )
     assert not is_admin(config, OWNER_IN_GROUP)
     assert store.admins() == frozenset()
 
@@ -199,7 +207,6 @@ def test_claim_never_reaches_bub(tmp_path: Path, monkeypatch) -> None:
         configure._config_data.clear()
 
 
-
 def _group_code(registry: AdminRegistry) -> str:
     reply = registry.handle(",qq.claim group", OWNER_C2C)
     return reply.split("：", 1)[1].split("\n", 1)[0]
@@ -216,7 +223,9 @@ def test_group_code_is_single_use_and_short_lived(env) -> None:
     copier = Requester("group", "m-copier", "g1")
     assert registry.handle(f",qq.claim {code}", copier) == "配对码无效或已过期。"
     assert not is_admin(config, copier)
-    assert registry.handle(f",qq.claim {code}", OWNER_IN_GROUP) == "配对码无效或已过期。"
+    assert (
+        registry.handle(f",qq.claim {code}", OWNER_IN_GROUP) == "配对码无效或已过期。"
+    )
 
 
 def test_group_registration_notifies_the_issuer(env) -> None:

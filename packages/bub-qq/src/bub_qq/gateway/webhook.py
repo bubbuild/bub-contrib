@@ -176,9 +176,7 @@ class QQWebhookServer:
         if content_length < 0:
             raise ValueError("invalid Content-Length")
         if content_length > MAX_WEBHOOK_BODY_BYTES:
-            raise _BodyTooLarge(
-                f"body larger than {MAX_WEBHOOK_BODY_BYTES} bytes"
-            )
+            raise _BodyTooLarge(f"body larger than {MAX_WEBHOOK_BODY_BYTES} bytes")
         return handler.rfile.read(content_length)
 
     def _parse_json(self, body: bytes) -> dict[str, Any]:

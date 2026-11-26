@@ -23,7 +23,11 @@ _CONFIRM_KEYBOARD = {
                 "buttons": [
                     {
                         "id": "allow-once",
-                        "render_data": {"label": "确认", "visited_label": "已确认", "style": 1},
+                        "render_data": {
+                            "label": "确认",
+                            "visited_label": "已确认",
+                            "style": 1,
+                        },
                         "action": {
                             "type": 1,
                             "permission": {"type": 2},
@@ -82,8 +86,7 @@ def test_group_send_prefixes_at_user_tag() -> None:
         assert result == {"id": "kb-md"}
         assert openapi.calls[0]["op"] == "markdown"
         assert (
-            openapi.calls[0]["content"]
-            == '<qqbot-at-user id="member-openid" /> 请确认'
+            openapi.calls[0]["content"] == '<qqbot-at-user id="member-openid" /> 请确认'
         )
 
     asyncio.run(_run())

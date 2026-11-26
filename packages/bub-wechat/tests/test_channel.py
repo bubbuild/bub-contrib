@@ -24,7 +24,9 @@ def test_token_path_uses_bub_home(monkeypatch, tmp_path: Path) -> None:
 def _encrypt(data: bytes, key: bytes) -> bytes:
     padder = padding.PKCS7(128).padder()
     encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
-    return encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
+    return (
+        encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
+    )
 
 
 def test_parse_aes_key_accepts_hex_and_both_base64_forms() -> None:
@@ -57,7 +59,10 @@ def test_download_image_decrypts_cdn_payload(monkeypatch) -> None:
         monkeypatch.setattr(channel, "CDN_BASE_URL", f"http://127.0.0.1:{port}/c2c")
         try:
             return await channel.download_image(
-                {"media": {"encrypt_query_param": "a+b/c=", "aes_key": ""}, "aeskey": key.hex()}
+                {
+                    "media": {"encrypt_query_param": "a+b/c=", "aes_key": ""},
+                    "aeskey": key.hex(),
+                }
             )
         finally:
             await runner.cleanup()
@@ -82,7 +87,9 @@ def test_failed_image_download_is_reported_in_content(monkeypatch) -> None:
     assert media is None
 
 
-def _channel_with_inbox(monkeypatch, hold_seconds: float) -> tuple[WeChatChannel, list[ChannelMessage]]:
+def _channel_with_inbox(
+    monkeypatch, hold_seconds: float
+) -> tuple[WeChatChannel, list[ChannelMessage]]:
     received: list[ChannelMessage] = []
 
     async def on_receive(message: ChannelMessage) -> None:

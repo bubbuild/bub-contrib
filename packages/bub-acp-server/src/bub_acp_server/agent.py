@@ -19,8 +19,8 @@ from uuid import uuid4
 
 import bub
 from acp import run_agent
-from acp.interfaces import Client
 from acp.exceptions import RequestError
+from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
@@ -44,16 +44,16 @@ from acp.schema import (
     ResumeSessionResponse,
     SessionCapabilities,
     SessionCloseCapabilities,
-    SessionDeleteCapabilities,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
+    SessionDeleteCapabilities,
     SessionInfo,
     SessionInfoUpdate,
     SessionListCapabilities,
     SessionResumeCapabilities,
     SetSessionConfigOptionResponse,
-    TextContentBlock,
     TerminalToolCallContent,
+    TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
     ToolKind,
@@ -62,11 +62,7 @@ from acp.schema import (
     UserMessageChunk,
 )
 from bub.channels.message import ChannelMessage, MediaItem, MediaType
-from bub.envelope import Envelope, content_of, field_of
-from bub.errors import BubError
-from bub.model_selection import ModelChoice, ModelOptions
 from bub.core.sidecars import sidecar_tape_name
-from bub.streaming import StreamEvent
 from bub.core.tape import (
     AsyncTapeStoreAdapter,
     Tape,
@@ -75,11 +71,17 @@ from bub.core.tape import (
     is_async_tape_store,
     session_tape_name,
 )
+from bub.envelope import Envelope, content_of, field_of
+from bub.errors import BubError
+from bub.model_selection import ModelChoice, ModelOptions
+from bub.streaming import StreamEvent
+from bub_mcp.plugin import MCPChannel
 from pydantic import TypeAdapter, ValidationError
 
 from bub_acp_server.client_tools import ACPClientToolRuntime, build_client_tools
 from bub_acp_server.config import ACPServerSettings
 from bub_acp_server.mcp import ACPMcpServer, connect_session_mcp, server_configs
+from bub_acp_server.steering import ACPSteeringInbox
 from bub_acp_server.subagents import (
     BUB_SUBAGENT_TASKS,
     LODY_SUBAGENT_EVENTS_CAPABILITY,
@@ -98,8 +100,6 @@ from bub_acp_server.subagents import (
     summary_line,
     tail_lines,
 )
-from bub_mcp.plugin import MCPChannel
-from bub_acp_server.steering import ACPSteeringInbox
 
 if TYPE_CHECKING:
     from bub.builtin.agent import BubAgent

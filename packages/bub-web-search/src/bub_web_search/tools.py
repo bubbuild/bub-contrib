@@ -312,4 +312,3 @@ READER_BUILDERS: dict[str | None, Callable[[WebSearchSettings], Tool | None]] = 
     "deepseek": _build_deepseek_read_tool,
 }
 PROVIDERS = [name for name in SEARCH_BUILDERS if name]
-

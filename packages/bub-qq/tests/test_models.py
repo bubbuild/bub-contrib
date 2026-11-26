@@ -142,15 +142,30 @@ def test_quoted_attachments_are_parsed_depth_first() -> None:
     from bub_qq.protocol.models import QQMsgElement, quoted_attachments
 
     def image(name: str) -> dict:
-        return {"url": f"https://cdn.example/{name}", "filename": name, "content_type": "image/png"}
+        return {
+            "url": f"https://cdn.example/{name}",
+            "filename": name,
+            "content_type": "image/png",
+        }
 
     elements = (
         QQMsgElement.from_payload(
-            {"content": "", "attachments": [image("a.png")],
-             "msg_elements": [{"content": "", "attachments": [image("b.png")]}]}
+            {
+                "content": "",
+                "attachments": [image("a.png")],
+                "msg_elements": [{"content": "", "attachments": [image("b.png")]}],
+            }
         ),
-        QQMsgElement.from_payload({"content": "text only", "attachments": "not-a-list"}),
-        QQMsgElement.from_payload({"content": "", "attachments": [image("c.png"), "junk"]}),
+        QQMsgElement.from_payload(
+            {"content": "text only", "attachments": "not-a-list"}
+        ),
+        QQMsgElement.from_payload(
+            {"content": "", "attachments": [image("c.png"), "junk"]}
+        ),
     )
-    assert [a.filename for a in quoted_attachments(elements)] == ["a.png", "b.png", "c.png"]
+    assert [a.filename for a in quoted_attachments(elements)] == [
+        "a.png",
+        "b.png",
+        "c.png",
+    ]
     assert elements[1].attachments == ()

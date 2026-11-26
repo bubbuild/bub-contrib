@@ -282,9 +282,7 @@ async def _resolve_between_anchor_bounds(
     )
     start_id = max(start_ids, default=-1)
     if start_id < 0:
-        raise BubError(
-            ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found."
-        )
+        raise BubError(ErrorKind.NOT_FOUND, f"Anchor '{start_name}' was not found.")
 
     end_ids = await _scan_anchor_ids(
         client, anchor_key, _anchor_index_member_pattern(end_name)

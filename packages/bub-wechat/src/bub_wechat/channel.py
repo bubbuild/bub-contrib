@@ -54,7 +54,10 @@ def _parse_aes_key(image: ImageItem) -> bytes | None:
 def _decrypt_aes_ecb(data: bytes, key: bytes) -> bytes:
     decryptor = Cipher(algorithms.AES(key), modes.ECB()).decryptor()
     unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
-    return unpadder.update(decryptor.update(data) + decryptor.finalize()) + unpadder.finalize()
+    return (
+        unpadder.update(decryptor.update(data) + decryptor.finalize())
+        + unpadder.finalize()
+    )
 
 
 def _sniff_image_mime(data: bytes) -> str:
@@ -86,7 +89,9 @@ async def download_image(image: ImageItem) -> MediaItem:
     async def fetch() -> bytes:
         return data
 
-    return MediaItem(type="image", mime_type=_sniff_image_mime(data), data_fetcher=fetch)
+    return MediaItem(
+        type="image", mime_type=_sniff_image_mime(data), data_fetcher=fetch
+    )
 
 
 @dataclass
@@ -148,7 +153,9 @@ class WeChatChannel(Channel):
     @staticmethod
     def _is_image_only(message: IncomingMessage) -> bool:
         items = message.raw["item_list"]
-        return bool(items) and all(item["type"] == MessageItemType.IMAGE for item in items)
+        return bool(items) and all(
+            item["type"] == MessageItemType.IMAGE for item in items
+        )
 
     async def _release_later(self, chat_id: str, cm: ChannelMessage) -> None:
         await asyncio.sleep(IMAGE_HOLD_SECONDS)

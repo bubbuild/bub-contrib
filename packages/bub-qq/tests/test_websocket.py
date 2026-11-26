@@ -265,7 +265,9 @@ def test_fatal_error_stops_qq_but_not_the_gateway() -> None:
     from bub_qq.protocol.auth import QQAuthError
 
     async def _run() -> None:
-        client = QQWebSocketClient(QQConfig.model_construct(), openapi=None, on_payload=None)
+        client = QQWebSocketClient(
+            QQConfig.model_construct(), openapi=None, on_payload=None
+        )
 
         async def broken_login() -> list:
             raise QQAuthError("qq token request failed: http=401")
@@ -283,7 +285,9 @@ def test_fatal_error_stops_qq_but_not_the_gateway() -> None:
 
 def test_gateway_stop_event_still_stops_the_client() -> None:
     async def _run() -> None:
-        client = QQWebSocketClient(QQConfig.model_construct(), openapi=None, on_payload=None)
+        client = QQWebSocketClient(
+            QQConfig.model_construct(), openapi=None, on_payload=None
+        )
         gateway_stop = asyncio.Event()
         client._external_stop = gateway_stop
         client._stop_event = asyncio.Event()

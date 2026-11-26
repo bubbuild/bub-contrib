@@ -320,9 +320,7 @@ def test_build_tools_skips_read_tool_without_jina_key() -> None:
 
 
 def test_build_tools_infers_jina_provider() -> None:
-    built = tools.build_tools(
-        lambda: WebSearchSettings(jina_api_key="secret")
-    )
+    built = tools.build_tools(lambda: WebSearchSettings(jina_api_key="secret"))
     tool_instance = built.get(tools.SEARCH_TOOL_NAME)
 
     assert tool_instance is not None

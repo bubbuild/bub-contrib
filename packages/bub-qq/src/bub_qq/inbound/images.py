@@ -64,7 +64,9 @@ async def load_image(
         raise ValueError("the attachment has no download URL")
     if attachment.size is not None and attachment.size > max_bytes:
         raise ValueError(f"the image is larger than the {max_bytes}-byte limit")
-    dest = inbox_dir(workspace, message_id) / safe_filename(attachment.filename, attachment.url, index)
+    dest = inbox_dir(workspace, message_id) / safe_filename(
+        attachment.filename, attachment.url, index
+    )
     if not dest.is_file():
         await download_attachment(attachment.url, dest, max_bytes=max_bytes)
     data = dest.read_bytes()
@@ -85,7 +87,11 @@ async def fetch_image(
 
     try:
         return await load_image(
-            attachment, workspace=workspace, message_id=message_id, index=index, max_bytes=max_bytes
+            attachment,
+            workspace=workspace,
+            message_id=message_id,
+            index=index,
+            max_bytes=max_bytes,
         )
     except (OSError, aiohttp.ClientError, TimeoutError, ValueError) as exc:
         logger.warning(

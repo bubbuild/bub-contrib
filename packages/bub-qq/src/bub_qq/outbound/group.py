@@ -170,9 +170,7 @@ class QQGroupSendService:
         send_media = None
         if media is not None:
 
-            async def _send_media(
-                *, msg_id: str, msg_seq: int
-            ) -> dict[str, object]:
+            async def _send_media(*, msg_id: str, msg_seq: int) -> dict[str, object]:
                 local = await materialize_media_file(
                     media,
                     workspace=self._workspace,

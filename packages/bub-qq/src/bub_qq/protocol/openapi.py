@@ -298,9 +298,7 @@ class QQOpenAPI:
     async def post_c2c_upload_part_finish(
         self, *, openid: str, **body: Any
     ) -> dict[str, Any]:
-        return await self.post(
-            f"/v2/users/{openid}/upload_part_finish", json_body=body
-        )
+        return await self.post(f"/v2/users/{openid}/upload_part_finish", json_body=body)
 
     async def post_group_upload_part_finish(
         self, *, group_openid: str, **body: Any

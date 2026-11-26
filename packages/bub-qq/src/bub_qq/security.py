@@ -49,6 +49,7 @@ def strip_command(text: str) -> str | None:
 
     return strip_command_prefix(text, command_prefix())
 
+
 RESTRICTED_TOOL_PATTERNS: tuple[str, ...] = (
     "bash",
     "bash.*",

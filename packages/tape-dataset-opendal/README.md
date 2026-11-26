@@ -97,7 +97,9 @@ from tape_dataset_opendal import ExportableTapeStore
 
 inner = InMemoryTapeStore()
 inner.append("ops__incident", TapeEntry.anchor("triage"))
-inner.append("ops__incident", TapeEntry.message({"role": "user", "content": "DB timeout"}))
+inner.append(
+    "ops__incident", TapeEntry.message({"role": "user", "content": "DB timeout"})
+)
 
 store = ExportableTapeStore(inner)
 report = store.export_dataset(Operator("fs", root="/tmp/tape-dataset"))
@@ -121,7 +123,9 @@ async def main() -> None:
     inner = AsyncTapeStoreAdapter(InMemoryTapeStore())
     store = AsyncExportableTapeStore(inner)
     await store.append("agent__session", TapeEntry.anchor("task"))
-    await store.append("agent__session", TapeEntry.message({"role": "assistant", "content": "Done"}))
+    await store.append(
+        "agent__session", TapeEntry.message({"role": "assistant", "content": "Done"})
+    )
 
     report = await store.export_dataset_async(
         opendal.AsyncOperator("fs", root="/tmp/tape-dataset"),

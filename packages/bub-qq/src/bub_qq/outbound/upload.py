@@ -12,7 +12,9 @@ MD5_10M_SIZE = 10_002_432
 
 
 class MultipartUploadClient(Protocol):
-    async def post_c2c_upload_prepare(self, *, openid: str, **body: Any) -> dict[str, Any]: ...
+    async def post_c2c_upload_prepare(
+        self, *, openid: str, **body: Any
+    ) -> dict[str, Any]: ...
 
     async def post_group_upload_prepare(
         self, *, group_openid: str, **body: Any

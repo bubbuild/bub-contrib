@@ -195,7 +195,9 @@ class QQChannel(Channel):
     async def send(self, message: ChannelMessage) -> None:
         await self.send_for_result(message)
 
-    async def send_for_result(self, message: ChannelMessage) -> dict[str, object] | None:
+    async def send_for_result(
+        self, message: ChannelMessage
+    ) -> dict[str, object] | None:
         """Send and return the send-service result (used by the qq.send tool)."""
 
         if message.kind == "error":
@@ -314,7 +316,9 @@ class QQChannel(Channel):
         ):
             return
         channel_message = self._attach_images(
-            message.inbound_attachments, channel_message, direct=group_was_mentioned(message)
+            message.inbound_attachments,
+            channel_message,
+            direct=group_was_mentioned(message),
         )
         await self._on_receive(attach_approval_outcomes(channel_message))
 
@@ -438,7 +442,9 @@ class QQChannel(Channel):
                 )
             return
         if event_type in ACK_INTERACTION_TYPES:
-            resolved = event.get("resolved") if isinstance(event.get("resolved"), dict) else {}
+            resolved = (
+                event.get("resolved") if isinstance(event.get("resolved"), dict) else {}
+            )
             button_data = str(resolved.get("button_data") or "")
             parsed = parse_approval_button(button_data)
             if parsed is not None:
@@ -571,7 +577,9 @@ class QQChannel(Channel):
         if reply is None:
             return False
         if reply:
-            await send_notice(channel_message.session_id, channel_message.chat_id, reply)
+            await send_notice(
+                channel_message.session_id, channel_message.chat_id, reply
+            )
         await self._send_admin_notices()
         return True
 
@@ -618,7 +626,9 @@ def _listed_attachments(payload: dict[str, Any]) -> dict[int, dict[str, Any]]:
     listed = payload.get("attachments")
     if isinstance(listed, list):
         entries.update(
-            (position, entry) for position, entry in enumerate(listed) if isinstance(entry, dict)
+            (position, entry)
+            for position, entry in enumerate(listed)
+            if isinstance(entry, dict)
         )
 
     def walk(quoted: object) -> None:

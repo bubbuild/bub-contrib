@@ -127,9 +127,7 @@ async def materialize_media_file(
         raise ValueError("media has neither local_path nor url")
     fetcher = download or download_media_url
     try:
-        dest = await fetcher(
-            spec.url, workspace=workspace, file_name=spec.file_name
-        )
+        dest = await fetcher(spec.url, workspace=workspace, file_name=spec.file_name)
     except (OSError, aiohttp.ClientError, TimeoutError, ValueError) as exc:
         raise QQOpenAPIError(
             status_code=0,
@@ -187,9 +185,7 @@ def media_spec_from_args(
     elif resolved_type not in VALID_FILE_TYPES:
         return None, "Not sent: file_type must be 1=image, 2=video, 3=voice, 4=file."
     return (
-        MediaSpec(
-            url=url, file_type=resolved_type, file_name=file_name_from_url(url)
-        ),
+        MediaSpec(url=url, file_type=resolved_type, file_name=file_name_from_url(url)),
         None,
     )
 
@@ -250,9 +246,7 @@ def apply_at_user_tags(content: str, user_ids: list[str] | None) -> str:
     if not user_ids:
         return content
     missing = [
-        user_id
-        for user_id in user_ids
-        if _AT_USER_TAG.format(user_id) not in content
+        user_id for user_id in user_ids if _AT_USER_TAG.format(user_id) not in content
     ]
     if not missing:
         return content
@@ -307,9 +301,7 @@ def media_from_message(message: ChannelMessage) -> MediaSpec | None:
             logger.warning("qq.send invalid_outbound_media error=bad_file_type")
             return None
         name = str(raw.get("file_name") or "").strip() or Path(local_path).name
-        return MediaSpec(
-            file_type=file_type, file_name=name, local_path=local_path
-        )
+        return MediaSpec(file_type=file_type, file_name=name, local_path=local_path)
     url = str(raw.get("media_url") or "").strip()
     if not url:
         return None

@@ -471,7 +471,9 @@ def test_channel_send_routes_group_messages() -> None:
     configure._config_data.clear()
 
 
-def test_framework_errors_reach_the_chat_only_as_a_generic_notice(tmp_path, monkeypatch) -> None:
+def test_framework_errors_reach_the_chat_only_as_a_generic_notice(
+    tmp_path, monkeypatch
+) -> None:
     from bub_qq.channel import ERROR_NOTICE
 
     monkeypatch.chdir(tmp_path)

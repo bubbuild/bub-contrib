@@ -82,13 +82,18 @@ def apply_env(settings: EnvSettings | None = None) -> dict[str, str]:
     return applied
 
 
-_OTLP_ENDPOINT_KEYS = ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT")
+_OTLP_ENDPOINT_KEYS = (
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+)
 
 
 def _otlp_endpoint() -> str:
     """The configured endpoint without any credentials in it, for logs."""
 
-    raw = next((os.environ[key] for key in _OTLP_ENDPOINT_KEYS if os.environ.get(key)), "")
+    raw = next(
+        (os.environ[key] for key in _OTLP_ENDPOINT_KEYS if os.environ.get(key)), ""
+    )
     parts = urlsplit(raw)
     return f"{parts.scheme}://{parts.hostname or ''}{f':{parts.port}' if parts.port else ''}{parts.path}"
 
@@ -115,10 +120,14 @@ def configure_tracing(applied: dict[str, str]) -> None:
     try:
         from bub.tracing import configure_otlp
     except ImportError:  # Bub without native tracing
-        logger.warning("env.tracing.skipped reason=this Bub has no native tracing (needs Bub 0.5+)")
+        logger.warning(
+            "env.tracing.skipped reason=this Bub has no native tracing (needs Bub 0.5+)"
+        )
         return
     if _tracing_active() is None:
-        logger.warning("env.tracing.skipped reason=OpenTelemetry missing; install bub[trace]")
+        logger.warning(
+            "env.tracing.skipped reason=OpenTelemetry missing; install bub[trace]"
+        )
         return
     if _tracing_active():
         logger.info("env.tracing.skipped reason=a tracer provider is already installed")

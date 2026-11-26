@@ -265,9 +265,7 @@ async def _notify_rate_limited(
 
 
 @hookimpl
-async def before_tool_call(
-    call: ToolCall, state: TurnState
-) -> ToolCallDecision | None:
+async def before_tool_call(call: ToolCall, state: TurnState) -> ToolCallDecision | None:
     qq_state = _qq_state(state)
     if qq_state is None:
         qq_state = _unattributed_qq_state(state)
@@ -311,7 +309,12 @@ def _unattributed_qq_state(state: TurnState) -> dict[str, Any] | None:
         return None
     scope, chat = parts[1], parts[2]
     if scope == "group":
-        return {"scope": "group", "group_openid": chat, "sender_id": "", "session_id": session_id}
+        return {
+            "scope": "group",
+            "group_openid": chat,
+            "sender_id": "",
+            "session_id": session_id,
+        }
     return {"scope": "c2c", "sender_id": "", "session_id": session_id}
 
 
@@ -340,7 +343,9 @@ async def _check_tool_call(
             return ToolCallDecision.deny("命令未执行：审批已失效。")
         tools = _agent_tools(state)
         if tools is None:
-            return ToolCallDecision.deny("This call needs admin approval, which is unavailable here.")
+            return ToolCallDecision.deny(
+                "This call needs admin approval, which is unavailable here."
+            )
         # Once an admin allows it, the call runs as a comma command in this
         # session; the model gets the pending notice now.
         message = await request_approval(
@@ -447,7 +452,9 @@ def after_llm_call(
 
 
 @hookimpl
-def save_state(session_id: str, state: TurnState, message: Any, model_output: str) -> None:
+def save_state(
+    session_id: str, state: TurnState, message: Any, model_output: str
+) -> None:
     """Remember what an approved command printed, for the model's next turn."""
 
     qq_state = _qq_state(state)

@@ -106,10 +106,16 @@ def test_reply_target_prefers_triggering_message_of_same_chat() -> None:
 
     state = QQSessionState()
     remember_session(
-        state, session_id="qq:group:g", message_id="a", timestamp="2000-01-01T00:00:00+00:00"
+        state,
+        session_id="qq:group:g",
+        message_id="a",
+        timestamp="2000-01-01T00:00:00+00:00",
     )
     remember_session(
-        state, session_id="qq:group:g", message_id="b", timestamp="2099-01-01T00:00:00+00:00"
+        state,
+        session_id="qq:group:g",
+        message_id="b",
+        timestamp="2099-01-01T00:00:00+00:00",
     )
     remember_session(state, session_id="qq:group:other", message_id="x", timestamp=None)
 
@@ -119,5 +125,9 @@ def test_reply_target_prefers_triggering_message_of_same_chat() -> None:
     assert reply_target(state, "qq:group:g", "x") == "b"
     assert reply_target(state, "qq:group:g", "missing") == "b"
     # The window is judged by the targeted message's own timestamp.
-    assert not is_passive_reply_window_open(state, "qq:group:g", window_seconds=300, msg_id="a")
-    assert is_passive_reply_window_open(state, "qq:group:g", window_seconds=300, msg_id="b")
+    assert not is_passive_reply_window_open(
+        state, "qq:group:g", window_seconds=300, msg_id="a"
+    )
+    assert is_passive_reply_window_open(
+        state, "qq:group:g", window_seconds=300, msg_id="b"
+    )

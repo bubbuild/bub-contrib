@@ -113,10 +113,16 @@ def record_outcome(session_id: str, outcome: ApprovalOutcome) -> None:
 def _expire_pending(session_id: str) -> None:
     now = _clock()
     for pending in list(_pending.values()):
-        if pending.session_id == session_id and now - pending.created_at > APPROVAL_TTL_SECONDS:
+        if (
+            pending.session_id == session_id
+            and now - pending.created_at > APPROVAL_TTL_SECONDS
+        ):
             _pending.pop(pending.id, None)
             record_outcome(
-                session_id, ApprovalOutcome(id=pending.id, command=pending.preview, status="expired")
+                session_id,
+                ApprovalOutcome(
+                    id=pending.id, command=pending.preview, status="expired"
+                ),
             )
 
 
@@ -208,7 +214,9 @@ def comma_command_to_call(line: str, tools: Mapping[str, Tool]) -> ToolCall:
     tool = tools.get(name)
     if tool is None:
         return ToolCall(run_id="command", tool="bash", arguments={"command": body})
-    arguments = parse_command_args(tokens).bind(list((tool.parameters or {}).get("properties", {})))
+    arguments = parse_command_args(tokens).bind(
+        list((tool.parameters or {}).get("properties", {}))
+    )
     return ToolCall(run_id="command", tool=name, arguments=arguments)
 
 
@@ -241,8 +249,14 @@ def preview_call(tool: str, arguments: dict[str, Any]) -> str:
     """
 
     command = arguments.get("command")
-    others = {key: value for key, value in arguments.items() if key != "command" and value is not None}
-    if isinstance(command, str) and all(isinstance(v, str | int | float | bool) for v in others.values()):
+    others = {
+        key: value
+        for key, value in arguments.items()
+        if key != "command" and value is not None
+    }
+    if isinstance(command, str) and all(
+        isinstance(v, str | int | float | bool) for v in others.values()
+    ):
         if not others:
             return command
         notes = " ".join(f"{key}={value}" for key, value in others.items())
@@ -257,8 +271,14 @@ _RISKY_COMMANDS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bfind\b[^\n]*\s-delete\b"), "批量删除（find -delete）"),
     (re.compile(r"\bmkfs\b|\bdd\b[^\n]*\bof="), "格式化或覆盖磁盘"),
     (re.compile(r"\b(?:chmod|chown)\s+-\S*R"), "递归修改权限或属主"),
-    (re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b"), "下载并直接执行脚本"),
-    (re.compile(r"\bgit\s+(?:push\b[^\n]*--force|reset\s+--hard|clean\s+-\S*f)"), "不可撤销的 git 操作"),
+    (
+        re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b"),
+        "下载并直接执行脚本",
+    ),
+    (
+        re.compile(r"\bgit\s+(?:push\b[^\n]*--force|reset\s+--hard|clean\s+-\S*f)"),
+        "不可撤销的 git 操作",
+    ),
     (re.compile(r"\b(?:shutdown|reboot|halt|poweroff)\b"), "关机或重启"),
     (re.compile(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"), "fork 炸弹"),
 )
@@ -267,7 +287,10 @@ _RISKY_COMMANDS: tuple[tuple[re.Pattern[str], str], ...] = (
 # Not destructive, but worth a look: these reach the network without the
 # plugin's address check (a refused qq.view_image / media_url retried by hand).
 _NOTABLE_COMMANDS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\b(?:curl|wget|aria2c)\b[^\n]*\bhttps?://"), "下载网络内容，不经过插件的内网地址检查"),
+    (
+        re.compile(r"\b(?:curl|wget|aria2c)\b[^\n]*\bhttps?://"),
+        "下载网络内容，不经过插件的内网地址检查",
+    ),
 )
 
 
@@ -319,8 +342,20 @@ def build_approval_keyboard(
             "rows": [
                 {
                     "buttons": [
-                        button("allow", "✅ 允许一次", "已允许", f"approve:{approval_id}:allow", 1),
-                        button("deny", "❌ 拒绝", "已拒绝", f"approve:{approval_id}:deny", 0),
+                        button(
+                            "allow",
+                            "✅ 允许一次",
+                            "已允许",
+                            f"approve:{approval_id}:allow",
+                            1,
+                        ),
+                        button(
+                            "deny",
+                            "❌ 拒绝",
+                            "已拒绝",
+                            f"approve:{approval_id}:deny",
+                            0,
+                        ),
                     ]
                 }
             ]
@@ -475,7 +510,9 @@ def begin_approval_click(
 ) -> ApprovalClickPlan:
     pending = _pending.get(approval_id)
     if pending is None:
-        return ApprovalClickPlan(ack_code=ACK_FAILED, notice="这条审批不存在或已经处理过。")
+        return ApprovalClickPlan(
+            ack_code=ACK_FAILED, notice="这条审批不存在或已经处理过。"
+        )
     if _clock() - pending.created_at > APPROVAL_TTL_SECONDS:
         _pending.pop(approval_id, None)
         record_outcome(
@@ -518,10 +555,14 @@ async def _dispatch_approved_command(pending: PendingApproval) -> str:
     try:
         await dispatch(pending)
     except Exception as exc:
-        logger.warning("qq.approval.command_dispatch_failed id={} error={}", pending.id, exc)
+        logger.warning(
+            "qq.approval.command_dispatch_failed id={} error={}", pending.id, exc
+        )
         record_outcome(
             pending.session_id,
-            ApprovalOutcome(id=pending.id, command=pending.preview, status="failed", output=str(exc)),
+            ApprovalOutcome(
+                id=pending.id, command=pending.preview, status="failed", output=str(exc)
+            ),
         )
         return f"执行失败: {exc}"
     return ""

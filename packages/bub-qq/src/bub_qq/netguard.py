@@ -60,11 +60,15 @@ def download_error_text(exc: BaseException) -> str:
     return str(exc)
 
 
-def _is_exempt(host: str, allow_hosts: frozenset[str], trusted_domains: frozenset[str]) -> bool:
+def _is_exempt(
+    host: str, allow_hosts: frozenset[str], trusted_domains: frozenset[str]
+) -> bool:
     host = host.lower().rstrip(".")
     if host in allow_hosts:
         return True
-    return any(host == domain or host.endswith(f".{domain}") for domain in trusted_domains)
+    return any(
+        host == domain or host.endswith(f".{domain}") for domain in trusted_domains
+    )
 
 
 def is_public_address(host: str) -> bool:
@@ -143,7 +147,9 @@ def guarded_session(
     """A client session whose connections only reach public addresses."""
 
     connector = aiohttp.TCPConnector(
-        resolver=PublicOnlyResolver(allow_hosts=allow_hosts, trusted_domains=trusted_domains)
+        resolver=PublicOnlyResolver(
+            allow_hosts=allow_hosts, trusted_domains=trusted_domains
+        )
     )
     return aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=timeout), connector=connector, **kwargs
@@ -196,7 +202,9 @@ def download_allow_hosts() -> frozenset[str]:
     from .security import parse_id_list
 
     config = bub.ensure_config(QQConfig)
-    return frozenset(host.lower() for host in parse_id_list(config.download_allow_hosts or ""))
+    return frozenset(
+        host.lower() for host in parse_id_list(config.download_allow_hosts or "")
+    )
 
 
 async def web_fetch_for_call(arguments: dict[str, Any] | None) -> tuple[bool, str]:

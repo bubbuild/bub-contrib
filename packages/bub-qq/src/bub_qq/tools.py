@@ -109,15 +109,15 @@ async def qq_send(
         return _not_sent(media_error)
     if media_path:
         workspace = context.state.get("_runtime_workspace")
-        workspace_text = (
-            str(workspace) if isinstance(workspace, str | Path) else None
-        )
+        workspace_text = str(workspace) if isinstance(workspace, str | Path) else None
         resolved, path_error = resolve_media_path(media_path, workspace_text)
         if path_error is not None:
             return _not_sent(path_error)
         if resolved is None:
             return _not_sent("media_path is empty.")
-        resolved_type = file_type if file_type is not None else infer_file_type(str(resolved))
+        resolved_type = (
+            file_type if file_type is not None else infer_file_type(str(resolved))
+        )
         media = MediaSpec(
             file_type=resolved_type,
             file_name=resolved.name,
@@ -228,7 +228,9 @@ async def qq_fetch_attachment(
     return f"Downloaded to {dest} ({dest.stat().st_size} bytes)."
 
 
-def _chat_attachment(context: ToolContext, message_id: str, index: int) -> QQAttachment | str:
+def _chat_attachment(
+    context: ToolContext, message_id: str, index: int
+) -> QQAttachment | str:
     """An attachment of a message in this chat, or why there is none."""
 
     qq_state = context.state.get(QQ_STATE_KEY)
@@ -249,7 +251,9 @@ def _chat_attachment(context: ToolContext, message_id: str, index: int) -> QQAtt
 
 
 @tool(name="qq.view_image", context=True)
-async def qq_view_image(message_id: str, index: int = 0, *, context: ToolContext) -> dict[str, Any]:
+async def qq_view_image(
+    message_id: str, index: int = 0, *, context: ToolContext
+) -> dict[str, Any]:
     """Look at an image attachment of a message in this chat.
 
     Images in messages addressed to you are already attached to them
@@ -265,7 +269,9 @@ async def qq_view_image(message_id: str, index: int = 0, *, context: ToolContext
         return content_result([f"Not shown: {found}"])
     mime_type = image_mime_type(found)
     if mime_type is None:
-        return content_result(["Not shown: that attachment is not a PNG, JPEG, GIF or WebP image."])
+        return content_result(
+            ["Not shown: that attachment is not a PNG, JPEG, GIF or WebP image."]
+        )
     config = bub.ensure_config(QQConfig)
     try:
         data = await load_image(
@@ -278,7 +284,12 @@ async def qq_view_image(message_id: str, index: int = 0, *, context: ToolContext
     except (OSError, aiohttp.ClientError, TimeoutError, ValueError) as exc:
         return content_result([f"Not shown: {download_error_text(exc)}"])
     name = found.filename or f"attachment {index}"
-    return content_result([f"Image {name} from message {message_id}:", republic.image(data, media_type=mime_type)])
+    return content_result(
+        [
+            f"Image {name} from message {message_id}:",
+            republic.image(data, media_type=mime_type),
+        ]
+    )
 
 
 @tool(name="qq.version", exposure="command")

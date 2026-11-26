@@ -69,9 +69,7 @@ class QQSessionState:
         )
         # message_id -> (session_id, timestamp): lets a reply target the
         # message that triggered it rather than the latest one in the chat.
-        self.message_by_id: BoundedDict[str, tuple[str, str]] = BoundedDict(
-            max_entries
-        )
+        self.message_by_id: BoundedDict[str, tuple[str, str]] = BoundedDict(max_entries)
         # message_id -> (session_id, attachments), for on-demand download.
         self.attachments_by_message_id: BoundedDict[
             str, tuple[str, tuple[QQAttachment, ...]]

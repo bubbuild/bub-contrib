@@ -159,7 +159,9 @@ class AdminRegistry:
         if entry.kind == "bootstrap" and requester.scope != "c2c":
             # The code is now visible to the whole group: burn it.
             del self._codes[code]
-            logger.warning("qq.admin.claim_code_exposed scope=group; minting a new code")
+            logger.warning(
+                "qq.admin.claim_code_exposed scope=group; minting a new code"
+            )
             self.bootstrap_code()
             return "配对码只能在单聊中使用。它已作废，请到服务器日志查看新的配对码。"
         if entry.kind == "group" and requester.scope != "group":
@@ -200,7 +202,9 @@ class AdminRegistry:
             return "只有管理员可以生成群登记码。"
         code = _new_code()
         self._codes[code] = _PairingCode(
-            "group", self._clock() + GROUP_CODE_TTL_SECONDS, issued_by=requester.identity
+            "group",
+            self._clock() + GROUP_CODE_TTL_SECONDS,
+            issued_by=requester.identity,
         )
         minutes = int(GROUP_CODE_TTL_SECONDS // 60)
         return (
@@ -243,5 +247,7 @@ class AdminRegistry:
         lines = ["管理员："]
         lines += [f"- {entry}（配置）" for entry in sorted(configured)]
         lines += [f"- {entry}（已登记）" for entry in sorted(registered - configured)]
-        lines.append(f"移除已登记的管理员：{command_prefix()}{ADMINS_COMMAND} remove <身份>")
+        lines.append(
+            f"移除已登记的管理员：{command_prefix()}{ADMINS_COMMAND} remove <身份>"
+        )
         return "\n".join(lines)

@@ -47,7 +47,8 @@ from discord.ext import commands
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 
 @bot.event
 async def on_ready():
@@ -73,9 +74,7 @@ await thread.send("Message in thread")
 
 ```python
 embed = discord.Embed(
-    title="Title",
-    description="Description",
-    color=discord.Color.blue()
+    title="Title", description="Description", color=discord.Color.blue()
 )
 embed.add_field(name="Field", value="Value")
 await channel.send(embed=embed)
@@ -97,9 +96,11 @@ import asyncio
 import os
 from discord_bot import run_bot
 
+
 async def main():
     token = os.environ.get("BUB_DISCORD_TOKEN")
     await run_bot(token)
+
 
 asyncio.run(main())
 ```
@@ -131,8 +132,11 @@ async def echo(ctx, *, text: str):
 from discord.ui import Button, View
 
 button = Button(label="Click me", style=discord.ButtonStyle.primary)
+
+
 async def callback(interaction):
     await interaction.response.send_message("Clicked!")
+
 
 button.callback = callback
 view = View()

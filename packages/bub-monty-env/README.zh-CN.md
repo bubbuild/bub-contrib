@@ -72,7 +72,9 @@ monty_env:
 from bub_monty_env import MontyCodeMixin, MontyOptions, create_monty_environment
 
 # 包装实例：除 run_code 外全部委托给它，关闭包装时也会关闭它。
-environment = create_monty_environment(MyEnvironment(...), MontyOptions(filesystem="read-only"))
+environment = create_monty_environment(
+    MyEnvironment(...), MontyOptions(filesystem="read-only")
+)
 
 
 # 或者混入类：mixin 放在前面。

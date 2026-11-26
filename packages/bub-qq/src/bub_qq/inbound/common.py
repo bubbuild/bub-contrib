@@ -135,9 +135,7 @@ class QQInboundService[M: (QQC2CMessage, QQGroupMessage)]:
         requester = self._requester(message)
         if not self._allowed(message, requester):
             return None
-        channel_message = self._build(
-            message, allow_command=self._is_admin(requester)
-        )
+        channel_message = self._build(message, allow_command=self._is_admin(requester))
         remember_session(
             self._state,
             session_id=channel_message.session_id,

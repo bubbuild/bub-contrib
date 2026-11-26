@@ -97,7 +97,9 @@ class QQPlatformStore:
             logger.warning("qq.store.load_failed path={} error={}", self._path, exc)
             return
         if not isinstance(raw, dict):
-            logger.warning("qq.store.load_failed path={} error=not_an_object", self._path)
+            logger.warning(
+                "qq.store.load_failed path={} error=not_an_object", self._path
+            )
             return
         for section_name in self._data:
             section = raw.get(section_name)

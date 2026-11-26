@@ -68,13 +68,13 @@ class QQMsgElement:
         return cls(
             content=str(payload.get("content") or ""),
             message_type=_optional_int(payload.get("message_type")),
-            sender_name=_optional_str(
-                author.get("username") or author.get("nickname")
-            ),
+            sender_name=_optional_str(author.get("username") or author.get("nickname")),
             elements=nested,
             attachments=tuple(
                 QQAttachment.from_payload(item)
-                for item in (attachments_raw if isinstance(attachments_raw, list) else ())
+                for item in (
+                    attachments_raw if isinstance(attachments_raw, list) else ()
+                )
                 if isinstance(item, dict)
             ),
         )

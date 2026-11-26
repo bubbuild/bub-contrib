@@ -15,7 +15,9 @@ def test_artifact_root_uses_workspace_for_dedicated_dir(tmp_path: Path) -> None:
     assert inbox_dir(tmp_path, "msg-1") == tmp_path.resolve() / "inbox" / "msg-1"
 
 
-def test_artifact_root_falls_back_for_home_and_slash(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_root_falls_back_for_home_and_slash(
+    tmp_path: Path, monkeypatch
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     bub_home = tmp_path / "bub-home"
@@ -31,7 +33,12 @@ def test_artifact_root_falls_back_for_home_and_slash(tmp_path: Path, monkeypatch
     assert inbox_dir(Path("/"), "msg-1") == (bub_home / "qq" / "inbox" / "msg-1")
 
 
-def test_workspace_from_state_uses_runtime_then_cwd(tmp_path: Path, monkeypatch) -> None:
-    assert workspace_from_state({"_runtime_workspace": str(tmp_path)}) == tmp_path.resolve()
+def test_workspace_from_state_uses_runtime_then_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    assert (
+        workspace_from_state({"_runtime_workspace": str(tmp_path)})
+        == tmp_path.resolve()
+    )
     monkeypatch.chdir(tmp_path)
     assert workspace_from_state({}) == tmp_path.resolve()

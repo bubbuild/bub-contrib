@@ -50,7 +50,9 @@ class FakeChannel:
         self.messages.append(message)
         return {"id": "sent"}
 
-    async def dispatch_approved_command(self, pending: approval.PendingApproval) -> None:
+    async def dispatch_approved_command(
+        self, pending: approval.PendingApproval
+    ) -> None:
         self.dispatched.append(pending)
 
 
@@ -183,7 +185,6 @@ def test_guard_error_denies_the_call(config, tmp_path, monkeypatch) -> None:
     assert decision.action == "deny"
 
 
-
 def test_admin_shell_posts_full_command_card(config, tmp_path) -> None:
     channel = FakeChannel()
     set_active_channel(channel)
@@ -236,7 +237,9 @@ def test_over_long_command_is_refused_not_truncated(config, tmp_path) -> None:
 # --- clicks ------------------------------------------------------------------
 
 
-def _request_admin_shell(tmp_path, command="uname -a") -> tuple[FakeChannel, approval.PendingApproval]:
+def _request_admin_shell(
+    tmp_path, command="uname -a"
+) -> tuple[FakeChannel, approval.PendingApproval]:
     channel = FakeChannel()
     set_active_channel(channel)
     _hook(
@@ -252,12 +255,16 @@ def test_model_call_is_approved_as_its_command_line(config, tmp_path) -> None:
     # The card shows the command itself, and the token matches the call
     # Bub's command path makes from that line.
     assert pending.preview == "ls -la && echo `whoami`"
-    assert comma_command_to_call(pending.command_line, AGENT.tools).arguments == pending.arguments
+    assert (
+        comma_command_to_call(pending.command_line, AGENT.tools).arguments
+        == pending.arguments
+    )
 
 
 def test_model_call_command_line_keeps_scalar_arguments(config) -> None:
     line = approval.call_to_command_line(
-        "bash", {"command": "sleep 5", "timeout_seconds": 30, "background": True, "cwd": None}
+        "bash",
+        {"command": "sleep 5", "timeout_seconds": 30, "background": True, "cwd": None},
     )
     assert line == ",bash command='sleep 5' timeout_seconds=30 background=true"
     assert approval.call_to_command_line("bash", {"command": ["ls"]}) is None
@@ -308,7 +315,9 @@ def test_deny_does_not_execute(config, tmp_path) -> None:
 def test_expired_request_cannot_be_approved(config, tmp_path, monkeypatch) -> None:
     channel, pending = _request_admin_shell(tmp_path)
     monkeypatch.setattr(
-        approval, "_clock", lambda: pending.created_at + approval.APPROVAL_TTL_SECONDS + 1
+        approval,
+        "_clock",
+        lambda: pending.created_at + approval.APPROVAL_TTL_SECONDS + 1,
     )
     plan = begin_approval_click(
         approval_id=pending.id, decision="allow", operator=ADMIN, config=config
@@ -369,7 +378,9 @@ def channel_env(tmp_path, monkeypatch):
     configure._config_data.clear()
 
 
-def _group_command(content: str, sender: str = "admin-m", message_id: str = "m1") -> dict:
+def _group_command(
+    content: str, sender: str = "admin-m", message_id: str = "m1"
+) -> dict:
     return {
         "id": f"event-{message_id}",
         "op": 0,
@@ -435,7 +446,9 @@ def test_group_shell_command_waits_for_admin_tap(channel_env) -> None:
 
         await channel._handle_transport_payload(_click(pending.id, "admin-m"))
         assert channel._openapi.acks[-1]["code"] == approval.ACK_OK
-        assert [(m.content, m.kind) for m in received[1:]] == [(",bash command='ls -la'", "command")]
+        assert [(m.content, m.kind) for m in received[1:]] == [
+            (",bash command='ls -la'", "command")
+        ]
         decision, _ = await _bub_runs(channel, received[1])
         assert decision is None
 
@@ -461,11 +474,15 @@ def test_protected_and_plain_commands(channel_env) -> None:
     channel, received, sent = channel_env
 
     async def _run() -> None:
-        await channel._handle_transport_payload(_group_command(",fs.read .env", message_id="a"))
+        await channel._handle_transport_payload(
+            _group_command(",fs.read .env", message_id="a")
+        )
         decision, _ = await _bub_runs(channel, received[-1])
         assert decision.action == "deny" and "命令未执行" in decision.message
 
-        await channel._handle_transport_payload(_group_command(",qq.version", message_id="b"))
+        await channel._handle_transport_payload(
+            _group_command(",qq.version", message_id="b")
+        )
         decision, _ = await _bub_runs(channel, received[-1])
         assert decision is None
         assert sent == []
@@ -500,7 +517,9 @@ def test_admin_web_fetch_command_uses_the_guarded_fetcher(channel_env) -> None:
     channel, received, sent = channel_env
     asyncio.run(
         channel._handle_transport_payload(
-            _group_command(",web.fetch http://169.254.169.254/latest/meta-data", message_id="f")
+            _group_command(
+                ",web.fetch http://169.254.169.254/latest/meta-data", message_id="f"
+            )
         )
     )
     # Bub's own web.fetch follows redirects anywhere; the guarded fetcher answers.
@@ -629,20 +648,33 @@ def test_ran_command_output_rides_on_the_next_message_once(channel_env) -> None:
     command = received[-1]
     # Bub runs the command and calls save_state with its output.
     state = plugin.load_state(command, command.session_id)
-    plugin.save_state(command.session_id, state, command, "Filesystem  Size\n/dev/vda  20G")
+    plugin.save_state(
+        command.session_id, state, command, "Filesystem  Size\n/dev/vda  20G"
+    )
 
-    asyncio.run(channel._handle_transport_payload(_group_command("结果呢？", message_id="n1")))
+    asyncio.run(
+        channel._handle_transport_payload(_group_command("结果呢？", message_id="n1"))
+    )
     assert _results(received[-1]) == [
-        {"id": pending.id, "command": "df -h", "status": "ran", "output": "Filesystem  Size\n/dev/vda  20G"}
+        {
+            "id": pending.id,
+            "command": "df -h",
+            "status": "ran",
+            "output": "Filesystem  Size\n/dev/vda  20G",
+        }
     ]
-    asyncio.run(channel._handle_transport_payload(_group_command("还有吗？", message_id="n2")))
+    asyncio.run(
+        channel._handle_transport_payload(_group_command("还有吗？", message_id="n2"))
+    )
     assert _results(received[-1]) == []
 
 
 def test_denied_and_refused_approvals_are_reported(channel_env, monkeypatch) -> None:
     channel, received, _ = channel_env
     denied = _model_bash_in_group(channel, "rm -rf build")
-    asyncio.run(channel._handle_transport_payload(_click(denied.id, "admin-m", decision="deny")))
+    asyncio.run(
+        channel._handle_transport_payload(_click(denied.id, "admin-m", decision="deny"))
+    )
     refused = _model_bash_in_group(channel, "df -h")
     monkeypatch.setattr(channel._config, "group_shell", "deny")
     asyncio.run(channel._handle_transport_payload(_click(refused.id, "admin-m")))
@@ -650,7 +682,9 @@ def test_denied_and_refused_approvals_are_reported(channel_env, monkeypatch) -> 
     _, state = asyncio.run(_bub_runs(channel, command))
     plugin.save_state(command.session_id, state, command, "")
 
-    asyncio.run(channel._handle_transport_payload(_group_command("然后呢", message_id="n1")))
+    asyncio.run(
+        channel._handle_transport_payload(_group_command("然后呢", message_id="n1"))
+    )
     assert [(r["id"], r["status"]) for r in _results(received[-1])] == [
         (denied.id, "denied"),
         (refused.id, "refused"),
@@ -661,10 +695,16 @@ def test_expired_approvals_are_reported(channel_env, monkeypatch) -> None:
     channel, received, _ = channel_env
     pending = _model_bash_in_group(channel, "df -h")
     monkeypatch.setattr(
-        approval, "_clock", lambda: pending.created_at + approval.APPROVAL_TTL_SECONDS + 1
+        approval,
+        "_clock",
+        lambda: pending.created_at + approval.APPROVAL_TTL_SECONDS + 1,
     )
-    asyncio.run(channel._handle_transport_payload(_group_command("然后呢", message_id="n1")))
-    assert [(r["id"], r["status"]) for r in _results(received[-1])] == [(pending.id, "expired")]
+    asyncio.run(
+        channel._handle_transport_payload(_group_command("然后呢", message_id="n1"))
+    )
+    assert [(r["id"], r["status"]) for r in _results(received[-1])] == [
+        (pending.id, "expired")
+    ]
     assert pending.id not in approval._pending
 
 
@@ -673,11 +713,16 @@ def test_outcomes_are_bounded() -> None:
     for index in range(5):
         approval.record_outcome(
             session,
-            approval.ApprovalOutcome(id=f"a{index}", command="yes", status="ran", output="y" * 2000),
+            approval.ApprovalOutcome(
+                id=f"a{index}", command="yes", status="ran", output="y" * 2000
+            ),
         )
     message = ChannelMessage(
-        session_id=session, content=json.dumps({"message": "hi"}), channel="qq",
-        chat_id="group:group-1", is_active=True,
+        session_id=session,
+        content=json.dumps({"message": "hi"}),
+        channel="qq",
+        chat_id="group:group-1",
+        is_active=True,
     )
     payload = json.loads(approval.attach_approval_outcomes(message).content)
     assert [r["id"] for r in payload["approval_results"]] == ["a2", "a3", "a4"]
@@ -687,15 +732,23 @@ def test_outcomes_are_bounded() -> None:
 
 def test_outcomes_wait_for_a_message_the_model_reads() -> None:
     session = "qq:group:group-1"
-    approval.record_outcome(session, approval.ApprovalOutcome(id="a1", command="ls", status="denied"))
+    approval.record_outcome(
+        session, approval.ApprovalOutcome(id="a1", command="ls", status="denied")
+    )
     inactive = ChannelMessage(
-        session_id=session, content=json.dumps({"message": "hi"}), channel="qq",
-        chat_id="group:group-1", is_active=False,
+        session_id=session,
+        content=json.dumps({"message": "hi"}),
+        channel="qq",
+        chat_id="group:group-1",
+        is_active=False,
     )
     assert approval.attach_approval_outcomes(inactive) is inactive
     active = ChannelMessage(
-        session_id=session, content=json.dumps({"message": "hi"}), channel="qq",
-        chat_id="group:group-1", is_active=True,
+        session_id=session,
+        content=json.dumps({"message": "hi"}),
+        channel="qq",
+        chat_id="group:group-1",
+        is_active=True,
     )
     assert _results(approval.attach_approval_outcomes(active)) == [
         {"id": "a1", "command": "ls", "status": "denied", "output": ""}
@@ -712,7 +765,9 @@ def test_group_claim_notifies_issuer_and_logs_no_denial(channel_env) -> None:
     lines: list[str] = []
     sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
     try:
-        asyncio.run(channel._handle_transport_payload(_c2c_payload(",qq.claim group", "c1")))
+        asyncio.run(
+            channel._handle_transport_payload(_c2c_payload(",qq.claim group", "c1"))
+        )
         code = sent[-1].content.split("：", 1)[1].split("\n", 1)[0]
         asyncio.run(
             channel._handle_transport_payload(
@@ -723,7 +778,11 @@ def test_group_claim_notifies_issuer_and_logs_no_denial(channel_env) -> None:
         logger.remove(sink)
     assert received == []
     assert not any("command_denied" in line for line in lines)
-    notices = [m for m in sent if m.chat_id == "c2c:u-admin" and "group:group-1:member-x" in m.content]
+    notices = [
+        m
+        for m in sent
+        if m.chat_id == "c2c:u-admin" and "group:group-1:member-x" in m.content
+    ]
     assert len(notices) == 1
 
 
@@ -732,7 +791,9 @@ def test_locked_claimer_gets_no_reply(channel_env) -> None:
     for index in range(approval_admins_max_failures() + 3):
         asyncio.run(
             channel._handle_transport_payload(
-                _group_command(",qq.claim WRONGWRONG", sender="member-x", message_id=f"w{index}")
+                _group_command(
+                    ",qq.claim WRONGWRONG", sender="member-x", message_id=f"w{index}"
+                )
             )
         )
     replies = [m.content for m in sent if m.chat_id == "group:group-1"]
@@ -750,7 +811,12 @@ def approval_admins_max_failures() -> int:
 
 
 def _inbound(sender: str, text: str) -> ChannelMessage:
-    payload = {"message": text, "sender_id": sender, "group_openid": "group-1", "chat_type": "group"}
+    payload = {
+        "message": text,
+        "sender_id": sender,
+        "group_openid": "group-1",
+        "chat_type": "group",
+    }
     return ChannelMessage(
         session_id=SESSION,
         channel="qq",
@@ -766,7 +832,6 @@ def _inbound(sender: str, text: str) -> ChannelMessage:
             }
         },
     )
-
 
 
 def _merged_state(*messages: ChannelMessage, workspace: Path) -> dict:
@@ -806,7 +871,9 @@ def test_turn_of_admins_only_keeps_admin_rights(config, tmp_path) -> None:
         _inbound("admin-m", "a"), _inbound("admin-2", "b"), workspace=tmp_path
     )
     decision = _hook(
-        ToolCall(run_id="r", tool="fs.write", arguments={"path": "notes.md", "content": "x"}),
+        ToolCall(
+            run_id="r", tool="fs.write", arguments={"path": "notes.md", "content": "x"}
+        ),
         state,
     )
     assert decision is None
@@ -815,13 +882,20 @@ def test_turn_of_admins_only_keeps_admin_rights(config, tmp_path) -> None:
 def test_unparseable_merged_line_counts_as_an_unknown_sender(config, tmp_path) -> None:
     admin = _inbound("admin-m", "hi")
     odd = ChannelMessage(
-        session_id=SESSION, channel="qq", chat_id="group:group-1", content="plain text",
-        is_active=True, context=admin.context,
+        session_id=SESSION,
+        channel="qq",
+        chat_id="group:group-1",
+        content="plain text",
+        is_active=True,
+        context=admin.context,
     )
     state = _merged_state(odd, admin, workspace=tmp_path)
     assert "?" in state[QQ_STATE_KEY]["batch_senders"]
     decision = _hook(
-        ToolCall(run_id="r", tool="fs.write", arguments={"path": "n.md", "content": "x"}), state
+        ToolCall(
+            run_id="r", tool="fs.write", arguments={"path": "n.md", "content": "x"}
+        ),
+        state,
     )
     assert decision is not None and decision.action == "deny"
 
@@ -833,7 +907,11 @@ def test_card_shows_the_command_not_json(config, tmp_path) -> None:
     channel = FakeChannel()
     set_active_channel(channel)
     _hook(
-        ToolCall(run_id="r", tool="bash", arguments={"command": "rm -rf /*", "timeout_seconds": 120}),
+        ToolCall(
+            run_id="r",
+            tool="bash",
+            arguments={"command": "rm -rf /*", "timeout_seconds": 120},
+        ),
         _state(ADMIN, tmp_path),
     )
     pending = _only_pending()
@@ -866,7 +944,10 @@ def test_risky_command_hints(command, risky) -> None:
 @pytest.mark.parametrize(
     ("command", "notable"),
     [
-        ('curl -sL -o inbox/a.png "https://multimedia.nt.qq.com.cn/download?x=1"', True),
+        (
+            'curl -sL -o inbox/a.png "https://multimedia.nt.qq.com.cn/download?x=1"',
+            True,
+        ),
         ("wget http://10.0.0.5/secret", True),
         ("cd inbox && aria2c https://example.com/a.zip", True),
         ("curl --version", False),
@@ -881,7 +962,11 @@ def test_card_notes_a_download_without_calling_it_destructive(config, tmp_path) 
     channel = FakeChannel()
     set_active_channel(channel)
     _hook(
-        ToolCall(run_id="r", tool="bash", arguments={"command": "curl -sLO https://example.com/a.png"}),
+        ToolCall(
+            run_id="r",
+            tool="bash",
+            arguments={"command": "curl -sLO https://example.com/a.png"},
+        ),
         _state(ADMIN, tmp_path),
     )
     card = channel.messages[0].content
@@ -890,11 +975,20 @@ def test_card_notes_a_download_without_calling_it_destructive(config, tmp_path) 
 
 
 def test_failed_command_is_reported_as_failed_with_its_output(config, tmp_path) -> None:
-    state = {QQ_STATE_KEY: {"scope": "group", "sender_id": "admin-m", "group_openid": "group-1",
-                            "approval_id": "abc", "approval_preview": "rm -rf /*"}}
+    state = {
+        QQ_STATE_KEY: {
+            "scope": "group",
+            "sender_id": "admin-m",
+            "group_openid": "group-1",
+            "approval_id": "abc",
+            "approval_preview": "rm -rf /*",
+        }
+    }
     try:
         try:
-            raise RuntimeError("command exited with code 1\noutput:\nrm: cannot remove '/usr'")
+            raise RuntimeError(
+                "command exited with code 1\noutput:\nrm: cannot remove '/usr'"
+            )
         finally:
             plugin.save_state(SESSION, state, None, "")
     except RuntimeError:
@@ -923,9 +1017,14 @@ def _unattributed(session_id: str, workspace: Path) -> dict:
         ("qq.send", {"content": "hi"}, True),
     ],
 )
-def test_group_turn_without_sender_acts_as_unknown_member(config, tmp_path, tool, arguments, allowed) -> None:
+def test_group_turn_without_sender_acts_as_unknown_member(
+    config, tmp_path, tool, arguments, allowed
+) -> None:
     set_active_channel(FakeChannel())
-    decision = _hook(ToolCall(run_id="r", tool=tool, arguments=arguments), _unattributed(SESSION, tmp_path))
+    decision = _hook(
+        ToolCall(run_id="r", tool=tool, arguments=arguments),
+        _unattributed(SESSION, tmp_path),
+    )
     if allowed:
         assert decision is None
     else:
@@ -933,10 +1032,14 @@ def test_group_turn_without_sender_acts_as_unknown_member(config, tmp_path, tool
     assert not approval._pending
 
 
-def test_private_turn_without_sender_does_not_inherit_the_users_rights(config, tmp_path, monkeypatch) -> None:
+def test_private_turn_without_sender_does_not_inherit_the_users_rights(
+    config, tmp_path, monkeypatch
+) -> None:
     # The session id names an admin, but nothing says the admin started this turn.
     monkeypatch.setattr(
-        bub, "ensure_config", lambda cls: _config(admin_users="c2c:u-admin,group:group-1:admin-m")
+        bub,
+        "ensure_config",
+        lambda cls: _config(admin_users="c2c:u-admin,group:group-1:admin-m"),
     )
     decision = _hook(
         ToolCall(run_id="r", tool="tape.info", arguments={}),
@@ -946,10 +1049,20 @@ def test_private_turn_without_sender_does_not_inherit_the_users_rights(config, t
 
 
 def test_other_channels_are_left_alone(config, tmp_path) -> None:
-    assert _hook(ToolCall(run_id="r", tool="bash", arguments={"command": "id"}),
-                 _unattributed("cli:default", tmp_path)) is None
-    assert _hook(ToolCall(run_id="r", tool="bash", arguments={"command": "id"}),
-                 _unattributed("qqx:group:g", tmp_path)) is None
+    assert (
+        _hook(
+            ToolCall(run_id="r", tool="bash", arguments={"command": "id"}),
+            _unattributed("cli:default", tmp_path),
+        )
+        is None
+    )
+    assert (
+        _hook(
+            ToolCall(run_id="r", tool="bash", arguments={"command": "id"}),
+            _unattributed("qqx:group:g", tmp_path),
+        )
+        is None
+    )
 
 
 # --- Bub's own command path ----------------------------------------------------

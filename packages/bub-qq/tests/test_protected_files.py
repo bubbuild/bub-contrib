@@ -124,7 +124,9 @@ def test_qq_send_media_outside_outbox_is_denied(monkeypatch, workspace: Path) ->
     monkeypatch.setattr(bub, "ensure_config", lambda cls: _config())
     decision = _decide(
         ToolCall(
-            run_id="r", tool="qq.send", arguments={"content": "", "media_path": "notes.md"}
+            run_id="r",
+            tool="qq.send",
+            arguments={"content": "", "media_path": "notes.md"},
         ),
         _state(workspace),
     )

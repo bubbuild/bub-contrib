@@ -109,7 +109,7 @@ def _payload(
 
 def test_c2c_inbound_service_parses_and_remembers_session() -> None:
     state = _state()
-    service =     QQC2CInboundService(
+    service = QQC2CInboundService(
         channel_name="qq",
         deduper=QQInboundDeduper(16),
         state=state,
@@ -128,7 +128,7 @@ def test_c2c_inbound_service_parses_and_remembers_session() -> None:
 
 def test_c2c_inbound_service_dedupes_repeated_messages() -> None:
     state = _state()
-    service =     QQC2CInboundService(
+    service = QQC2CInboundService(
         channel_name="qq",
         deduper=QQInboundDeduper(16),
         state=state,
@@ -159,9 +159,7 @@ def test_c2c_inbound_includes_quoted_messages_in_payload() -> None:
     assert parsed is not None
     _, channel_message = parsed
     content = json.loads(channel_message.content)
-    assert content["quoted_messages"] == [
-        {"message": "原始消息", "sender_name": "Bob"}
-    ]
+    assert content["quoted_messages"] == [{"message": "原始消息", "sender_name": "Bob"}]
     assert content["message_type"] == 103
 
 
@@ -273,12 +271,12 @@ def test_c2c_send_service_starts_msg_seq_at_one_after_inbound_transport_sequence
 ):
     async def _run() -> None:
         state = _state()
-        inbound =     QQC2CInboundService(
-        channel_name="qq",
-        deduper=QQInboundDeduper(16),
-        state=state,
-        policy=QQAccessPolicy(),
-    )
+        inbound = QQC2CInboundService(
+            channel_name="qq",
+            deduper=QQInboundDeduper(16),
+            state=state,
+            policy=QQAccessPolicy(),
+        )
         parsed = inbound.parse_inbound(_payload())
 
         assert parsed is not None
@@ -323,12 +321,12 @@ def test_c2c_send_service_resets_msg_seq_for_new_inbound_msg_id() -> None:
     async def _run() -> None:
         state = _state()
         openapi = OpenAPIStub()
-        inbound =     QQC2CInboundService(
-        channel_name="qq",
-        deduper=QQInboundDeduper(16),
-        state=state,
-        policy=QQAccessPolicy(),
-    )
+        inbound = QQC2CInboundService(
+            channel_name="qq",
+            deduper=QQInboundDeduper(16),
+            state=state,
+            policy=QQAccessPolicy(),
+        )
         service = QQC2CSendService(
             channel_name="qq",
             receive_mode="webhook",

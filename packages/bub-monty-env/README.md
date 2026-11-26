@@ -73,7 +73,9 @@ from bub_monty_env import MontyCodeMixin, MontyOptions, create_monty_environment
 
 # Wrap an instance: everything but run_code is delegated to it, and closing the
 # wrapper closes it.
-environment = create_monty_environment(MyEnvironment(...), MontyOptions(filesystem="read-only"))
+environment = create_monty_environment(
+    MyEnvironment(...), MontyOptions(filesystem="read-only")
+)
 
 
 # Or mix into a class: the mixin goes first.

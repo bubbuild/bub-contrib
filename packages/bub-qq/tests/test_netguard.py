@@ -90,14 +90,18 @@ def test_qq_media_domains_are_trusted_behind_fake_ip_proxies() -> None:
             _FakeResolver(["198.18.184.114"]), trusted_domains=QQ_MEDIA_DOMAINS
         )
         for host in ("multimedia.nt.qq.com.cn", "gchat.qpic.cn", "qq.com", "QQ.COM."):
-            assert [r["host"] for r in await trusting.resolve(host, 443)] == ["198.18.184.114"]
+            assert [r["host"] for r in await trusting.resolve(host, 443)] == [
+                "198.18.184.114"
+            ]
         # Only those domains and their subdomains, not look-alikes.
         for host in ("evilqq.com", "qq.com.evil.example", "example.com"):
             with pytest.raises(BlockedAddressError, match=BLOCKED_MESSAGE):
                 await trusting.resolve(host, 443)
         # Other downloads (media_url, web.fetch) do not trust them.
         with pytest.raises(BlockedAddressError):
-            await PublicOnlyResolver(_FakeResolver(["198.18.184.114"])).resolve("gchat.qpic.cn", 443)
+            await PublicOnlyResolver(_FakeResolver(["198.18.184.114"])).resolve(
+                "gchat.qpic.cn", 443
+            )
 
     asyncio.run(_run())
 
@@ -106,7 +110,9 @@ def test_trusted_domains_do_not_exempt_ip_literals() -> None:
     # A redirect from a QQ host to a private IP is still refused.
     with pytest.raises(BlockedAddressError, match=BLOCKED_MESSAGE):
         check_public_url("http://10.0.0.5/x", trusted_domains=QQ_MEDIA_DOMAINS)
-    check_public_url("https://multimedia.nt.qq.com.cn/download", trusted_domains=QQ_MEDIA_DOMAINS)
+    check_public_url(
+        "https://multimedia.nt.qq.com.cn/download", trusted_domains=QQ_MEDIA_DOMAINS
+    )
 
 
 def _redirect_app() -> web.Application:
@@ -150,9 +156,7 @@ def test_download_guard_checks_every_redirect_hop(tmp_path: Path) -> None:
             async with aiohttp.ClientSession() as session:
                 guard, seen = _guard_blocking("blocked.invalid")
                 dest = tmp_path / "ok.bin"
-                await download_to_path(
-                    session, f"{base}/hop", dest, url_guard=guard
-                )
+                await download_to_path(session, f"{base}/hop", dest, url_guard=guard)
                 assert dest.read_bytes() == b"payload"
                 assert seen == [f"{base}/hop", f"{base}/file"]
 
@@ -215,7 +219,12 @@ def _fetch_decision(url: str, monkeypatch, allow_hosts: str = ""):
     )
     monkeypatch.setattr(bub, "ensure_config", lambda cls: config)
     state = {
-        "qq": {"scope": "group", "sender_id": "m", "group_openid": "g", "session_id": "s"},
+        "qq": {
+            "scope": "group",
+            "sender_id": "m",
+            "group_openid": "g",
+            "session_id": "s",
+        },
         "_runtime_workspace": "/tmp",
     }
     call = ToolCall(run_id="r", tool="web_fetch", arguments={"url": url})

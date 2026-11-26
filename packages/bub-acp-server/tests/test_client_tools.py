@@ -507,9 +507,7 @@ async def test_real_agents_keep_acp_tools_connection_local(
             server._runtime_agents[session_id].tools["fs.read"]
             is not framework_tools["fs.read"]
         )
-        assert {
-            tool.name: tool for tool in framework.get_tools()
-        } == framework_tools
+        assert {tool.name: tool for tool in framework.get_tools()} == framework_tools
         assert default.tools == original_tools
         # Even an BubAgent created during an ACP connection gets only default tools.
         assert BubAgent(framework).tools["fs.read"] is framework_tools["fs.read"]

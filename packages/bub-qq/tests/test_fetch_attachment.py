@@ -81,7 +81,9 @@ def _context(workspace: Path, session_id: str = "qq:c2c:u1") -> ToolContext:
 
 def _fetch(context: ToolContext, message_id: str = "m1", index: int = 0) -> str:
     return asyncio.run(
-        tools.qq_fetch_attachment.run(message_id=message_id, index=index, context=context)
+        tools.qq_fetch_attachment.run(
+            message_id=message_id, index=index, context=context
+        )
     )
 
 
@@ -111,7 +113,9 @@ def test_inbound_records_attachments_without_downloading(tmp_path: Path) -> None
                 "author": {"user_openid": "u1"},
                 "content": "look",
                 "id": "m1",
-                "attachments": [{"url": "https://cdn.example/p.png", "filename": "p.png"}],
+                "attachments": [
+                    {"url": "https://cdn.example/p.png", "filename": "p.png"}
+                ],
             },
         }
     )
@@ -152,7 +156,9 @@ def test_fetch_refuses_other_chats_and_bad_index(state, tmp_path, server_url) ->
     assert not (tmp_path / "inbox").exists()
 
 
-def test_fetch_is_guarded_against_private_addresses(tmp_path, server_url, monkeypatch) -> None:
+def test_fetch_is_guarded_against_private_addresses(
+    tmp_path, server_url, monkeypatch
+) -> None:
     config = QQConfig.model_construct(download_allow_hosts="")
     monkeypatch.setattr(bub, "ensure_config", lambda cls: config)
     state = QQSessionState()
@@ -166,7 +172,9 @@ def test_fetch_is_guarded_against_private_addresses(tmp_path, server_url, monkey
             attachments=(_attachment(server_url),),
         )
         result = _fetch(_context(tmp_path))
-        assert result.startswith("Not downloaded: Private network address check failed, access refused. ")
+        assert result.startswith(
+            "Not downloaded: Private network address check failed, access refused. "
+        )
         assert "do not fetch the URL another way" in result
     finally:
         set_active_channel(None)

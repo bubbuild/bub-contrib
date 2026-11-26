@@ -207,7 +207,9 @@ def classify(call: ToolCall, *, extra_safe_patterns: Iterable[str] = ()) -> Reso
     for resource, names in _CLASSES:
         if forms & names:
             return resource
-    if any(fnmatchcase(form, pattern) for form in forms for pattern in extra_safe_patterns):
+    if any(
+        fnmatchcase(form, pattern) for form in forms for pattern in extra_safe_patterns
+    ):
         return "safe"
     return "unknown"
 
@@ -239,7 +241,9 @@ def evaluate(
         )
 
     tool_policy = (
-        config.group_tool_policy if requester.scope == "group" else config.c2c_tool_policy
+        config.group_tool_policy
+        if requester.scope == "group"
+        else config.c2c_tool_policy
     )
     if tool_policy == "locked":
         return Decision("deny", resource, "Tool calls are disabled in this chat.")
@@ -255,7 +259,9 @@ def evaluate(
         if not admin:
             return Decision("deny", resource, "Shell commands are admin-only.")
         if config.group_shell == "deny":
-            return Decision("deny", resource, "Shell commands are disabled (group_shell=deny).")
+            return Decision(
+                "deny", resource, "Shell commands are disabled (group_shell=deny)."
+            )
         if approved:
             return Decision("allow", resource)
         return Decision("approval", resource, "Shell commands need admin approval.")
@@ -269,7 +275,11 @@ def evaluate(
     if resource in {"fs_read", "fs_write"}:
         if resource == "fs_write" and not admin:
             return Decision("deny", resource, "Writing files is admin-only.")
-        raw = (call.arguments or {}).get("path") if isinstance(call.arguments, dict) else None
+        raw = (
+            (call.arguments or {}).get("path")
+            if isinstance(call.arguments, dict)
+            else None
+        )
         if raw is not None and str(raw).strip():
             if resolve_in_workspace(str(raw), workspace) is None:
                 return Decision(

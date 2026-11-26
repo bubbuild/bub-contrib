@@ -122,7 +122,10 @@ def test_upload_local_file_puts_parts_then_merges(tmp_path: Path) -> None:
         assert [chunk for _, chunk in client.puts] == [b"abc", b"def", b"gh"]
         assert len(client.finishes) == 3
         md5, sha1, md5_10m = file_digests(data)
-        assert hashlib.md5(b"abc", usedforsecurity=False).hexdigest() == client.finishes[0]["md5"]
+        assert (
+            hashlib.md5(b"abc", usedforsecurity=False).hexdigest()
+            == client.finishes[0]["md5"]
+        )
         assert client.merges[0]["upload_id"] == "upload-1"
         assert md5 and sha1 and md5_10m
 
@@ -145,9 +148,7 @@ def test_group_send_uploads_local_file(tmp_path: Path) -> None:
             state=state,
             openapi=openapi,
         )
-        spec = MediaSpec(
-            file_type=2, file_name="clip.mp4", local_path=str(path)
-        )
+        spec = MediaSpec(file_type=2, file_name="clip.mp4", local_path=str(path))
         result = await service.send(
             ChannelMessage(
                 session_id="qq:group:group-openid",

@@ -376,7 +376,11 @@ def test_openapi_posts_c2c_file_and_media_message() -> None:
             if str(request.url).endswith("/files"):
                 return FakeResponse(
                     status=200,
-                    payload={"file_uuid": "uuid-1", "file_info": "FILEINFO", "ttl": 300},
+                    payload={
+                        "file_uuid": "uuid-1",
+                        "file_info": "FILEINFO",
+                        "ttl": 300,
+                    },
                 )
             return FakeResponse(status=200, payload={"id": "media-1"})
 
@@ -568,7 +572,9 @@ def test_openapi_gives_up_after_second_401() -> None:
     async def _run() -> None:
         async def token_handler(url: str, kwargs: dict[str, object]) -> FakeResponse:
             del url, kwargs
-            return FakeResponse(status=200, payload={"access_token": "t", "expires_in": 7200})
+            return FakeResponse(
+                status=200, payload={"access_token": "t", "expires_in": 7200}
+            )
 
         calls = {"n": 0}
 
@@ -598,7 +604,9 @@ def test_replies_to_events_use_event_id() -> None:
 
         async def token_handler(url: str, kwargs: dict[str, object]) -> FakeResponse:
             del url, kwargs
-            return FakeResponse(status=200, payload={"access_token": "t", "expires_in": 7200})
+            return FakeResponse(
+                status=200, payload={"access_token": "t", "expires_in": 7200}
+            )
 
         async def openapi_handler(request: OpenAPIRequest) -> FakeResponse:
             bodies.append(dict(request.json or {}))

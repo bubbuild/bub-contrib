@@ -349,9 +349,7 @@ def test_stream_event_from_notification_filters_and_maps_chunks() -> None:
     )
 
     assert text_event == plugin.StreamEvent("text", {"delta": "answer"})
-    assert reasoning_event == plugin.StreamEvent(
-        "reasoning", {"delta": "thinking"}
-    )
+    assert reasoning_event == plugin.StreamEvent("reasoning", {"delta": "thinking"})
     assert (
         plugin._stream_event_from_notification(
             notification(

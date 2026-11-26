@@ -60,7 +60,9 @@ _NO_REPLY_RE = re.compile(r"^<no_reply\s*/?>", re.IGNORECASE)
 # leak into text output, typically when the model means "nothing to say".
 # They are stripped from the edges of outbound content; a reply that was
 # only special tokens becomes empty and is skipped.
-_EDGE_SPECIAL_TOKEN_RE = re.compile(r"^\s*<\|[^|<>]{1,64}\|>\s*|\s*<\|[^|<>]{1,64}\|>\s*$")
+_EDGE_SPECIAL_TOKEN_RE = re.compile(
+    r"^\s*<\|[^|<>]{1,64}\|>\s*|\s*<\|[^|<>]{1,64}\|>\s*$"
+)
 
 
 def is_no_reply(content: str) -> bool:

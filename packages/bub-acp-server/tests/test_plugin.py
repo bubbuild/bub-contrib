@@ -285,12 +285,101 @@ async def test_initialize_advertises_session_capabilities() -> None:
     # capability is reported at all.
     assert response.agent_capabilities.field_meta is None
     assert response.field_meta == {"steering": {"supported": True}}
+    # Terminal auth methods are omitted unless the client advertises terminal auth support.
+    assert response.auth_methods == []
+
+
+@pytest.mark.asyncio
+async def test_initialize_gates_terminal_auth_on_client_capability() -> None:
+    from acp.schema import AuthCapabilities, ClientCapabilities
+
+    agent = BubACPAgent(FakeFramework())
+
+    without_caps = await agent.initialize(protocol_version=1)
+    assert without_caps.auth_methods == []
+
+    default_caps = await agent.initialize(
+        protocol_version=1, client_capabilities=ClientCapabilities()
+    )
+    assert default_caps.auth_methods == []
+
+    with_auth_cap = await agent.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(auth=AuthCapabilities(terminal=True)),
+    )
     assert [
-        (method.id, method.type, method.args) for method in response.auth_methods or []
-    ] == [
-        ("login", "terminal", ["login"]),
-        ("onboard", "terminal", ["onboard"]),
+        (method.id, method.type, method.args)
+        for method in with_auth_cap.auth_methods or []
+    ] == [("onboard", "terminal", ["onboard"])]
+
+    with_legacy_meta = await agent.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(field_meta={"terminal-auth": True}),
+    )
+    assert [
+        (method.id, method.type, method.args)
+        for method in with_legacy_meta.auth_methods or []
+    ] == [("onboard", "terminal", ["onboard"])]
+
+
+def test_advertised_terminal_auth_args_resolve_in_both_launch_modes() -> None:
+    import click
+    import click.testing
+    from acp.schema import AuthCapabilities, ClientCapabilities
+    from bub.framework import BubFramework
+    from bub_acp_server import cli
+
+    framework = BubFramework()
+    framework.load_hooks()
+    app = framework.create_cli_app()
+    click_app = typer.main.get_command(app)
+    agent = BubACPAgent(framework)
+
+    response = asyncio.run(
+        agent.initialize(
+            protocol_version=1,
+            client_capabilities=ClientCapabilities(
+                auth=AuthCapabilities(terminal=True)
+            ),
+        )
+    )
+    methods = response.auth_methods or []
+    assert [(method.id, method.type, method.args) for method in methods] == [
+        ("onboard", "terminal", ["onboard"])
     ]
+
+    click_runner = click.testing.CliRunner()
+    [method] = methods
+    assert method.args is not None
+    # Console-script path: `bub-acp-server <*args>` resolves to a concrete leaf command.
+    script_args = cli._resolve_args(method.args)
+    ctx = click.Context(click_app)
+    cmd: Any = click_app
+    remaining = list(script_args)
+    while hasattr(cmd, "resolve_command") and getattr(cmd, "commands", None):
+        assert remaining, f"Incomplete command group for {script_args}"
+        _, next_cmd, remaining = cmd.resolve_command(ctx, remaining)
+        assert next_cmd is not None
+        cmd = next_cmd
+    assert cmd is not click_app
+    assert not getattr(cmd, "commands", None)
+    assert click_runner.invoke(click_app, [*script_args, "--help"]).exit_code == 0
+
+    # `bub acp <*args>` path: forwards to the exact registered leaf command on the real app.
+    invoked_real: list[str] = []
+    original_callback = cmd.callback
+    cmd.callback = lambda *_a, **_kw: invoked_real.append(method.id)
+    try:
+        fwd_result = click_runner.invoke(click_app, ["acp", *method.args])
+    finally:
+        cmd.callback = original_callback
+    assert fwd_result.exit_code == 0, fwd_result.output
+    assert invoked_real == [method.id]
+
+    invalid_combo = click_runner.invoke(
+        click_app, ["acp", "--transport", "http", "onboard"]
+    )
+    assert invalid_combo.exit_code != 0
 
 
 def test_cli_entry_point_routes_acp_and_auth_subcommands(
@@ -307,14 +396,14 @@ def test_cli_entry_point_routes_acp_and_auth_subcommands(
 
     cli.main([])
     cli.main(["--v2"])
-    cli.main(["login"])
+    cli.main(["login", "codex"])
     cli.main(["onboard", "openai"])
     cli.main(["acp", "--transport", "http"])
 
     assert captured == [
         (["acp"], "bub-acp-server"),
         (["acp", "--v2"], "bub-acp-server"),
-        (["login"], "bub-acp-server"),
+        (["login", "codex"], "bub-acp-server"),
         (["onboard", "openai"], "bub-acp-server"),
         (["acp", "--transport", "http"], "bub-acp-server"),
     ]

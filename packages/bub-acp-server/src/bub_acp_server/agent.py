@@ -1011,6 +1011,28 @@ class ACPAgentBase:
         return config_options
 
 
+def _client_supports_terminal_auth(
+    client_capabilities: ClientCapabilities | None,
+) -> bool:
+    if client_capabilities is None:
+        return False
+    auth = client_capabilities.auth
+    if auth is not None and bool(auth.terminal):
+        return True
+    meta = client_capabilities.field_meta
+    return isinstance(meta, Mapping) and bool(meta.get("terminal-auth"))
+
+
+_TERMINAL_AUTH_METHODS = [
+    TerminalAuthMethod(
+        id="onboard",
+        name="Onboard",
+        description="Configure Bub plugins and model settings in a terminal",
+        args=["onboard"],
+    ),
+]
+
+
 class BubACPAgent(ACPAgentBase):
     def __init__(
         self,
@@ -1082,23 +1104,15 @@ class BubACPAgent(ACPAgentBase):
             capability_meta.update(
                 extension.initialize(client_capabilities, client_info) or {}
             )
+        auth_methods = (
+            list(_TERMINAL_AUTH_METHODS)
+            if _client_supports_terminal_auth(client_capabilities)
+            else []
+        )
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_info=Implementation(name="bub", title="Bub", version=_bub_version()),
-            auth_methods=[
-                TerminalAuthMethod(
-                    id="login",
-                    name="Login",
-                    description="Authenticate an account with Bub in a terminal",
-                    args=["login"],
-                ),
-                TerminalAuthMethod(
-                    id="onboard",
-                    name="Onboard",
-                    description="Configure Bub plugins and model settings in a terminal",
-                    args=["onboard"],
-                ),
-            ],
+            auth_methods=auth_methods,
             field_meta={"steering": {"supported": True}},
             agent_capabilities=AgentCapabilities(
                 load_session=True,

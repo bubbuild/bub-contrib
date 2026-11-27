@@ -6,6 +6,8 @@ Expose Bub as an Agent Client Protocol agent.
 
 - Bub plugin entry point: `acp-server`
 - CLI command registered on Bub: `bub acp`
+- Standalone console script entry point: `bub-acp-server` (for `uvx bub-acp-server`)
+- Terminal authentication method (`onboard`) advertised during `initialize` when the client declares terminal auth support (`clientCapabilities.auth.terminal` or legacy `_meta["terminal-auth"]`)
 - Optional Streamable HTTP and WebSocket transports at `/acp`, served by Hypercorn with HTTP/2 support
 - Gateway channel: `acp-server`, with HTTP startup and shutdown managed by Bub
 - ACP agent methods for `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/delete`, `session/close`, and `session/prompt`
@@ -41,6 +43,14 @@ Configure an ACP-compatible client to launch:
 ```bash
 bub acp
 ```
+
+Or run the standalone console script entry point (for example through `uvx` or the ACP Registry):
+
+```bash
+uvx bub-acp-server
+```
+
+When a client advertises terminal authentication support (`clientCapabilities.auth.terminal: true` or legacy `_meta["terminal-auth"]: true`), `initialize` returns the `onboard` terminal auth method (`args: ["onboard"]`). Both `bub acp` and `bub-acp-server` forward `onboard` to Bub's own `onboard` command.
 
 The previous `bub acp serve` form remains accepted temporarily and prints a deprecation warning. Other positional arguments are rejected.
 

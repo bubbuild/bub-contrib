@@ -156,29 +156,13 @@ def _handoff_instruction(
     )
 
 
-def _inject_system_instruction(
+def _append_handoff_instruction(
     messages: list[republic.Message],
     instruction: str,
 ) -> list[republic.Message]:
-    if any(
-        message.role == "system" and HANDOFF_INSTRUCTION_MARKER in message.text
-        for message in messages
-    ):
+    if any(HANDOFF_INSTRUCTION_MARKER in message.text for message in messages):
         return messages
-
-    updated = list(messages)
-    for index, message in enumerate(updated):
-        if message.role != "system" or not all(
-            isinstance(part, republic.Text) for part in message.parts
-        ):
-            continue
-        content = message.text
-        updated[index] = republic.system(
-            f"{content}\n\n{instruction}" if content else instruction
-        )
-        return updated
-
-    return [republic.system(instruction), *updated]
+    return [*messages, republic.user(instruction)]
 
 
 @hookimpl(trylast=True)
@@ -201,7 +185,7 @@ def before_llm_call(
         threshold=threshold,
         limit=settings.max_context_tokens,
     )
-    messages = _inject_system_instruction(request.messages, instruction)
+    messages = _append_handoff_instruction(request.messages, instruction)
     if messages is request.messages:
         return None
     return replace(

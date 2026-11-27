@@ -85,7 +85,10 @@ class ACPServerPlugin:
             "acp", help="Run Bub as an ACP agent over stdio, HTTP or WebSocket."
         )
         def acp(
-            command: str | None = typer.Argument(None, metavar="[serve]"),
+            ctx: typer.Context,
+            command: list[str] | None = typer.Argument(
+                None, metavar="[serve|onboard ...]"
+            ),
             transport: Transport = typer.Option(Transport.stdio, help="ACP transport."),
             host: str = typer.Option(
                 "127.0.0.1", help="HTTP/WebSocket listen address."
@@ -106,14 +109,36 @@ class ACPServerPlugin:
                 False, "--v2", help="Speak the experimental ACP protocol v2."
             ),
         ) -> None:
-            if command == "serve":
+            args = list(command or ())
+            if args and args[0] == "onboard":
+                if (
+                    transport != Transport.stdio
+                    or host != "127.0.0.1"
+                    or port != 28200
+                    or certfile is not None
+                    or keyfile is not None
+                    or v2
+                ):
+                    raise typer.BadParameter(
+                        "ACP transport options cannot be combined with terminal auth commands"
+                    )
+                root_ctx = ctx.find_root()
+                root_ctx.command.main(
+                    args=args,
+                    prog_name=root_ctx.info_name,
+                    standalone_mode=False,
+                )
+                return
+            if args == ["serve"]:
                 typer.echo(
                     "Warning: `bub acp serve` is deprecated; use `bub acp` instead.",
                     err=True,
                 )
-            elif command is not None:
+            elif args:
+                unexpected = args[1] if args[0] == "serve" else args[0]
                 raise typer.BadParameter(
-                    f"Got unexpected extra argument {command!r}", param_hint="command"
+                    f"Got unexpected extra argument {unexpected!r}",
+                    param_hint="command",
                 )
             if transport == Transport.stdio:
                 if (

@@ -106,7 +106,8 @@ def test_real_usage_is_combined_with_trailing_message_estimate(monkeypatch) -> N
 
     assert result is not None
     assert estimated_messages == [[trailing]]
-    assert "estimated input context is 107 tokens" in result.messages[0].text
+    assert result.messages[:-1] == next_request.messages
+    assert "estimated input context is 107 tokens" in result.messages[-1].text
 
 
 def test_tool_call_output_is_part_of_real_usage_baseline(monkeypatch) -> None:
@@ -285,7 +286,7 @@ def test_default_budget_triggers_above_reserved_threshold(monkeypatch) -> None:
     assert plugin.before_llm_call(request, {}) is not None
 
 
-def test_before_llm_call_appends_handoff_instruction_to_system_message(
+def test_before_llm_call_appends_handoff_instruction_preserving_prefix(
     monkeypatch,
 ) -> None:
     messages = [
@@ -307,12 +308,12 @@ def test_before_llm_call_appends_handoff_instruction_to_system_message(
     assert result is not None
     assert result is not request
     assert result.messages is not request.messages
-    assert result.messages[1] == messages[1]
-    assert result.messages[0].text.startswith("Base instructions\n\n")
-    assert "estimated input context is 51 tokens" in result.messages[0].text
-    assert "threshold of 50 tokens" in result.messages[0].text
-    assert f"with {plugin.RESERVE_TOKENS} tokens reserved" in result.messages[0].text
-    assert "`tape.handoff`" in result.messages[0].text
+    assert result.messages[:-1] == messages
+    assert result.messages[-1].role == "user"
+    assert "estimated input context is 51 tokens" in result.messages[-1].text
+    assert "threshold of 50 tokens" in result.messages[-1].text
+    assert f"with {plugin.RESERVE_TOKENS} tokens reserved" in result.messages[-1].text
+    assert "`tape.handoff`" in result.messages[-1].text
     assert request.messages == messages
 
 
@@ -331,10 +332,12 @@ def test_before_llm_call_does_not_duplicate_handoff_instruction(monkeypatch) -> 
 
     assert first is not None
     assert plugin.before_llm_call(first, {}) is None
-    assert first.messages[0].text.count(plugin.HANDOFF_INSTRUCTION_MARKER) == 1
+    assert first.messages[-1].text.count(plugin.HANDOFF_INSTRUCTION_MARKER) == 1
 
 
-def test_before_llm_call_prepends_system_message_when_none_exists(monkeypatch) -> None:
+def test_before_llm_call_appends_user_message_when_no_system_message_exists(
+    monkeypatch,
+) -> None:
     messages = [republic.user("hello")]
     request = _request(messages)
     monkeypatch.setattr(plugin, "estimate_context_tokens", lambda *args, **kwargs: 101)
@@ -349,8 +352,9 @@ def test_before_llm_call_prepends_system_message_when_none_exists(monkeypatch) -
     result = plugin.before_llm_call(request, {})
 
     assert result is not None
-    assert result.messages[0].role == "system"
-    assert result.messages[1:] == messages
+    assert result.messages[:-1] == messages
+    assert result.messages[-1].role == "user"
+    assert plugin.HANDOFF_INSTRUCTION_MARKER in result.messages[-1].text
 
 
 def test_settings_reject_non_positive_budget() -> None:

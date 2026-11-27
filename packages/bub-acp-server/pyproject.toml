@@ -23,6 +23,9 @@ http = [
     "hypercorn>=0.17,<0.19",
 ]
 
+[project.scripts]
+bub-acp-server = "bub_acp_server.cli:main"
+
 [project.entry-points.bub]
 acp-server = "bub_acp_server.plugin:ACPServerPlugin"
 

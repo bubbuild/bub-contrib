@@ -285,6 +285,39 @@ async def test_initialize_advertises_session_capabilities() -> None:
     # capability is reported at all.
     assert response.agent_capabilities.field_meta is None
     assert response.field_meta == {"steering": {"supported": True}}
+    assert [
+        (method.id, method.type, method.args) for method in response.auth_methods or []
+    ] == [
+        ("login", "terminal", ["login"]),
+        ("onboard", "terminal", ["onboard"]),
+    ]
+
+
+def test_cli_entry_point_routes_acp_and_auth_subcommands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bub_acp_server import cli
+
+    captured: list[tuple[list[str], str]] = []
+
+    def fake_app(*, args: list[str], prog_name: str) -> None:
+        captured.append((args, prog_name))
+
+    monkeypatch.setattr("bub.__main__.create_cli_app", lambda: fake_app)
+
+    cli.main([])
+    cli.main(["--v2"])
+    cli.main(["login"])
+    cli.main(["onboard", "openai"])
+    cli.main(["acp", "--transport", "http"])
+
+    assert captured == [
+        (["acp"], "bub-acp-server"),
+        (["acp", "--v2"], "bub-acp-server"),
+        (["login"], "bub-acp-server"),
+        (["onboard", "openai"], "bub-acp-server"),
+        (["acp", "--transport", "http"], "bub-acp-server"),
+    ]
 
 
 @pytest.mark.asyncio

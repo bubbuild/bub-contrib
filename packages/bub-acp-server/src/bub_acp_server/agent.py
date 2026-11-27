@@ -50,6 +50,7 @@ from acp.schema import (
     SessionListCapabilities,
     SessionResumeCapabilities,
     SetSessionConfigOptionResponse,
+    TerminalAuthMethod,
     TerminalToolCallContent,
     TextContentBlock,
     ToolCallProgress,
@@ -1084,6 +1085,20 @@ class BubACPAgent(ACPAgentBase):
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_info=Implementation(name="bub", title="Bub", version=_bub_version()),
+            auth_methods=[
+                TerminalAuthMethod(
+                    id="login",
+                    name="Login",
+                    description="Authenticate an account with Bub in a terminal",
+                    args=["login"],
+                ),
+                TerminalAuthMethod(
+                    id="onboard",
+                    name="Onboard",
+                    description="Configure Bub plugins and model settings in a terminal",
+                    args=["onboard"],
+                ),
+            ],
             field_meta={"steering": {"supported": True}},
             agent_capabilities=AgentCapabilities(
                 load_session=True,
